@@ -1,0 +1,144 @@
+"""Sunday orchestrator graph.
+
+Flow (v1, general/external branch only):
+  user input -> orchestrator classify (Pro) -> sub-agent (Flash + tools)
+             -> memory store [stub, RAG not built yet] -> orchestrator merge (Pro) -> output
+
+Local/sensitive branch (Qwen3) not built yet — route is always "general_external"
+for now, but the classify step already asks Pro to pick from an explicit route
+list so adding the local branch later is just adding an option + a graph branch.
+"""
+
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.graph import END, START, StateGraph
+
+from sunday import config
+from sunday.memory import general_store
+from sunday.orchestrator.state import SundayState
+from sunday.tools.assets import get_asset_price
+from sunday.tools.weather import get_weather
+
+TOOLS = [get_weather, get_asset_price]
+
+AVAILABLE_ROUTES = {
+    "general_external": "non-sensitive tasks: weather, asset/commodity prices, news, general web info",
+}
+
+SUB_AGENT_SYSTEM_PROMPT = (
+    "You are Sunday's general-purpose sub-agent. Use the available tools to answer "
+    "weather and asset price (gold, silver, crypto, etc.) questions with real, current data. "
+    "Be concise."
+)
+
+MERGE_SYSTEM_PROMPT = (
+    "You are Sunday, a personal assistant. A sub-agent already gathered the data below "
+    "for the user's request. Relevant past conversation context may also be given — use it "
+    "only if it helps answer this request, ignore it otherwise. Write the final reply to the "
+    "user: natural, concise, based only on the data given."
+)
+
+
+def _text(content) -> str:
+    """Anthropic-format responses return content as a list of blocks, not a plain string."""
+    if isinstance(content, str):
+        return content
+    return "".join(block.get("text", "") for block in content if isinstance(block, dict))
+
+
+def _pro_llm() -> ChatAnthropic:
+    config.require_deepseek_key()
+    return ChatAnthropic(
+        model=config.DEEPSEEK_MODEL_PRO,
+        api_key=config.DEEPSEEK_API_KEY,
+        base_url=config.DEEPSEEK_BASE_URL,
+        temperature=0,
+    )
+
+
+def _flash_llm() -> ChatAnthropic:
+    config.require_deepseek_key()
+    return ChatAnthropic(
+        model=config.DEEPSEEK_MODEL_FLASH,
+        api_key=config.DEEPSEEK_API_KEY,
+        base_url=config.DEEPSEEK_BASE_URL,
+        temperature=0,
+    )
+
+
+def orchestrator_classify(state: SundayState) -> dict:
+    """DeepSeek Pro picks which route handles this task."""
+    llm = _pro_llm()
+    route_list = "\n".join(f"- {k}: {v}" for k, v in AVAILABLE_ROUTES.items())
+    prompt = [
+        SystemMessage(
+            content=(
+                "Classify the user's request into exactly one route key from this list, "
+                f"reply with ONLY the key, nothing else:\n{route_list}"
+            )
+        ),
+        HumanMessage(content=state["task"]),
+    ]
+    result = llm.invoke(prompt)
+    route = _text(result.content).strip()
+    if route not in AVAILABLE_ROUTES:
+        route = "general_external"
+    return {"route": route}
+
+
+def sub_agent_general(state: SundayState) -> dict:
+    """DeepSeek Flash + tools handle the general/external branch."""
+    llm = _flash_llm().bind_tools(TOOLS)
+    tool_map = {t.name: t for t in TOOLS}
+
+    messages = [SystemMessage(content=SUB_AGENT_SYSTEM_PROMPT), HumanMessage(content=state["task"])]
+    response = llm.invoke(messages)
+    messages.append(response)
+
+    while response.tool_calls:
+        for call in response.tool_calls:
+            tool_result = tool_map[call["name"]].invoke(call["args"])
+            messages.append(ToolMessage(content=str(tool_result), tool_call_id=call["id"]))
+        response = llm.invoke(messages)
+        messages.append(response)
+
+    return {"sub_agent_result": _text(response.content)}
+
+
+def memory_store(state: SundayState) -> dict:
+    """General memory store: RAG retrieval over past general-branch interactions."""
+    context = general_store.retrieve_context(state["task"])
+    return {"memory_context": context}
+
+
+def orchestrator_merge(state: SundayState) -> dict:
+    """DeepSeek Pro formats the final response, then writes this turn to memory."""
+    llm = _pro_llm()
+    content = f"User asked: {state['task']}\n\nSub-agent result:\n{state['sub_agent_result']}"
+    if state.get("memory_context"):
+        content += f"\n\nRelevant past context:\n{state['memory_context']}"
+
+    prompt = [SystemMessage(content=MERGE_SYSTEM_PROMPT), HumanMessage(content=content)]
+    result = llm.invoke(prompt)
+    final_response = _text(result.content)
+    messages = state["messages"] + [AIMessage(content=final_response)]
+
+    general_store.add_interaction(state["task"], state["sub_agent_result"], final_response)
+
+    return {"final_response": final_response, "messages": messages}
+
+
+def build_graph():
+    graph = StateGraph(SundayState)
+    graph.add_node("orchestrator_classify", orchestrator_classify)
+    graph.add_node("sub_agent_general", sub_agent_general)
+    graph.add_node("memory_store", memory_store)
+    graph.add_node("orchestrator_merge", orchestrator_merge)
+
+    graph.add_edge(START, "orchestrator_classify")
+    graph.add_edge("orchestrator_classify", "sub_agent_general")
+    graph.add_edge("sub_agent_general", "memory_store")
+    graph.add_edge("memory_store", "orchestrator_merge")
+    graph.add_edge("orchestrator_merge", END)
+
+    return graph.compile()
