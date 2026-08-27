@@ -10,6 +10,10 @@ from sunday.tools.weather import get_weather
 
 TOOLS = [get_weather, get_asset_price]
 
+
+def _debug(node: str, msg: str) -> None:
+    print(f"[debug] {node}: {msg}")
+
 AVAILABLE_ROUTES = {
     "general_external": "needs a tool/function call or external lookup: weather, asset/commodity "
     "prices, news, general web info",
@@ -68,6 +72,7 @@ def _flash_llm() -> ChatAnthropic:
 
 def orchestrator_classify(state: SundayState) -> dict:
     """DeepSeek Flash (thinking mode) picks which route handles this task."""
+    _debug("classify", f"task received -> {state['task']!r}")
     llm = _orchestrator_llm()
     route_list = "\n".join(f"- {k}: {v}" for k, v in AVAILABLE_ROUTES.items())
     prompt = [
@@ -82,12 +87,19 @@ def orchestrator_classify(state: SundayState) -> dict:
     result = llm.invoke(prompt)
     route = _text(result.content).strip()
     if route not in AVAILABLE_ROUTES:
+        _debug("classify", f"model returned unrecognized route {route!r}, defaulting to general_external")
         route = "general_external"
+    _debug(
+        "classify",
+        f"route decided -> {route!r} "
+        f"({'will call sub_agent_general' if route == 'general_external' else 'skips sub-agent, orchestrator replies directly'})",
+    )
     return {"route": route}
 
 
 def sub_agent_general(state: SundayState) -> dict:
     """DeepSeek Flash + tools handle the general/external branch."""
+    _debug("sub_agent_general", f"called, tools available: {[t.name for t in TOOLS]}")
     llm = _flash_llm().bind_tools(TOOLS)
     tool_map = {t.name: t for t in TOOLS}
 
@@ -98,26 +110,45 @@ def sub_agent_general(state: SundayState) -> dict:
     response = llm.invoke(messages)
     messages.append(response)
 
+    if not response.tool_calls:
+        _debug("sub_agent_general", "no tool calls made, model answered from its own knowledge")
+
     while response.tool_calls:
         for call in response.tool_calls:
+            _debug("sub_agent_general", f"tool call -> {call['name']}({call['args']})")
             tool_result = tool_map[call["name"]].invoke(call["args"])
+            _debug("sub_agent_general", f"tool result <- {tool_result!r}")
             messages.append(
                 ToolMessage(content=str(tool_result), tool_call_id=call["id"])
             )
         response = llm.invoke(messages)
         messages.append(response)
 
-    return {"sub_agent_result": _text(response.content)}
+    result = _text(response.content)
+    _debug("sub_agent_general", f"result -> {result!r}")
+    return {"sub_agent_result": result}
 
 
 def memory_store(state: SundayState) -> dict:
     """General memory store: RAG retrieval over past general-branch interactions."""
     context = general_store.retrieve_context(state["task"])
+    if context:
+        turn_count = context.count("\n---\n") + 1
+        _debug("memory_store", f"pulled {turn_count} relevant past turn(s):\n{context}")
+    else:
+        _debug("memory_store", "no relevant past context found (store empty or no match)")
     return {"memory_context": context}
 
 
 def orchestrator_merge(state: SundayState) -> dict:
     """DeepSeek Flash (thinking mode) formats the final response, then writes this turn to memory."""
+    used_sub_agent = bool(state.get("sub_agent_result"))
+    used_memory = bool(state.get("memory_context"))
+    _debug(
+        "merge",
+        f"sub_agent_result used={used_sub_agent}, memory_context used={used_memory}, "
+        f"conversation length so far={len(state['messages'])}",
+    )
     llm = _orchestrator_llm()
     content = f"User asked: {state['task']}"
     if state.get("sub_agent_result"):
@@ -133,6 +164,8 @@ def orchestrator_merge(state: SundayState) -> dict:
     general_store.add_interaction(
         state["task"], state["sub_agent_result"], final_response
     )
+    _debug("merge", f"final reply -> {final_response!r}")
+    _debug("merge", "wrote this turn to Chroma memory")
 
     return {"final_response": final_response, "messages": messages}
 
