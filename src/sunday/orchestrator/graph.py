@@ -11,7 +11,9 @@ from sunday.tools.weather import get_weather
 TOOLS = [get_weather, get_asset_price]
 
 AVAILABLE_ROUTES = {
-    "general_external": "non-sensitive tasks: weather, asset/commodity prices, news, general web info",
+    "general_external": "needs a tool/function call or external lookup: weather, asset/commodity "
+    "prices, news, general web info",
+    "none": "plain chitchat, opinions, or general knowledge you can answer directly, no tool call needed",
 }
 
 SUB_AGENT_SYSTEM_PROMPT = (
@@ -21,10 +23,11 @@ SUB_AGENT_SYSTEM_PROMPT = (
 )
 
 MERGE_SYSTEM_PROMPT = (
-    "You are Sunday, a personal assistant. A sub-agent already gathered the data below "
-    "for the user's request. Relevant past conversation context may also be given — use it "
-    "only if it helps answer this request, ignore it otherwise. Write the final reply to the "
-    "user: natural, concise, based only on the data given."
+    "You are Sunday, a personal assistant. A sub-agent may have already gathered data for the "
+    "user's request — if given, base your reply only on that data. Relevant past conversation "
+    "context may also be given — use it only if it helps answer this request, ignore it "
+    "otherwise. If no data is given, this is plain chitchat: just reply directly. Write the "
+    "final reply to the user: natural, concise."
 )
 
 
@@ -116,9 +119,9 @@ def memory_store(state: SundayState) -> dict:
 def orchestrator_merge(state: SundayState) -> dict:
     """DeepSeek Flash (thinking mode) formats the final response, then writes this turn to memory."""
     llm = _orchestrator_llm()
-    content = (
-        f"User asked: {state['task']}\n\nSub-agent result:\n{state['sub_agent_result']}"
-    )
+    content = f"User asked: {state['task']}"
+    if state.get("sub_agent_result"):
+        content += f"\n\nSub-agent result:\n{state['sub_agent_result']}"
     if state.get("memory_context"):
         content += f"\n\nRelevant past context:\n{state['memory_context']}"
 
@@ -134,6 +137,10 @@ def orchestrator_merge(state: SundayState) -> dict:
     return {"final_response": final_response, "messages": messages}
 
 
+def _route_selector(state: SundayState) -> str:
+    return state["route"]
+
+
 def build_graph():
     graph = StateGraph(SundayState)
     graph.add_node("orchestrator_classify", orchestrator_classify)
@@ -142,7 +149,11 @@ def build_graph():
     graph.add_node("orchestrator_merge", orchestrator_merge)
 
     graph.add_edge(START, "orchestrator_classify")
-    graph.add_edge("orchestrator_classify", "sub_agent_general")
+    graph.add_conditional_edges(
+        "orchestrator_classify",
+        _route_selector,
+        {"general_external": "sub_agent_general", "none": "memory_store"},
+    )
     graph.add_edge("sub_agent_general", "memory_store")
     graph.add_edge("memory_store", "orchestrator_merge")
     graph.add_edge("orchestrator_merge", END)
