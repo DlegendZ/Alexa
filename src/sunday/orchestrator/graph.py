@@ -1,14 +1,3 @@
-"""Sunday orchestrator graph.
-
-Flow (v1, general/external branch only):
-  user input -> orchestrator classify (Pro) -> sub-agent (Flash + tools)
-             -> memory store [stub, RAG not built yet] -> orchestrator merge (Pro) -> output
-
-Local/sensitive branch (Qwen3) not built yet — route is always "general_external"
-for now, but the classify step already asks Pro to pick from an explicit route
-list so adding the local branch later is just adding an option + a graph branch.
-"""
-
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
@@ -43,7 +32,9 @@ def _text(content) -> str:
     """Anthropic-format responses return content as a list of blocks, not a plain string."""
     if isinstance(content, str):
         return content
-    return "".join(block.get("text", "") for block in content if isinstance(block, dict))
+    return "".join(
+        block.get("text", "") for block in content if isinstance(block, dict)
+    )
 
 
 def _pro_llm() -> ChatAnthropic:
@@ -91,14 +82,19 @@ def sub_agent_general(state: SundayState) -> dict:
     llm = _flash_llm().bind_tools(TOOLS)
     tool_map = {t.name: t for t in TOOLS}
 
-    messages = [SystemMessage(content=SUB_AGENT_SYSTEM_PROMPT), HumanMessage(content=state["task"])]
+    messages = [
+        SystemMessage(content=SUB_AGENT_SYSTEM_PROMPT),
+        HumanMessage(content=state["task"]),
+    ]
     response = llm.invoke(messages)
     messages.append(response)
 
     while response.tool_calls:
         for call in response.tool_calls:
             tool_result = tool_map[call["name"]].invoke(call["args"])
-            messages.append(ToolMessage(content=str(tool_result), tool_call_id=call["id"]))
+            messages.append(
+                ToolMessage(content=str(tool_result), tool_call_id=call["id"])
+            )
         response = llm.invoke(messages)
         messages.append(response)
 
@@ -114,7 +110,9 @@ def memory_store(state: SundayState) -> dict:
 def orchestrator_merge(state: SundayState) -> dict:
     """DeepSeek Pro formats the final response, then writes this turn to memory."""
     llm = _pro_llm()
-    content = f"User asked: {state['task']}\n\nSub-agent result:\n{state['sub_agent_result']}"
+    content = (
+        f"User asked: {state['task']}\n\nSub-agent result:\n{state['sub_agent_result']}"
+    )
     if state.get("memory_context"):
         content += f"\n\nRelevant past context:\n{state['memory_context']}"
 
@@ -123,7 +121,9 @@ def orchestrator_merge(state: SundayState) -> dict:
     final_response = _text(result.content)
     messages = state["messages"] + [AIMessage(content=final_response)]
 
-    general_store.add_interaction(state["task"], state["sub_agent_result"], final_response)
+    general_store.add_interaction(
+        state["task"], state["sub_agent_result"], final_response
+    )
 
     return {"final_response": final_response, "messages": messages}
 

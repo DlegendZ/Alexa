@@ -1,5 +1,3 @@
-"""Sunday CLI entrypoint — chat loop in the terminal (VS Code integrated terminal or any shell)."""
-
 from langchain_core.messages import HumanMessage
 
 from sunday.orchestrator.graph import build_graph

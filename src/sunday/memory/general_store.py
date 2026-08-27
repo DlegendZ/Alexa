@@ -28,7 +28,9 @@ def _get_collection():
 def add_interaction(task: str, sub_agent_result: str, final_response: str) -> None:
     collection = _get_collection()
     doc = f"User asked: {task}\nData gathered: {sub_agent_result}\nSunday replied: {final_response}"
-    collection.add(documents=[doc], ids=[str(uuid.uuid4())], metadatas=[{"ts": time.time()}])
+    collection.add(
+        documents=[doc], ids=[str(uuid.uuid4())], metadatas=[{"ts": time.time()}]
+    )
 
 
 def retrieve_context(query: str, k: int = 3) -> str:
