@@ -37,17 +37,23 @@ def _text(content) -> str:
     )
 
 
-def _pro_llm() -> ChatAnthropic:
+THINKING_BUDGET_TOKENS = 2048
+
+
+def _orchestrator_llm() -> ChatAnthropic:
+    """DeepSeek Flash, thinking mode on — used by the orchestrator (classify + merge)."""
     config.require_deepseek_key()
     return ChatAnthropic(
-        model=config.DEEPSEEK_MODEL_PRO,
+        model=config.DEEPSEEK_MODEL_FLASH,
         api_key=config.DEEPSEEK_API_KEY,
         base_url=config.DEEPSEEK_BASE_URL,
-        temperature=0,
+        max_tokens=4096,
+        thinking={"type": "enabled", "budget_tokens": THINKING_BUDGET_TOKENS},
     )
 
 
 def _flash_llm() -> ChatAnthropic:
+    """DeepSeek Flash, plain — used by the general/external sub-agent."""
     config.require_deepseek_key()
     return ChatAnthropic(
         model=config.DEEPSEEK_MODEL_FLASH,
@@ -58,8 +64,8 @@ def _flash_llm() -> ChatAnthropic:
 
 
 def orchestrator_classify(state: SundayState) -> dict:
-    """DeepSeek Pro picks which route handles this task."""
-    llm = _pro_llm()
+    """DeepSeek Flash (thinking mode) picks which route handles this task."""
+    llm = _orchestrator_llm()
     route_list = "\n".join(f"- {k}: {v}" for k, v in AVAILABLE_ROUTES.items())
     prompt = [
         SystemMessage(
@@ -108,8 +114,8 @@ def memory_store(state: SundayState) -> dict:
 
 
 def orchestrator_merge(state: SundayState) -> dict:
-    """DeepSeek Pro formats the final response, then writes this turn to memory."""
-    llm = _pro_llm()
+    """DeepSeek Flash (thinking mode) formats the final response, then writes this turn to memory."""
+    llm = _orchestrator_llm()
     content = (
         f"User asked: {state['task']}\n\nSub-agent result:\n{state['sub_agent_result']}"
     )

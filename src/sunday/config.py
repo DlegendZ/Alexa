@@ -11,7 +11,6 @@ load_dotenv(ENV_PATH)
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 # DeepSeek's Anthropic-compatible endpoint (Messages API format, not OpenAI's).
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic")
-DEEPSEEK_MODEL_PRO = os.getenv("DEEPSEEK_MODEL_PRO", "deepseek-v4-pro")
 DEEPSEEK_MODEL_FLASH = os.getenv("DEEPSEEK_MODEL_FLASH", "deepseek-v4-flash")
 
 
