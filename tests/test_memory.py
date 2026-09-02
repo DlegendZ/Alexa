@@ -196,15 +196,21 @@ def test_a_cancelled_turn_is_never_committed(cfg):
 
 
 def test_retrieval_reaches_the_agent_as_context(cfg):
+    """A recalled turn hands over what the user said and what was done -- not
+    what Sunday said back. Its own prose is the thing a 2b copies."""
     memory = FakeMemory(
         [
             store.Recalled(
-                text="You: where do I keep my notes\nSunday: in Documents/Sunday",
+                text=(
+                    "You: my notes live in Documents/Sunday\n"
+                    "Sunday: noted, and silver is climbing steadily"
+                ),
                 distance=0.2,
                 ts=time.time(),
                 session_id="old",
                 provenance="private",
                 kind="turn",
+                tools_used="read_file",
             )
         ]
     )
@@ -213,7 +219,9 @@ def test_retrieval_reaches_the_agent_as_context(cfg):
     state = runtime.run_turn("what did I say about my notes")
 
     assert memory.queries == ["what did I say about my notes"]
-    assert "Documents/Sunday" in state["context"]
+    assert "Documents/Sunday" in state["context"]  # the user's own words
+    assert "climbing steadily" not in state["context"]  # Sunday's past prose
+    assert "read_file" in state["context"]  # but what it did, yes
     assert state["context_tokens"] > 0
     assert state["saw_private"] is True
 
@@ -221,6 +229,44 @@ def test_retrieval_reaches_the_agent_as_context(cfg):
         m["content"] for m in agent.seen[0] if isinstance(m, dict) and m["role"] == "system"
     ]
     assert any("Documents/Sunday" in block for block in system_blocks)
+
+
+def test_a_session_summary_is_recalled_whole(cfg):
+    """Unlike a turn, the fold prompt already wrote it as third-person notes,
+    so there is no reply in it to copy."""
+    memory = FakeMemory(
+        [
+            store.Recalled(
+                text="The user's landlord is Pak Yusuf and rent is due on the 5th.",
+                distance=0.2,
+                ts=time.time(),
+                session_id="old",
+                provenance="private",
+                kind="session",
+            )
+        ]
+    )
+    state = _runtime(cfg, memory).run_turn("who is my landlord")
+    assert "Pak Yusuf" in state["context"]
+
+
+def test_asking_the_same_question_again_recalls_no_noise(cfg):
+    """The old turn renders as its question, which is the question just asked:
+    a line of noise carrying no fact."""
+    memory = FakeMemory(
+        [
+            store.Recalled(
+                text="You: how much is silver\nSunday: $65.16",
+                distance=0.05,
+                ts=time.time(),
+                session_id="old",
+                provenance="public",
+                kind="turn",
+            )
+        ]
+    )
+    state = _runtime(cfg, memory).run_turn("how much is silver")
+    assert state["context"] == ""
 
 
 def test_what_is_already_in_the_recent_block_is_not_retrieved_twice(cfg):

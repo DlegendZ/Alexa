@@ -48,10 +48,28 @@ class Recalled:
     session_id: str
     provenance: str
     kind: str
+    tools_used: str = ""
 
     def render(self) -> str:
+        """Recall what you were told and what you did -- not what you said.
+
+        A recalled turn hands the model its own past prose, and a 2b treats
+        that as the template for the new answer: ask the silver price twice
+        and the second reply repeats the first one's invented trend, with a
+        fresh number pasted in. So a turn renders as the user's line plus the
+        tools that ran. Session summaries render whole, because the fold
+        prompt already wrote them as third-person notes rather than as a reply
+        to copy.
+        """
         when = time.strftime("%Y-%m-%d", time.localtime(self.ts))
-        return f"[{when}] {self.text}"
+        if self.kind != "turn":
+            return f"[{when}] {self.text}"
+
+        asked = self.text.split("\nSunday:", 1)[0].strip()
+        line = f"[{when}] {asked}"
+        if self.tools_used:
+            line += f"\n(answered using: {self.tools_used})"
+        return line
 
 
 class LongTermMemory:
@@ -170,6 +188,7 @@ class LongTermMemory:
                     session_id=str(meta.get("session_id", "")),
                     provenance=str(meta.get("provenance", "private")),
                     kind=str(meta.get("kind", "turn")),
+                    tools_used=str(meta.get("tools_used", "")),
                 )
             )
         return out

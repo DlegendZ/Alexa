@@ -145,8 +145,16 @@ class Runtime:
         recent = self.session.recent(sl.recent)
         recalled = self.memory.retrieve(state["task"])
 
-        # Anything already in the recent block is not worth saying twice.
-        fresh = [r for r in recalled if r.text not in recent]
+        # Anything already in the recent block is not worth saying twice, and
+        # neither is the same question asked before: a turn renders as its
+        # question, so an identical one adds a line of noise and no fact.
+        asked = _normalise(state["task"])
+        fresh = [
+            r
+            for r in recalled
+            if r.text not in recent
+            and not (r.kind == "turn" and _normalise(r.render()) == asked)
+        ]
         retrieved = "\n\n".join(r.render() for r in fresh)
 
         context, tokens = budget.assemble(self.session.summary, recent, retrieved, sl)
@@ -497,3 +505,13 @@ class Runtime:
 
 def notices_of(state: SundayState) -> Iterable[str]:
     return state.get("notices", [])  # type: ignore[typeddict-item]
+
+
+def _normalise(text: str) -> str:
+    """For comparing a recalled question against the one just asked."""
+    stripped = "".join(c for c in text.lower() if c.isalnum() or c.isspace())
+    words = stripped.split()
+    # A rendered turn keeps its date and the "you:" prefix; drop both.
+    while words and (words[0].isdigit() or words[0] in {"you", "sunday"}):
+        words.pop(0)
+    return " ".join(words)

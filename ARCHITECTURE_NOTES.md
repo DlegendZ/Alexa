@@ -176,3 +176,51 @@ The heuristic and the goal were in direct conflict.
 **Code:** the last comma *at or before* 180, falling back to the first one after it.
 **Why:** read literally, the search starts at 180, so a sentence whose only comma is
 at 140 never splits at all — the case the rule exists for.
+
+## 19. A recalled turn hands over the question, not the answer
+
+**This is the largest deviation so far, and it fixes a correctness bug.**
+
+**Doc:** Stage 08 stores a turn document; Stage 02 retrieves it and puts it in the
+window.
+**Code:** storage is unchanged — the full turn still goes to Chroma. What changed is
+rendering: a recalled *turn* is shown to the model as the user's line plus the tools
+that ran (`(answered using: get_asset_price)`), not as Sunday's past reply. A recalled
+*session summary* still renders whole, because the fold prompt already wrote it as
+third-person notes rather than as a reply to copy. Turns in the current session's
+recent block are untouched — conversational continuity needs them.
+**Why:** measured, not guessed. Asked the silver price with an empty store, the reply
+was one correct sentence. Asked again with that turn in memory, the reply repeated the
+first one's invented trend ("it has been climbing steadily on recent trading days")
+with a fresh price pasted in. A 2b treats its own retrieved prose as the template for
+the new answer, so a hallucination gets stored and re-served as a fact — and compounds
+every time the question is asked. Three separate prompt phrasings failed to stop it;
+one that was strong enough made it distrust the record entirely and refuse a fact the
+user had actually stated. Rendering is the only layer where this is fixable.
+**Cost:** a fact that exists only in Sunday's past reply, and nowhere in the user's
+words or a re-runnable tool, is no longer recalled. That is the right trade: facts the
+user stated are in *their* lines, and facts from tools can be fetched again.
+
+## 20. Re-asking a question does not recall the old asking of it
+
+**Code:** a recalled turn whose rendered question matches the one just asked is
+dropped.
+**Why:** since #19, a turn renders as its question — so asking "how much is silver"
+twice retrieves a line reading "how much is silver" and nothing else. Noise with no
+fact in it, spending the retrieved slice.
+
+## 21. Open: 2b prose quality, with a measurement
+
+**Doc:** listed as an open decision — "the thing most likely to disappoint. If replies
+read flat, the fix is a larger single model."
+**Observed:** two habits survive every prompt fix tried.
+1. **Person slips.** Recalling a fact the user stated, it answers "My landlord is Pak
+   Yusuf" rather than "your landlord", perhaps one time in two.
+2. **Decoration.** It adds plausible context nothing gave it — a wind direction the
+   weather tool did not return, "silver often spikes during geopolitical tension".
+   Tightened prompt wording ("report what the tool returned and stop there") reduced
+   this but did not end it.
+Neither is a privacy failure and neither survives into the airlock. Both are exactly
+the trade the document names. `qwen3:8b` is already pulled on this machine, so the
+comparison is cheap to run — but it needs the iGPU move first, and that is a decision
+to take deliberately rather than mid-build.

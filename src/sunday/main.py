@@ -83,6 +83,8 @@ def main() -> int:
             print(f"sunday> {state['final_response']}", end="")
         print("\n")
 
+    # Quitting is a session boundary like going idle: flush the summary.
+    runtime.shutdown()
     return 0
 
 
