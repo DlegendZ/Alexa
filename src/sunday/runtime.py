@@ -22,8 +22,9 @@ from sunday import (
     tools as tool_registry,
     web,
 )
-from sunday.agent import loop as agent_loop
+from sunday.agent import loop as agent_loop, prompts
 from sunday.agent.llm import Agent, OllamaDown
+from sunday.memory import LongTermMemory, SessionMemory, budget
 from sunday.state import Result, SundayState, TurnEvents, new_state
 
 TokenSink = Callable[[str], None]
@@ -73,9 +74,12 @@ class Runtime:
         cfg: config.Config | None = None,
         *,
         agent: Agent | None = None,
+        memory: LongTermMemory | None = None,
     ) -> None:
         self.cfg = cfg or config.get()
         self.agent = agent or Agent(self.cfg)
+        self.memory = memory if memory is not None else LongTermMemory()
+        self.session = SessionMemory()
         self.session_id = uuid.uuid4().hex[:12]
         self._cancel = threading.Event()
         self._ctx: TurnContext | None = None
@@ -124,9 +128,30 @@ class Runtime:
     # -- nodes ----------------------------------------------------------
 
     def memory_read(self, state: SundayState) -> dict:
-        """Placeholder until milestone 5. Memory is read before anything else
-        happens, including before the agent decides what to do."""
-        return {}
+        """Memory is looked up before anything else happens, including before
+        the agent decides what to do. Otherwise the one component that needs to
+        know what "there" or "that file" refers to is the one running without
+        it."""
+        sl = budget.slices(self.cfg)
+        recent = self.session.recent(sl.recent)
+        recalled = self.memory.retrieve(state["task"])
+
+        # Anything already in the recent block is not worth saying twice.
+        fresh = [r for r in recalled if r.text not in recent]
+        retrieved = "\n\n".join(r.render() for r in fresh)
+
+        context, tokens = budget.assemble(self.session.summary, recent, retrieved, sl)
+        self.ctx.log.set(
+            retrieved=len(fresh),
+            retrieval_scores=[round(r.distance, 3) for r in recalled],
+        )
+        return {
+            "context": context,
+            "context_tokens": tokens,
+            # Retrieved memory is always private, whatever the original turn
+            # was. It never reaches the airlock, which does not read context.
+            "saw_private": bool(fresh),
+        }
 
     def agent_node(self, state: SundayState) -> dict:
         ctx = self.ctx
@@ -136,6 +161,7 @@ class Runtime:
         tool_calls = state.get("tool_calls", 0)
         unresolved = state.get("unresolved")
         cap = self.cfg.limits.tool_calls
+        tools_budget = budget.slices(self.cfg).tools
         flags = Flags()
         told_about_the_door = False
 
@@ -161,6 +187,15 @@ class Runtime:
                 tool_calls += 1
                 working: SundayState = {**state, "tool_results": results}
                 result = self._dispatch(call.name, call.args, working, flags)
+
+                # Tool results are a claimant on the window like any other.
+                spent = sum(budget.count(r.content) for r in results)
+                room = max(0, tools_budget - spent)
+                if budget.count(result.content) > room:
+                    result = replace(
+                        result, content=budget.clip(result.content, room), truncated=True
+                    )
+
                 results.append(result)
                 ctx.messages.append(agent_loop.tool_message(result))
             if unresolved:
@@ -184,7 +219,7 @@ class Runtime:
             "tainted": flags.tainted,
             "blocked": flags.blocked,
             "redactions": flags.redactions,
-            "saw_private": flags.saw_private,
+            "saw_private": flags.saw_private or bool(state.get("saw_private")),
             "hops": flags.hops,
         }
 
@@ -305,9 +340,64 @@ class Runtime:
         return {"final_response": final, "thinking": think, "committed": True}
 
     def memory_write(self, state: SundayState) -> dict:
-        """Placeholder until milestone 5. Runs after the last token, never
-        before, so a disk write cannot delay the first word."""
+        """Runs after the last token, never before, so a disk write cannot
+        delay the first word. A cancelled or broken turn is not saved."""
+        if not state.get("committed") or not state.get("final_response"):
+            return {}
+
+        task = state["task"]
+        response = state["final_response"]
+        results = state.get("tool_results") or []
+
+        self.session.add(task, response)
+        self.memory.add_turn(
+            task=task,
+            response=response,
+            session_id=self.session_id,
+            results=results,
+        )
+
+        sl = budget.slices(self.cfg)
+        if self.session.fold(self._summarise, sl.recent):
+            self.ctx.log.set(folded=True)
         return {}
+
+    # -- summarising ----------------------------------------------------
+
+    def _summarise(self, material: str) -> str:
+        """The same local model, so folding costs time but no money."""
+        reply = self.agent.chat(
+            [
+                {"role": "system", "content": prompts.FOLD_SYSTEM},
+                {"role": "user", "content": material},
+            ],
+            think=False,
+            max_tokens=400,
+        )
+        return reply.content or ""
+
+    # -- the session boundary -------------------------------------------
+
+    def close_session(self) -> None:
+        """Write the session summary and start a new session. Triggered by
+        going idle, and by shutdown."""
+        if self.session.is_empty():
+            return
+        transcript = self.session.transcript()
+        try:
+            summary = self._summarise(transcript).strip()
+        except OllamaDown:
+            summary = budget.clip(transcript, 400)
+        self.memory.add_session_summary(
+            summary=summary or budget.clip(transcript, 400),
+            session_id=self.session_id,
+            provenance="private",
+        )
+        self.session.clear()
+        self.session_id = uuid.uuid4().hex[:12]
+
+    def shutdown(self) -> None:
+        self.close_session()
 
     # -- one turn -------------------------------------------------------
 
@@ -319,6 +409,10 @@ class Runtime:
         on_token: TokenSink | None = None,
         on_event: EventSink | None = None,
     ) -> SundayState:
+        if self.session.is_idle(self.cfg):
+            self.close_session()
+        self.session.touch()
+
         self._cancel.clear()
         trace_id = uuid.uuid4().hex[:12]
         log = telemetry.TurnLog(trace_id, modality)

@@ -123,3 +123,39 @@ refused.
 **Why:** live, asking it to read `.env` *and* search produced a confident answer with
 no search and no mention that the search never happened. Unbinding is invisible from
 the outside unless something says it out loud.
+
+## 13. Token counting is an estimate, deliberately
+
+**Doc:** the five slices are stated in tokens.
+**Code:** `budget.count` estimates at 3.6 characters per token rather than running a
+real tokeniser.
+**Why:** every accurate option (tiktoken, a HF tokeniser) downloads a vocabulary on
+first use. An assistant whose whole premise is that it works offline should not have a
+network dependency in its context accounting. The estimate errs high, so the budget is
+conservative. If it turns out to matter, Ollama could be asked to count.
+
+## 14. Chroma is opened in cosine space
+
+**Doc:** `distance_cutoff = 0.45`.
+**Code:** the collection is created with `hnsw:space = "cosine"`.
+**Why:** Chroma's default is squared L2, on which 0.45 is a much stricter and less
+interpretable threshold. In cosine space the number means what a reader assumes:
+0 identical, 1 unrelated.
+
+## 15. Retrieval de-duplicates against the recent block
+
+**Doc:** silent on it.
+**Code:** a retrieved document already present in the session's recent turns is
+dropped rather than shown twice.
+**Why:** the same turn is in both stores by design (write-through), so without this the
+current session's last few turns appear twice in the window.
+
+## 16. The memory context tells the model what it is reading
+
+**Doc:** silent on the framing.
+**Code:** the retrieved block is introduced as a record, saying which lines are the
+user and which are Sunday's own past replies, and instructing it not to reuse the
+wording.
+**Why:** live, the 2b answered "who is my landlord" by copying its own stored reply
+back, first person and all: "My landlord's name is Pak Yusuf". With the framing it
+answers in the second person, correctly.

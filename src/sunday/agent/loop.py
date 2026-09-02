@@ -26,8 +26,12 @@ def build_messages(state: SundayState) -> list[dict[str, Any]]:
             {
                 "role": "system",
                 "content": (
-                    "Context from earlier, for reference only. Use it if it "
-                    "helps answer this turn, ignore it otherwise.\n" + context
+                    "A record of earlier conversations, for reference only. "
+                    "'You:' lines are the user speaking, 'Sunday:' lines are "
+                    "your own past replies. Use a fact from it if it helps "
+                    "answer this turn, and ignore the rest. Never repeat its "
+                    "wording or re-answer an old question -- answer the new "
+                    "one, in your own words.\n\n" + context
                 ),
             }
         )
