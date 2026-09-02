@@ -18,6 +18,7 @@ from sunday import (
     config,
     graph as graph_module,
     guardrail,
+    stream,
     telemetry,
     tools as tool_registry,
     web,
@@ -84,6 +85,7 @@ class Runtime:
         self._cancel = threading.Event()
         self._ctx: TurnContext | None = None
         self._on_token: TokenSink | None = None
+        self._on_sentence: TokenSink | None = None
         self._on_event: EventSink | None = None
         self._graph = graph_module.build_graph(self)
 
@@ -115,6 +117,12 @@ class Runtime:
     def _token(self, text: str) -> None:
         if self._on_token is not None:
             self._on_token(text)
+
+    def _sentence(self, text: str) -> None:
+        """The speech sink. Whole sentences, because a synthesiser cannot
+        speak half of one."""
+        if self._on_sentence is not None:
+            self._on_sentence(text)
 
     def _bound_tools(self, flags: Flags) -> list[tool_registry.Tool]:
         """Unbinding protects the next model invocation; the in-loop check
@@ -328,15 +336,19 @@ class Runtime:
             ctx.messages.append(hint)
 
         self._emit(type="state", value="speaking")
-        pieces: list[str] = []
-        for piece in self.agent.stream(ctx.messages, think=think):
-            self._check_cancelled()
-            if not pieces:
-                ctx.log.mark_first_token()
-            pieces.append(piece)
-            self._token(piece)
 
-        final = "".join(pieces).strip()
+        def pieces() -> Any:
+            first = True
+            for piece in self.agent.stream(ctx.messages, think=think):
+                self._check_cancelled()
+                if first:
+                    ctx.log.mark_first_token()
+                    first = False
+                yield piece
+
+        final = stream.fork(
+            pieces(), on_token=self._token, on_sentence=self._sentence
+        ).strip()
         return {"final_response": final, "thinking": think, "committed": True}
 
     def memory_write(self, state: SundayState) -> dict:
@@ -407,6 +419,7 @@ class Runtime:
         *,
         modality: str = "text",
         on_token: TokenSink | None = None,
+        on_sentence: TokenSink | None = None,
         on_event: EventSink | None = None,
     ) -> SundayState:
         if self.session.is_idle(self.cfg):
@@ -419,6 +432,7 @@ class Runtime:
         ctx = TurnContext(log)
         self._ctx = ctx
         self._on_token = on_token
+        self._on_sentence = on_sentence
         self._on_event = on_event
 
         state = new_state(
@@ -464,6 +478,7 @@ class Runtime:
         log.write()
         self._emit(type="done", committed=bool(fields.get("committed", False)))
         self._on_token = None
+        self._on_sentence = None
         self._on_event = None
         self._ctx = None
 

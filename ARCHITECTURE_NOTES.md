@@ -159,3 +159,20 @@ wording.
 **Why:** live, the 2b answered "who is my landlord" by copying its own stored reply
 back, first person and all: "My landlord's name is Pak Yusuf". With the framing it
 answers in the second person, correctly.
+
+## 17. Abbreviations are a list, not a length heuristic
+
+**Doc:** rule 2 of the splitter — "a short capitalised word before the dot" is a
+non-break.
+**Code:** an explicit abbreviation set (`Mr`, `Dr`, `Fig`, `No`, `e.g`, …) plus the
+single-initial case (`J. Smith`).
+**Why:** implemented as written first, and it ate "Sure." and "Yes." — four-letter
+capitalised words that are exactly the short openers rule 1 exists to release early.
+The heuristic and the goal were in direct conflict.
+
+## 18. The forced comma split looks backwards from the limit
+
+**Doc:** "Force a split at a comma once the buffer passes 180 characters."
+**Code:** the last comma *at or before* 180, falling back to the first one after it.
+**Why:** read literally, the search starts at 180, so a sentence whose only comma is
+at 140 never splits at all — the case the rule exists for.
