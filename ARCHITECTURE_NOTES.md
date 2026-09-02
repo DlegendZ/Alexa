@@ -74,3 +74,12 @@ validating.
 **Why:** the closed set is still enforced, and a 2b that answers `"gold"` instead of
 `"XAU"` gets a price rather than an error. The fast path still exists for the same
 phrasings.
+
+## 9. The path refusal string tells the model what to say
+
+**Doc:** `refused: path is outside the configured roots`.
+**Code:** that sentence plus an instruction to relay it and to offer the config fix,
+and not to guess at another reason.
+**Why:** tested live, the 2b took the bare string and invented an explanation
+("`C:` isn't currently mounted"). Tool results are the only place to correct that —
+the model reads the last thing it was handed.
