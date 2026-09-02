@@ -91,6 +91,10 @@ def scrub_query(query: str) -> tuple[str, int]:
 
 
 NOTICE_REDACTED = "I removed something that looked like a credential before searching."
+NOTICE_REDACTED_RESULT = (
+    "Something in what I read looked like a credential, so I stripped it before "
+    "reading the rest."
+)
 NOTICE_BLOCKED = (
     "This turn read a credential file, so I did not look anything up on the web."
 )

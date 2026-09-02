@@ -210,7 +210,7 @@ def test_a_key_in_a_file_is_redacted_before_the_agent_sees_it(cfg, tmp_path):
     assert "ghp_16C7e42F292c6912E7710c838347Ae178B4a" not in content
     assert guardrail.REDACTED in content
     assert state["redactions"] == 1
-    assert guardrail.NOTICE_REDACTED in state["notices"]  # type: ignore[typeddict-item]
+    assert guardrail.NOTICE_REDACTED_RESULT in state["notices"]  # type: ignore[typeddict-item]
     # A redacted key is not a taint: the turn continues, the door stays open.
     assert state["tainted"] is False
 
@@ -234,3 +234,54 @@ def test_the_tool_call_cap_stops_the_loop(cfg, tmp_path):
 def test_flags_default_to_an_open_door(cfg):
     flags = Flags()
     assert (flags.tainted, flags.blocked, flags.redactions) == (False, False, 0)
+
+
+def test_notices_reach_the_client_not_just_the_state(cfg, tmp_path):
+    """They are emitted while a sink still exists to receive them."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".env").write_text("KEY=1", encoding="utf-8")
+    cfg.files.roots = [str(root)]
+
+    replies = [
+        Reply(tool_calls=[ToolCall("read_file", {"path": str(root / ".env")})]),
+        Reply(content="done"),
+    ]
+    runtime, _ = _runtime(cfg, replies)
+    seen: list[dict] = []
+    runtime.run_turn("read my .env", on_event=seen.append)
+
+    kinds = [e["type"] for e in seen]
+    assert "notice" in kinds
+    assert kinds[-1] == "done"
+    assert guardrail.NOTICE_BLOCKED in [e.get("text") for e in seen]
+
+
+def test_a_withdrawn_door_is_announced_to_the_model(cfg, tmp_path):
+    """Unbinding is silent unless the model is told, and then the user is."""
+    from sunday.runtime import DOOR_UNBOUND
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".env").write_text("KEY=1", encoding="utf-8")
+    cfg.files.roots = [str(root)]
+
+    replies = [
+        Reply(tool_calls=[ToolCall("read_file", {"path": str(root / ".env")})]),
+        Reply(content="done"),
+    ]
+    runtime, agent = _runtime(cfg, replies)
+
+    seen_messages: list[list] = []
+    original = agent.chat
+
+    def spy(messages, **kwargs):
+        seen_messages.append(list(messages))
+        return original(messages, **kwargs)
+
+    agent.chat = spy  # type: ignore[method-assign]
+    state = runtime.run_turn("read my .env then search for it")
+
+    second_round = seen_messages[1]
+    assert any(m.get("content") == DOOR_UNBOUND for m in second_round if isinstance(m, dict))
+    assert guardrail.NOTICE_BLOCKED in state["notices"]  # type: ignore[typeddict-item]

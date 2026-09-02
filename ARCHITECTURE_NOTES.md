@@ -83,3 +83,43 @@ and not to guess at another reason.
 **Why:** tested live, the 2b took the bare string and invented an explanation
 ("`C:` isn't currently mounted"). Tool results are the only place to correct that —
 the model reads the last thing it was handed.
+
+## 10. The intent hint is written by a context that has seen the private half
+
+**Doc:** Stage 05 — the airlock's fresh context contains "the user's own words for
+this turn, any `public` results already gathered, and the intent hint", and calls the
+result a structural guarantee.
+**Code:** implemented exactly as written, and the guarantee holds for everything
+except the hint itself. `ask_external("...")` is authored by the agent, which by then
+may have a private file in scope. Nothing stops a model from writing the sell target
+into its own intent string.
+**Mitigations in place:** the composer is told to use only what it is given and to
+write a keyword query; the composed query is scrubbed for key shapes and capped at
+200 characters; when the composer returns nothing, the fallback is the *user's* words,
+never the intent.
+**Still open, and worth a decision:** whether to scrub the intent before it enters the
+airlock's context, or to drop the hint entirely and compose from the user's words plus
+public results alone. Dropping it costs steering quality on multi-part questions.
+This is the one place where the document's "cannot happen" is really "is very
+unlikely to happen".
+
+## 11. Two redaction notices, not one
+
+**Doc:** one notice — "I removed something that looked like a credential before
+searching."
+**Code:** that text when a *query* was scrubbed, and a second one when a *tool result*
+was scrubbed ("Something in what I read looked like a credential…").
+**Why:** live, a `.env` read redacted a key and the user was told it had been removed
+"before searching" — nothing had been searched. A privacy notice that misdescribes
+what happened is worse than none.
+
+## 12. Withdrawing the door is announced, not silent
+
+**Doc:** once a turn is tainted, `ask_external` is unbound for the next round.
+**Code:** unbinding still happens, and the model is additionally handed one system
+line saying the tool was withdrawn and to say so if the user wanted a lookup; the user
+gets the `NOTICE_BLOCKED` line whenever a turn is tainted, not only when a call was
+refused.
+**Why:** live, asking it to read `.env` *and* search produced a confident answer with
+no search and no mention that the search never happened. Unbinding is invisible from
+the outside unless something says it out loud.

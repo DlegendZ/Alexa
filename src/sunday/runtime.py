@@ -20,6 +20,7 @@ from sunday import (
     guardrail,
     telemetry,
     tools as tool_registry,
+    web,
 )
 from sunday.agent import loop as agent_loop
 from sunday.agent.llm import Agent, OllamaDown
@@ -32,6 +33,11 @@ EXTERNAL_TOOL = "ask_external"
 DOOR_SHUT = (
     "refused: this turn touched a credential path, so nothing may be looked up "
     "on the web. Tell the user that plainly."
+)
+DOOR_UNBOUND = (
+    "System: this turn read a credential file, so the web lookup tool has been "
+    "withdrawn for the rest of it. If the user asked for something looked up, "
+    "say plainly that you could not, and why."
 )
 
 
@@ -131,6 +137,7 @@ class Runtime:
         unresolved = state.get("unresolved")
         cap = self.cfg.limits.tool_calls
         flags = Flags()
+        told_about_the_door = False
 
         while True:
             self._check_cancelled()
@@ -159,11 +166,16 @@ class Runtime:
             if unresolved:
                 break
 
-        if flags.blocked:
+            # Withdrawing the tool is silent unless we say so. Without this the
+            # turn just loses its web half and nobody is told.
+            if flags.tainted and not told_about_the_door:
+                ctx.messages.append({"role": "system", "content": DOOR_UNBOUND})
+                told_about_the_door = True
+
+        if flags.tainted:
             ctx.events.notice(guardrail.NOTICE_BLOCKED)
+        if flags.blocked:
             unresolved = unresolved or "a web lookup was refused this turn"
-        if flags.redactions:
-            ctx.events.notice(guardrail.NOTICE_REDACTED)
 
         return {
             "tool_results": results,
@@ -212,6 +224,7 @@ class Runtime:
         cleaned, hits = guardrail.redact(result.content)
         if hits:
             flags.redactions += hits
+            self.ctx.events.notice(guardrail.NOTICE_REDACTED_RESULT)
             result = replace(result, content=cleaned)
         if result.provenance in {"private", "secret"}:
             flags.saw_private = True
@@ -253,19 +266,20 @@ class Runtime:
         self._emit(type="tool", name=EXTERNAL_TOOL, scope="external")
         query = airlock.compose(self.agent, state, intent)
         query, hits = guardrail.scrub_query(query)
-        flags.redactions += hits
+        if hits:
+            flags.redactions += hits
+            self.ctx.events.notice(guardrail.NOTICE_REDACTED)
         self._emit(type="query", text=query)
         content, hops, ok = self._web(query)
         flags.hops += hops
         return Result(EXTERNAL_TOOL, {"query": query}, content, "public", ok=ok)
 
     def _web(self, query: str) -> tuple[str, int, bool]:
-        """Replaced at milestone 4 by search -> fetch -> extract -> summarise."""
-        return (
-            f"error: the web pipeline is not built yet (cleared query: {query})",
-            0,
-            False,
-        )
+        """search -> decide -> fetch -> extract -> summarise, hop-capped."""
+        result = web.run(query)
+        if not result.ok:
+            return (f"error: {result.text}", result.hops, False)
+        return (result.text, result.hops, True)
 
     # -- the final pass -------------------------------------------------
 
@@ -322,20 +336,13 @@ class Runtime:
         try:
             final: SundayState = self._graph.invoke(state)
         except Cancelled:
-            self._emit(type="done", committed=False)
-            log.set(cancelled=True, committed=False)
-            log.write()
-            return {**state, "committed": False}
+            self._finish(log, cancelled=True, committed=False)
+            return {**state, "committed": False, "notices": []}  # type: ignore[typeddict-unknown-key]
         except OllamaDown as exc:
             message = str(exc)
             self._emit(type="error", text=message)
-            log.set(error=message, committed=False)
-            log.write()
-            return {**state, "final_response": message, "committed": False}
-        finally:
-            self._on_token = None
-            self._on_event = None
-            self._ctx = None
+            self._finish(log, error=message, committed=False)
+            return {**state, "final_response": message, "committed": False, "notices": []}  # type: ignore[typeddict-unknown-key]
 
         notices = ctx.events.notices
         for notice in notices:
@@ -350,12 +357,21 @@ class Runtime:
             tool_calls=final.get("tool_calls", 0),
             thinking=final.get("thinking", False),
             context_tokens=final.get("context_tokens", 0),
-            committed=final.get("committed", False),
         )
-        log.write()
-        self._emit(type="done", committed=final.get("committed", False))
         final["notices"] = notices  # type: ignore[typeddict-unknown-key]
+        self._finish(log, committed=final.get("committed", False))
         return final
+
+    def _finish(self, log: telemetry.TurnLog, **fields: Any) -> None:
+        """Emit `done`, write the log line, then drop the turn's sinks. The
+        order matters: notices and `done` are emitted while a sink still
+        exists to receive them."""
+        log.set(**fields)
+        log.write()
+        self._emit(type="done", committed=bool(fields.get("committed", False)))
+        self._on_token = None
+        self._on_event = None
+        self._ctx = None
 
 
 def notices_of(state: SundayState) -> Iterable[str]:
