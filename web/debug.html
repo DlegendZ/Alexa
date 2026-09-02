@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sunday · sidecar debug</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --panel: #16181d;
+    --line: #24272e;
+    --text: #e7e9ee;
+    --dim: #878d9a;
+    --local: #d99b3d;   /* on your machine */
+    --external: #3dbfb0; /* leaves your machine */
+    --stop: #d9534f;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.55 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    display: grid; gap: 16px;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    align-items: start; min-height: 100vh;
+  }
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 12px; letter-spacing: .02em; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+       color: var(--dim); margin: 0 0 8px; font-weight: 600; }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 10px; padding: 16px; }
+  #main { display: grid; gap: 16px; }
+
+  /* the orb, in miniature: colour is the whole point */
+  .orbrow { display: flex; align-items: center; gap: 12px; }
+  .orb { width: 40px; height: 40px; border-radius: 50%; flex: none;
+         background: radial-gradient(circle at 35% 35%, #4a4f5a, #23262d 70%);
+         box-shadow: 0 0 0 0 transparent; transition: box-shadow .25s, background .25s; }
+  .orb[data-state="thinking"], .orb[data-state="tool.local"], .orb[data-state="speaking"] {
+    background: radial-gradient(circle at 35% 35%, var(--local), #6b4a15 70%);
+    box-shadow: 0 0 18px -2px var(--local); }
+  .orb[data-state="tool.external"] {
+    background: radial-gradient(circle at 35% 35%, var(--external), #14544d 70%);
+    box-shadow: 0 0 22px -1px var(--external); }
+  .orb[data-state="blocked"], .orb[data-state="error"] {
+    background: radial-gradient(circle at 35% 35%, var(--stop), #5a1c1a 70%);
+    box-shadow: 0 0 18px -2px var(--stop); }
+  .orb[data-state="muted"] { filter: saturate(.15); }
+  .statelabel { color: var(--dim); }
+
+  #transcript { display: grid; gap: 14px; max-height: 56vh; overflow-y: auto; }
+  .turn { display: grid; gap: 4px; }
+  .who { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
+  .said { white-space: pre-wrap; }
+  .note { font-size: 13px; color: var(--dim); border-left: 2px solid var(--line);
+          padding-left: 10px; }
+  .note.local { border-color: var(--local); }
+  .note.external { border-color: var(--external); }
+  .note.stop { border-color: var(--stop); color: #e5a3a1; }
+
+  form { display: flex; gap: 8px; }
+  input, button {
+    font: inherit; border-radius: 8px; border: 1px solid var(--line);
+    background: #1b1e24; color: var(--text); padding: 9px 12px;
+  }
+  input { flex: 1; min-width: 0; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--local); outline-offset: 1px; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { border-color: #3a3f49; }
+  button:disabled { opacity: .45; cursor: default; }
+  .row { display: grid; gap: 6px; margin-bottom: 12px; }
+  .row label { font-size: 11px; color: var(--dim); }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  #sentences { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px;
+               font-size: 13px; color: var(--dim); }
+  #sentences li { border-left: 2px solid var(--local); padding-left: 10px; }
+  code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+  @media (max-width: 800px) { body { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+
+<div id="main">
+  <div class="panel">
+    <h1>Sunday · sidecar debug</h1>
+    <div class="orbrow">
+      <div class="orb" id="orb" data-state="idle"></div>
+      <div class="statelabel" id="statelabel">not connected</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Transcript</h2>
+    <div id="transcript"></div>
+  </div>
+
+  <form id="composer" class="panel">
+    <input id="text" placeholder="Ask Sunday something…" autocomplete="off" disabled>
+    <button id="send" disabled>Send</button>
+    <button id="stop" type="button" disabled>Stop</button>
+  </form>
+</div>
+
+<aside class="panel">
+  <h2>Connection</h2>
+  <div class="row">
+    <label for="port">port</label>
+    <input id="port" inputmode="numeric" placeholder="from handshake.json">
+  </div>
+  <div class="row">
+    <label for="token">token</label>
+    <input id="token" placeholder="from handshake.json">
+  </div>
+  <div class="buttons">
+    <button id="connect" type="button">Connect</button>
+    <button id="mute" type="button" disabled>Mute</button>
+  </div>
+  <p class="note" style="margin-top:14px">
+    Both values are in <code>%LOCALAPPDATA%\Sunday\handshake.json</code>,
+    rewritten each launch.
+  </p>
+
+  <h2 style="margin-top:20px">Sentences to TTS</h2>
+  <ul id="sentences"></ul>
+</aside>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const orb = $("orb"), stateLabel = $("statelabel"), transcript = $("transcript");
+let socket = null, current = null;
+
+const params = new URLSearchParams(location.search);
+if (params.get("port")) $("port").value = params.get("port");
+if (params.get("token")) $("token").value = params.get("token");
+
+function setState(value) {
+  orb.dataset.state = value;
+  stateLabel.textContent = value;
+}
+
+function addTurn(who, text) {
+  const wrap = document.createElement("div");
+  wrap.className = "turn";
+  const label = document.createElement("div");
+  label.className = "who";
+  label.textContent = who;
+  const said = document.createElement("div");
+  said.className = "said";
+  said.textContent = text;
+  wrap.append(label, said);
+  transcript.append(wrap);
+  transcript.scrollTop = transcript.scrollHeight;
+  return said;
+}
+
+function addNote(text, kind) {
+  const note = document.createElement("div");
+  note.className = "note" + (kind ? " " + kind : "");
+  note.textContent = text;
+  transcript.append(note);
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function connect() {
+  const port = $("port").value.trim(), token = $("token").value.trim();
+  if (!port || !token) { setState("error"); stateLabel.textContent = "port and token needed"; return; }
+
+  socket = new WebSocket(`ws://127.0.0.1:${port}`);
+  socket.onopen = () => socket.send(JSON.stringify({ type: "hello", token }));
+  socket.onclose = () => {
+    setState("idle"); stateLabel.textContent = "disconnected";
+    for (const id of ["text", "send", "stop", "mute"]) $(id).disabled = true;
+  };
+  socket.onerror = () => { setState("error"); };
+  socket.onmessage = (event) => handle(JSON.parse(event.data));
+}
+
+function handle(message) {
+  switch (message.type) {
+    case "ready":
+      for (const id of ["text", "send", "mute"]) $(id).disabled = false;
+      stateLabel.textContent = `connected · ${message.model}`;
+      $("text").focus();
+      break;
+    case "state":
+      setState(message.value);
+      break;
+    case "partial":
+      if (message.final) { addTurn("you", message.text); current = null; }
+      break;
+    case "token":
+      if (!current) current = addTurn("sunday", "");
+      current.textContent += message.text;
+      transcript.scrollTop = transcript.scrollHeight;
+      break;
+    case "sentence": {
+      const li = document.createElement("li");
+      li.textContent = message.text;
+      $("sentences").append(li);
+      break;
+    }
+    case "tool":
+      setState(message.scope === "external" ? "tool.external" : "tool.local");
+      addNote(
+        message.scope === "external"
+          ? `${message.name} — this leaves your machine`
+          : `${message.name} — on your machine`,
+        message.scope === "external" ? "external" : "local"
+      );
+      break;
+    case "query":
+      addNote(`query that left: ${message.text}`, "external");
+      break;
+    case "blocked":
+      setState("blocked");
+      addNote(`${message.name} refused`, "stop");
+      break;
+    case "notice":
+      addNote(message.text);
+      break;
+    case "error":
+      setState("error");
+      addNote(message.text, "stop");
+      break;
+    case "done":
+      current = null;
+      $("stop").disabled = true;
+      if (!message.committed) addNote("turn discarded, nothing remembered", "stop");
+      break;
+  }
+}
+
+$("connect").onclick = connect;
+$("composer").onsubmit = (event) => {
+  event.preventDefault();
+  const text = $("text").value.trim();
+  if (!text || !socket) return;
+  $("sentences").replaceChildren();
+  socket.send(JSON.stringify({ type: "text_input", text }));
+  $("text").value = "";
+  $("stop").disabled = false;
+};
+$("stop").onclick = () => socket && socket.send(JSON.stringify({ type: "cancel" }));
+$("mute").onclick = () => {
+  const muted = $("mute").textContent === "Mute";
+  socket.send(JSON.stringify({ type: "set_mute", muted }));
+  $("mute").textContent = muted ? "Unmute" : "Mute";
+};
+</script>
+</body>
+</html>

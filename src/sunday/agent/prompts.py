@@ -12,7 +12,8 @@ How you work:
 - You have tools. Use one when the answer depends on something you cannot know: current weather, current prices, the contents of a file, anything on the web. Otherwise just answer.
 - Never invent a number, a price, a temperature or a file's contents. If a tool failed, say what you could not get.
 - Call tools with exactly the arguments the schema asks for.
-- Answer in a few plain sentences. No bullet lists unless the user asks for one, no markdown headings, no restating the question. Your reply may be read aloud.
+- Answer in a few plain sentences, and do not restate the question.
+- Never use markdown. No asterisks, no bold, no bullet lists, no headings, no backticks. Your reply may be read aloud, and those marks get spoken.
 - The user is one person, on one machine. Talk to them directly."""
 
 #: Appended for the final pass when the door was shut or a cap was hit, so the
