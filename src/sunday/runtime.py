@@ -10,15 +10,29 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable
 
-from sunday import config, graph as graph_module, telemetry, tools as tool_registry
+from sunday import (
+    airlock,
+    config,
+    graph as graph_module,
+    guardrail,
+    telemetry,
+    tools as tool_registry,
+)
 from sunday.agent import loop as agent_loop
 from sunday.agent.llm import Agent, OllamaDown
 from sunday.state import Result, SundayState, TurnEvents, new_state
 
 TokenSink = Callable[[str], None]
 EventSink = Callable[[dict[str, Any]], None]
+
+EXTERNAL_TOOL = "ask_external"
+DOOR_SHUT = (
+    "refused: this turn touched a credential path, so nothing may be looked up "
+    "on the web. Tell the user that plainly."
+)
 
 
 class Cancelled(Exception):
@@ -33,6 +47,18 @@ class TurnContext:
         self.messages: list[Any] = []
         self.events = TurnEvents()
         self.log = log
+
+
+@dataclass
+class Flags:
+    """The door and its counters, threaded through one tool loop and written
+    back into state when the node returns."""
+
+    tainted: bool = False
+    blocked: bool = False
+    redactions: int = 0
+    saw_private: bool = False
+    hops: int = 0
 
 
 class Runtime:
@@ -80,8 +106,14 @@ class Runtime:
         if self._on_token is not None:
             self._on_token(text)
 
-    def _bound_tools(self, state: SundayState) -> list[tool_registry.Tool]:
-        return tool_registry.available(external_enabled=self.cfg.external.enabled)
+    def _bound_tools(self, flags: Flags) -> list[tool_registry.Tool]:
+        """Unbinding protects the next model invocation; the in-loop check
+        protects the current one. You need both, and the second is the one
+        people forget."""
+        exclude = {EXTERNAL_TOOL} if flags.tainted else set()
+        return tool_registry.available(
+            external_enabled=self.cfg.external.enabled, exclude=exclude
+        )
 
     # -- nodes ----------------------------------------------------------
 
@@ -98,14 +130,14 @@ class Runtime:
         tool_calls = state.get("tool_calls", 0)
         unresolved = state.get("unresolved")
         cap = self.cfg.limits.tool_calls
+        flags = Flags()
 
         while True:
             self._check_cancelled()
-            bound = self._bound_tools(state)
             self._emit(type="state", value="thinking")
             reply = self.agent.chat(
                 ctx.messages,
-                tools=tool_registry.schemas(bound),
+                tools=tool_registry.schemas(self._bound_tools(flags)),
                 max_tokens=agent_loop.TOOL_ROUND_MAX_TOKENS,
             )
             if not reply.tool_calls:
@@ -116,22 +148,74 @@ class Runtime:
                 self._check_cancelled()
                 if tool_calls >= cap:
                     unresolved = (
-                        f"stopped after {cap} tool calls, so some of this is "
-                        "unchecked"
+                        f"stopped after {cap} tool calls, so some of this is unchecked"
                     )
                     break
                 tool_calls += 1
-                result = self._run_tool(call.name, call.args, state)
+                working: SundayState = {**state, "tool_results": results}
+                result = self._dispatch(call.name, call.args, working, flags)
                 results.append(result)
                 ctx.messages.append(agent_loop.tool_message(result))
             if unresolved:
                 break
 
+        if flags.blocked:
+            ctx.events.notice(guardrail.NOTICE_BLOCKED)
+            unresolved = unresolved or "a web lookup was refused this turn"
+        if flags.redactions:
+            ctx.events.notice(guardrail.NOTICE_REDACTED)
+
         return {
             "tool_results": results,
             "tool_calls": tool_calls,
             "unresolved": unresolved,
+            "tainted": flags.tainted,
+            "blocked": flags.blocked,
+            "redactions": flags.redactions,
+            "saw_private": flags.saw_private,
+            "hops": flags.hops,
         }
+
+    # -- the tool loop's one guarded step -------------------------------
+
+    def _dispatch(
+        self,
+        name: str,
+        args: dict[str, Any],
+        state: SundayState,
+        flags: Flags,
+    ) -> Result:
+        """One tool call, with the door re-checked immediately before it.
+
+        A model can emit several calls in one response, so `read_file(".ssh/config")`
+        and `ask_external(...)` can arrive together, decided before either ran.
+        At bind time the turn was clean, so the door was open. That is why this
+        check runs per call, in order.
+        """
+        if name == EXTERNAL_TOOL:
+            if flags.tainted:
+                flags.blocked = True
+                self._emit(type="blocked", name=name)
+                return Result(name, args, DOOR_SHUT, "public", ok=False)
+            return self._ask_external(args, state, flags)
+
+        result = self._run_tool(name, args, state)
+
+        # Source taint: catches secrets that look ordinary. A password in your
+        # .env is just a word and no pattern will ever match it -- its path will.
+        if name in {"read_file", "list_dir", "write_file"} and guardrail.is_secret_path(
+            str(args.get("path", ""))
+        ):
+            flags.tainted = True
+
+        # Shape match: catches known key formats wherever they came from.
+        cleaned, hits = guardrail.redact(result.content)
+        if hits:
+            flags.redactions += hits
+            result = replace(result, content=cleaned)
+        if result.provenance in {"private", "secret"}:
+            flags.saw_private = True
+        return result
 
     def _run_tool(self, name: str, args: dict[str, Any], state: SundayState) -> Result:
         tool = tool_registry.get(name)
@@ -145,7 +229,7 @@ class Runtime:
             )
         self._emit(type="tool", name=tool.name, scope=tool.scope)
         content = tool.invoke(args)
-        ok = not content.startswith("error:") and not content.startswith("refused:")
+        ok = not content.startswith(("error:", "refused:"))
         return Result(
             tool=tool.name,
             args=args,
@@ -153,6 +237,37 @@ class Runtime:
             provenance=tool.provenance,
             ok=ok,
         )
+
+    def _ask_external(
+        self, args: dict[str, Any], state: SundayState, flags: Flags
+    ) -> Result:
+        if not self.cfg.external.enabled:
+            return Result(
+                EXTERNAL_TOOL,
+                args,
+                "refused: web lookups are switched off in config",
+                "public",
+                ok=False,
+            )
+        intent = str(args.get("intent") or args.get("query") or "").strip()
+        self._emit(type="tool", name=EXTERNAL_TOOL, scope="external")
+        query = airlock.compose(self.agent, state, intent)
+        query, hits = guardrail.scrub_query(query)
+        flags.redactions += hits
+        self._emit(type="query", text=query)
+        content, hops, ok = self._web(query)
+        flags.hops += hops
+        return Result(EXTERNAL_TOOL, {"query": query}, content, "public", ok=ok)
+
+    def _web(self, query: str) -> tuple[str, int, bool]:
+        """Replaced at milestone 4 by search -> fetch -> extract -> summarise."""
+        return (
+            f"error: the web pipeline is not built yet (cleared query: {query})",
+            0,
+            False,
+        )
+
+    # -- the final pass -------------------------------------------------
 
     def compose_reply(self, state: SundayState) -> dict:
         """The agent's final pass. One more turn of generation, this time
