@@ -1,6 +1,16 @@
-langgraph>=0.2.0
-langchain-anthropic>=0.3.0
-langchain-core>=0.3.0
-python-dotenv>=1.0.0
-requests>=2.32.0
-chromadb>=0.5.0
+# core
+langgraph>=1.0
+ollama>=0.6
+httpx>=0.28
+python-dotenv>=1.0
+chromadb>=1.0
+
+# the airlock's summariser (deepseek, Anthropic-compatible endpoint)
+anthropic>=0.60
+
+# the airlock's web pipeline
+ddgs>=9.0
+trafilatura>=2.0
+
+# dev
+pytest>=8.0

@@ -1,0 +1,247 @@
+"""The runtime: one model, one tool loop, one turn at a time.
+
+Everything the graph nodes need lives here -- the model handle, the tool
+registry and the per-turn scratch that state deliberately does not carry. One
+turn runs at a time by construction; barge-in cancels the turn in flight rather
+than starting a second one alongside it.
+"""
+
+from __future__ import annotations
+
+import threading
+import uuid
+from typing import Any, Callable, Iterable
+
+from sunday import config, graph as graph_module, telemetry, tools as tool_registry
+from sunday.agent import loop as agent_loop
+from sunday.agent.llm import Agent, OllamaDown
+from sunday.state import Result, SundayState, TurnEvents, new_state
+
+TokenSink = Callable[[str], None]
+EventSink = Callable[[dict[str, Any]], None]
+
+
+class Cancelled(Exception):
+    """The turn was interrupted. Nothing about it is committed."""
+
+
+class TurnContext:
+    """Per-turn scratch. Not in SundayState, because state is what the graph
+    decides on and a message list is not a decision."""
+
+    def __init__(self, log: telemetry.TurnLog) -> None:
+        self.messages: list[Any] = []
+        self.events = TurnEvents()
+        self.log = log
+
+
+class Runtime:
+    def __init__(
+        self,
+        cfg: config.Config | None = None,
+        *,
+        agent: Agent | None = None,
+    ) -> None:
+        self.cfg = cfg or config.get()
+        self.agent = agent or Agent(self.cfg)
+        self.session_id = uuid.uuid4().hex[:12]
+        self._cancel = threading.Event()
+        self._ctx: TurnContext | None = None
+        self._on_token: TokenSink | None = None
+        self._on_event: EventSink | None = None
+        self._graph = graph_module.build_graph(self)
+
+    # -- lifecycle ------------------------------------------------------
+
+    def preflight(self) -> None:
+        self.agent.preflight()
+
+    def cancel(self) -> None:
+        """Barge-in. The turn in flight stops and is never committed."""
+        self._cancel.set()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel.is_set():
+            raise Cancelled()
+
+    # -- plumbing -------------------------------------------------------
+
+    @property
+    def ctx(self) -> TurnContext:
+        if self._ctx is None:  # pragma: no cover - defensive
+            raise RuntimeError("no turn in flight")
+        return self._ctx
+
+    def _emit(self, **event: Any) -> None:
+        if self._on_event is not None:
+            self._on_event(event)
+
+    def _token(self, text: str) -> None:
+        if self._on_token is not None:
+            self._on_token(text)
+
+    def _bound_tools(self, state: SundayState) -> list[tool_registry.Tool]:
+        return tool_registry.available(external_enabled=self.cfg.external.enabled)
+
+    # -- nodes ----------------------------------------------------------
+
+    def memory_read(self, state: SundayState) -> dict:
+        """Placeholder until milestone 5. Memory is read before anything else
+        happens, including before the agent decides what to do."""
+        return {}
+
+    def agent_node(self, state: SundayState) -> dict:
+        ctx = self.ctx
+        ctx.messages = agent_loop.build_messages(state)
+
+        results: list[Result] = list(state.get("tool_results") or [])
+        tool_calls = state.get("tool_calls", 0)
+        unresolved = state.get("unresolved")
+        cap = self.cfg.limits.tool_calls
+
+        while True:
+            self._check_cancelled()
+            bound = self._bound_tools(state)
+            self._emit(type="state", value="thinking")
+            reply = self.agent.chat(
+                ctx.messages,
+                tools=tool_registry.schemas(bound),
+                max_tokens=agent_loop.TOOL_ROUND_MAX_TOKENS,
+            )
+            if not reply.tool_calls:
+                break
+
+            ctx.messages.append(reply.raw)
+            for call in reply.tool_calls:
+                self._check_cancelled()
+                if tool_calls >= cap:
+                    unresolved = (
+                        f"stopped after {cap} tool calls, so some of this is "
+                        "unchecked"
+                    )
+                    break
+                tool_calls += 1
+                result = self._run_tool(call.name, call.args, state)
+                results.append(result)
+                ctx.messages.append(agent_loop.tool_message(result))
+            if unresolved:
+                break
+
+        return {
+            "tool_results": results,
+            "tool_calls": tool_calls,
+            "unresolved": unresolved,
+        }
+
+    def _run_tool(self, name: str, args: dict[str, Any], state: SundayState) -> Result:
+        tool = tool_registry.get(name)
+        if tool is None:
+            return Result(
+                tool=name,
+                args=args,
+                content=f"error: no tool called {name!r}",
+                provenance="public",
+                ok=False,
+            )
+        self._emit(type="tool", name=tool.name, scope=tool.scope)
+        content = tool.invoke(args)
+        ok = not content.startswith("error:") and not content.startswith("refused:")
+        return Result(
+            tool=tool.name,
+            args=args,
+            content=content,
+            provenance=tool.provenance,
+            ok=ok,
+        )
+
+    def compose_reply(self, state: SundayState) -> dict:
+        """The agent's final pass. One more turn of generation, this time
+        producing the reply you see rather than another tool call."""
+        ctx = self.ctx
+        think = agent_loop.should_think(state)
+        hint = agent_loop.compose_instruction(state)
+        if hint:
+            ctx.messages.append(hint)
+
+        self._emit(type="state", value="speaking")
+        pieces: list[str] = []
+        for piece in self.agent.stream(ctx.messages, think=think):
+            self._check_cancelled()
+            if not pieces:
+                ctx.log.mark_first_token()
+            pieces.append(piece)
+            self._token(piece)
+
+        final = "".join(pieces).strip()
+        return {"final_response": final, "thinking": think, "committed": True}
+
+    def memory_write(self, state: SundayState) -> dict:
+        """Placeholder until milestone 5. Runs after the last token, never
+        before, so a disk write cannot delay the first word."""
+        return {}
+
+    # -- one turn -------------------------------------------------------
+
+    def run_turn(
+        self,
+        task: str,
+        *,
+        modality: str = "text",
+        on_token: TokenSink | None = None,
+        on_event: EventSink | None = None,
+    ) -> SundayState:
+        self._cancel.clear()
+        trace_id = uuid.uuid4().hex[:12]
+        log = telemetry.TurnLog(trace_id, modality)
+        ctx = TurnContext(log)
+        self._ctx = ctx
+        self._on_token = on_token
+        self._on_event = on_event
+
+        state = new_state(
+            task,
+            session_id=self.session_id,
+            trace_id=trace_id,
+            modality=modality,  # type: ignore[arg-type]
+        )
+        try:
+            final: SundayState = self._graph.invoke(state)
+        except Cancelled:
+            self._emit(type="done", committed=False)
+            log.set(cancelled=True, committed=False)
+            log.write()
+            return {**state, "committed": False}
+        except OllamaDown as exc:
+            message = str(exc)
+            self._emit(type="error", text=message)
+            log.set(error=message, committed=False)
+            log.write()
+            return {**state, "final_response": message, "committed": False}
+        finally:
+            self._on_token = None
+            self._on_event = None
+            self._ctx = None
+
+        notices = ctx.events.notices
+        for notice in notices:
+            self._emit(type="notice", text=notice)
+        log.set(
+            tools=[r.tool for r in final.get("tool_results", [])],
+            provenance=[r.provenance for r in final.get("tool_results", [])],
+            tainted=final.get("tainted", False),
+            blocked=final.get("blocked", False),
+            redactions=final.get("redactions", 0),
+            hops=final.get("hops", 0),
+            tool_calls=final.get("tool_calls", 0),
+            thinking=final.get("thinking", False),
+            context_tokens=final.get("context_tokens", 0),
+            committed=final.get("committed", False),
+        )
+        log.write()
+        self._emit(type="done", committed=final.get("committed", False))
+        final["notices"] = notices  # type: ignore[typeddict-unknown-key]
+        return final
+
+
+def notices_of(state: SundayState) -> Iterable[str]:
+    return state.get("notices", [])  # type: ignore[typeddict-item]

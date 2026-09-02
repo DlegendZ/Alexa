@@ -1,0 +1,73 @@
+# Sunday configuration.
+#
+# Copy to `config.toml` at the repo root (development) or to
+# %LOCALAPPDATA%\Sunday\config.toml (installed). The repo-root copy wins when
+# both exist. Set SUNDAY_HOME to move the data directory somewhere else.
+
+[models]
+agent           = "qwen3.5:2b"
+ollama_url      = "http://127.0.0.1:11434"
+context_tokens  = 8192
+thinking_budget = 1024
+# The airlock summariser. The only model that is not local, and it only ever
+# sees a cleared query plus text that was already public.
+summariser      = "deepseek-v4-flash"
+
+[audio]
+sample_rate   = 16000
+input_device  = ""     # empty = system default
+output_device = ""
+aec_delay_ms  = 60     # measure once on your hardware
+vad_threshold = 0.5
+vad_silence_ms = 700
+min_clip_ms   = 300
+max_clip_ms   = 30000
+
+[wake]
+enabled     = true
+model       = "hey_jarvis"
+threshold   = 0.5
+cooldown_ms = 1500
+
+[echo]
+speech_threshold_while_speaking = 0.8
+transcript_similarity_cutoff    = 0.6
+
+[files]
+roots = [
+  "C:/Users/User/Documents/Sunday",
+  "E:/Work/Sunday",
+]
+max_read_bytes = 200000
+
+[memory]
+distance_cutoff = 0.45   # tune with real turns
+top_k           = 5
+idle_minutes    = 10
+slice_summary   = 1024
+slice_recent    = 3072
+slice_retrieved = 1024
+slice_tools     = 2048
+
+[external]
+enabled           = true
+search            = "ddgs"
+max_hops          = 2
+fetch_timeout_s   = 10
+fetch_max_bytes   = 2000000
+extract_max_chars = 12000
+query_max_chars   = 200
+
+[guardrail]
+secret_paths = [".env", "*.key", "*.pem", "id_rsa", "credentials*",
+                ".ssh/", ".aws/", "*.kdbx", "google_token.json"]
+key_shapes   = ["sk-", "ghp_", "AKIA", "xoxb-", "eyJ", "-----BEGIN"]
+
+[limits]
+tool_calls = 5   # hard cap on tool calls per turn
+
+[ui]
+fps_focused     = 60
+fps_blurred     = 10
+start_minimised = false
+autostart       = false
