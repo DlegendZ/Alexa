@@ -16,6 +16,7 @@ from typing import Any, Callable, Iterable
 from sunday import (
     airlock,
     config,
+    fastpaths,
     graph as graph_module,
     guardrail,
     stream,
@@ -172,6 +173,17 @@ class Runtime:
         tools_budget = budget.slices(self.cfg).tools
         flags = Flags()
         told_about_the_door = False
+
+        # Two deterministic patterns run before the model is asked anything.
+        # The answer arrives as an ordinary tool result, so the turn continues
+        # normally and a mixed question loses nothing.
+        shortcut = fastpaths.match(state["task"])
+        if shortcut is not None and not results:
+            result = self._dispatch(shortcut.tool, dict(shortcut.args), state, flags)
+            tool_calls += 1
+            results.append(result)
+            ctx.messages.append(agent_loop.tool_message(result))
+            ctx.log.set(fast_path=shortcut.tool)
 
         while True:
             self._check_cancelled()
