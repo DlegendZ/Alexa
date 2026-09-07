@@ -17,13 +17,13 @@ def test_reads_a_file_inside_a_root(sandbox):
 def test_refuses_a_path_outside_every_root(sandbox, tmp_path):
     outside = tmp_path / "outside.txt"
     outside.write_text("not yours", encoding="utf-8")
-    assert files.read_file(str(outside)) == files.REFUSED
+    assert files.read_file(str(outside)) == files.refused()
 
 
 def test_refuses_traversal_out_of_a_root(sandbox, tmp_path):
     (tmp_path / "secret.txt").write_text("nope", encoding="utf-8")
     traversal = str(sandbox / ".." / "secret.txt")
-    assert files.read_file(traversal) == files.REFUSED
+    assert files.read_file(traversal) == files.refused()
 
 
 def test_refuses_before_touching_the_disk(sandbox, monkeypatch):
@@ -34,7 +34,7 @@ def test_refuses_before_touching_the_disk(sandbox, monkeypatch):
         raise AssertionError("the disk was touched for a refused path")
 
     monkeypatch.setattr(Path, "read_bytes", explode)
-    assert files.read_file("C:/Windows/System32/config/SAM") == files.REFUSED
+    assert files.read_file("C:/Windows/System32/config/SAM") == files.refused()
 
 
 def test_case_insensitive_root_match_on_windows(sandbox):
@@ -61,7 +61,7 @@ def test_write_creates_parents_inside_the_root(sandbox):
 
 def test_write_refuses_outside_the_root(sandbox, tmp_path):
     target = tmp_path / "escape.txt"
-    assert files.write_file(str(target), "hello") == files.REFUSED
+    assert files.write_file(str(target), "hello") == files.refused()
     assert not target.exists()
 
 
@@ -90,7 +90,7 @@ def test_errors_arrive_as_tool_results_not_exceptions(sandbox):
 
     tool = tools.get("read_file")
     assert tool is not None
-    assert tool.invoke({"path": ""}) == files.REFUSED
+    assert tool.invoke({"path": ""}) == files.refused()
     assert tool.invoke({"wrong": "arg"}).startswith("error: bad arguments")
 
 
@@ -106,7 +106,7 @@ def test_a_relative_path_is_tried_against_the_roots_not_the_cwd(sandbox):
 
 def test_a_relative_path_still_cannot_leave_the_roots(sandbox, tmp_path):
     (tmp_path / "secret.txt").write_text("nope", encoding="utf-8")
-    assert files.read_file("../secret.txt") == files.REFUSED
+    assert files.read_file("../secret.txt") == files.refused()
 
 
 def test_a_relative_path_that_exists_nowhere_can_still_be_created(sandbox):

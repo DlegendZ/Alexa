@@ -14,7 +14,7 @@ thinking_budget = 1024
 summariser      = "deepseek-v4-flash"
 # Taken off the top before the memory slices are sized: the system prompt, the
 # tool schemas and the memory framing block, then room for the reply itself.
-overhead_tokens = 2000
+overhead_tokens = 2400
 reply_tokens    = 768
 
 [audio]
@@ -76,7 +76,7 @@ key_shapes   = ["sk-", "sk_live_", "ghp_", "gho_", "glpat-", "AKIA", "ASIA",
                 "eyJ", "-----BEGIN"]
 
 [limits]
-tool_calls = 5   # hard cap on tool calls per turn
+tool_calls = 8   # hard cap per turn: room to be wrong once and recover
 
 [ui]
 fps_focused     = 60

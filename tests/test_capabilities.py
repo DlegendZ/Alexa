@@ -88,3 +88,60 @@ def test_a_multi_line_tool_result_gets_the_no_list_reminder(cfg):
     one_line = Result("get_weather", {}, "Jakarta: 31C", "public")
     assert loop.list_instruction({"tool_results": [one_line]}) is None
     assert loop.list_instruction({}) is None
+
+
+def test_a_failed_call_is_told_it_may_try_something_else(cfg, tmp_path):
+    """A refusal that is never acted on is a turn that gives up. Asked to move
+    a file, the model read it, listed two folders, read it again, listed a
+    third, ran out of budget and told the user to do it themselves -- never
+    reaching the tool that does the job."""
+    from sunday.agent import prompts
+    from sunday.agent.llm import Reply, ToolCall
+    from sunday.runtime import Runtime
+
+    from tests.test_review_fixes import NoMemory, Scripted
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+
+    agent = Scripted(
+        [
+            Reply(tool_calls=[ToolCall("read_file", {"path": str(root / "gone.txt")})]),
+            Reply(content="I could not read that file."),
+        ]
+    )
+    Runtime(cfg, agent=agent, memory=NoMemory()).run_turn("read my note")  # type: ignore[arg-type]
+
+    # The round after the failure sees the hint; the first round does not.
+    assert prompts.RETRY_HINT not in [m.get("content") for m in agent.seen[0]]
+    assert prompts.RETRY_HINT in [
+        m.get("content") for m in agent.seen[1] if isinstance(m, dict)
+    ]
+
+
+def test_the_retry_hint_is_said_once_not_once_per_failure(cfg, tmp_path):
+    """Repeating it every round is how a 2b ends up sending the same broken
+    call until the cap stops it."""
+    from sunday.agent import prompts
+    from sunday.agent.llm import Reply, ToolCall
+    from sunday.runtime import Runtime
+
+    from tests.test_review_fixes import NoMemory, Scripted
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+
+    missing = ToolCall("read_file", {"path": str(root / "gone.txt")})
+    agent = Scripted(
+        [
+            Reply(tool_calls=[missing]),
+            Reply(tool_calls=[missing]),
+            Reply(content="I could not read it."),
+        ]
+    )
+    Runtime(cfg, agent=agent, memory=NoMemory()).run_turn("read my note")  # type: ignore[arg-type]
+
+    last = [m.get("content") for m in agent.seen[-1] if isinstance(m, dict)]
+    assert last.count(prompts.RETRY_HINT) == 1

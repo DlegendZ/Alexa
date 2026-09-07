@@ -214,6 +214,14 @@ def model_wants(n: int, names: list[str]) -> Line:
     )
 
 
+def second_chance() -> Line:
+    return _line(
+        "agent",
+        "it answered without calling anything. Asking once more, in case it "
+        "talked itself out of a job it was actually asked to do.",
+    )
+
+
 def model_is_ready() -> Line:
     return _line(
         "agent",

@@ -49,14 +49,17 @@ class Models:
     #: What no memory slice pays for: the system prompt, the bound tool
     #: schemas, the memory framing block, and the standing system lines the
     #: runtime adds every turn -- which folders are open, and what asks before
-    #: it happens. Measured at ~1870 worst case with ten tools bound, of which
-    #: the schemas are 1239 on their own. Underestimating this overruns
-    #: num_ctx and Ollama truncates without saying so, so the rest is headroom.
+    #: it happens. Measured at ~2260 worst case: 1239 of bound schemas, 576 of
+    #: system prompt, and the rest in framing and the situational lines.
+    #: Underestimating this overruns num_ctx, and Ollama answers by dropping
+    #: the oldest messages without saying so, so the rest is headroom.
     #:
-    #: The trend is the thing to watch: every tool added is paid for out of
-    #: the memory slices, every turn, whether or not it is called. At eight
-    #: tools this was 1630. There is not room for many more at an 8k window.
-    overhead_tokens: int = 2000
+    #: The trend is the thing to watch: all of it is paid every turn, whether
+    #: or not a tool is called, out of the memory slices. Eight tools and a
+    #: short prompt was 1630; ten tools and a prompt that actually routes them
+    #: is 2260. At an 8k window that leaves the five slices about 5000 tokens
+    #: between them, and there is no room for another round of this.
+    overhead_tokens: int = 2400
     #: Room for the reply itself, which has no slice of its own.
     reply_tokens: int = 768
 
@@ -165,7 +168,11 @@ class Guardrail:
 
 @dataclass
 class Limits:
-    tool_calls: int = 5
+    #: Eight rather than five, so a turn can be wrong once and still finish.
+    #: Five was sized for a turn that meant one lookup; a turn that picks the
+    #: wrong tool, reads the refusal and tries again needs room for the
+    #: recovery as well as the mistake.
+    tool_calls: int = 8
 
 
 @dataclass

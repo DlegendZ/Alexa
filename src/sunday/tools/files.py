@@ -18,11 +18,65 @@ from pathlib import Path
 from sunday import config
 from sunday.tools import Tool, register
 
+#: The sentence itself. `refused()` is what a tool actually returns -- it adds
+#: the folders that *are* allowed, which is the part that changes behaviour.
 REFUSED = (
-    "refused: path is outside the configured roots. Tell the user this folder "
-    "is not one Sunday is allowed to open, and that they can add it to "
-    "config.toml under [files] roots. Do not guess at another reason."
+    "refused: that path is outside the folders Sunday may open. Tell the user "
+    "this folder is not one Sunday is allowed into, and that they can add it "
+    "to config.toml under [files] roots. Do not guess at another reason."
 )
+
+
+def nearest_root(attempted: str) -> Path | None:
+    """The root the user probably meant, or None.
+
+    Two cases, both common and both recoverable. They pointed at a folder that
+    *contains* a root -- "the documents folder", when the root is
+    `Documents/Sunday`. Or they named a folder whose last part matches a root's,
+    from a different place. Anything else gets the plain list.
+    """
+    try:
+        candidate = Path(attempted.strip()).expanduser()
+    except (OSError, ValueError):
+        return None
+    text = os.path.normcase(str(candidate))
+    for root in roots():
+        if os.path.normcase(str(root)).startswith(text.rstrip("/\\") + os.sep):
+            return root
+        if candidate.name and os.path.normcase(candidate.name) == os.path.normcase(root.name):
+            return root
+    return None
+
+
+def refused(attempted: str = "") -> str:
+    """The refusal, with somewhere to go next.
+
+    Without that, a wrong guess is a dead end. Watching a real turn: asked to
+    move a file to "the documents folder" the model passed
+    `C:/Users/User/Documents`, one level above the root -- correctly refused,
+    and then it spent three more calls guessing, because the sentence it got
+    back described the rule instead of the fix.
+
+    One suggestion beats the full list. Handed the list, the same model spliced
+    two roots together into `C:/Users/User/Documents/Sunday/E:/Work/Sunday` and
+    tried that. A single path is a thing it can copy correctly.
+    """
+    near = nearest_root(attempted) if attempted else None
+    if near is not None:
+        return (
+            f"{REFUSED} The folder Sunday can open there is {near} -- if that "
+            f"is what the user meant, call the tool again with that exact path "
+            f"(or a file inside it) and change nothing else."
+        )
+    listed = ", ".join(config.get().files.roots)
+    if not listed:
+        return REFUSED
+    return (
+        f"{REFUSED} The only folders Sunday may open are: {listed}. Use one of "
+        f"those paths exactly as written, or tell the user plainly."
+    )
+
+
 TRUNCATED = "\n[truncated]"
 
 
@@ -95,7 +149,7 @@ def resolve(raw: str) -> Path | None:
 def read_file(path: str) -> str:
     target = resolve(path)
     if target is None:
-        return REFUSED
+        return refused(path)
     if not target.exists():
         return f"error: no such file: {path}"
     if target.is_dir():
@@ -115,7 +169,7 @@ def read_file(path: str) -> str:
 def write_file(path: str, text: str) -> str:
     target = resolve(path)
     if target is None:
-        return REFUSED
+        return refused(path)
     if is_credential_path(target):
         return "refused: will not write over a credential file"
     if target.is_dir():
@@ -142,7 +196,7 @@ def delete_file(path: str) -> str:
     """
     target = resolve(path)
     if target is None:
-        return REFUSED
+        return refused(path)
     if is_credential_path(target):
         return "refused: will not delete a credential file"
     if target.is_dir():
@@ -165,13 +219,27 @@ def _landing(source: Path, destination: str) -> Path | None:
 
     A destination that is an existing folder means "into it, keeping the name",
     which is what a person means by copy-paste and what the model will pass when
-    it repeats the folder back. Anything else is taken as the new full path,
-    so renaming while moving works in one call.
+    it repeats the folder back. Anything else is taken as the new full path, so
+    renaming while moving works in one call.
+
+    A trailing slash counts as a folder even when nothing is there yet. The
+    model writes `E:/Work/Sunday/archive/` when it means a folder, and without
+    this that becomes a *file* called `archive` -- which then blocks the folder
+    from ever being created, and is the sort of mess nobody thinks to look for.
     """
     target = resolve(destination)
     if target is None:
         return None
-    return target / source.name if target.is_dir() else target
+    wants_folder = (
+        target.is_dir()
+        or destination.rstrip().endswith(("/", "\\"))
+        # `gold.txt` -> `documents` is somebody naming a folder, not a file.
+        # Without this the move quietly creates a *file* called `documents`,
+        # the original is gone, and the next turn goes hunting for it. Seen
+        # exactly that, three runs in a row.
+        or (not target.suffix and source.suffix and not target.exists())
+    )
+    return target / source.name if wants_folder else target
 
 
 def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | str:
@@ -187,7 +255,7 @@ def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | st
     """
     src = resolve(source)
     if src is None:
-        return REFUSED
+        return refused(source)
     if not src.exists():
         return f"error: no such file: {source}"
     if src.is_dir():
@@ -204,7 +272,20 @@ def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | st
 
     dst = _landing(src, destination)
     if dst is None:
-        return REFUSED
+        return refused(destination)
+    if not dst.parent.is_dir():
+        # Never create a folder to make a move fit. Asked to move a file to
+        # "the documents folder", the model invented `E:/Work/Sunday/documents`
+        # three separate ways -- as a file, then as a folder, then as
+        # `documents/folder` -- and each time the original ended up somewhere
+        # the next turn could not find. A missing folder is a question for the
+        # user, not a gap to fill.
+        listed = ", ".join(config.get().files.roots)
+        return (
+            f"error: there is no folder at {dst.parent}, and Sunday does not "
+            f"create folders. The folders that exist for this are: {listed}. "
+            f"Use one of those exactly, or ask the user which they meant."
+        )
     if is_credential_path(dst):
         return f"refused: will not {verb} a file onto a credential path"
     if dst.is_dir():  # pragma: no cover - _landing only returns a dir's child
@@ -242,7 +323,6 @@ def copy_file(source: str, destination: str) -> str:
     src, dst = prepared
 
     try:
-        dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
     except OSError as exc:
         return f"error: could not copy {source} ({exc.strerror or exc})"
@@ -289,11 +369,6 @@ def move_file(source: str, destination: str) -> str:
     src, dst = prepared
 
     try:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return f"error: could not move {source} ({exc.strerror or exc})"
-
-    try:
         os.replace(src, dst)
     except OSError as exc:
         if not _is_cross_device(exc):
@@ -323,7 +398,7 @@ def _move_across_devices(src: Path, dst: Path, source: str) -> str:
 def list_dir(path: str) -> str:
     target = resolve(path)
     if target is None:
-        return REFUSED
+        return refused(path)
     if not target.exists():
         return f"error: no such directory: {path}"
     if not target.is_dir():

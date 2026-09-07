@@ -2,6 +2,13 @@
 
 Every turn reads both this and the long-term store -- they are not
 alternatives. This one is what makes "that file" and "there" resolvable.
+
+Which it could not do, for a while, because it recorded what was *said* and not
+what was *touched*. "Move it back to documents" needs the path the last turn
+moved, and the last reply was "the file has been moved to the work folder" --
+no path in it anywhere. The model filled the gap with the path from two turns
+ago, which was the one place the file was no longer at. So an exchange now
+carries the paths its tools were called with.
 """
 
 from __future__ import annotations
@@ -14,14 +21,51 @@ from sunday import config
 from sunday.memory import budget
 
 
+#: Argument names that name a file or a folder. The values are what makes a
+#: pronoun resolvable next turn; everything else in a call is noise here.
+PATH_ARGS = ("path", "source", "destination")
+
+#: Long enough for two Windows paths, short enough that a turn full of tool
+#: calls cannot crowd out the turns around it.
+TOOLS_LINE_CHARS = 200
+
+
 @dataclass
 class Exchange:
     task: str
     response: str
     ts: float = field(default_factory=time.time)
+    #: One rendered line per tool call, paths included. Empty for a turn that
+    #: called nothing.
+    tools: str = ""
 
     def render(self) -> str:
-        return f"You: {self.task}\nSunday: {self.response}"
+        line = f"You: {self.task}\nSunday: {self.response}"
+        if self.tools:
+            # Below the reply, framed as a note rather than as speech: the 2b
+            # copies whatever wording is nearest, and this must not come back
+            # out of its mouth as prose.
+            line += f"\n(files touched: {self.tools})"
+        return line
+
+
+def describe(results) -> str:
+    """The paths a turn actually operated on, for the next turn to point at.
+
+    Only successful calls, and only their path arguments. A refused call
+    touched nothing, and offering its path back as context is how the model
+    ends up retrying a path the sandbox already rejected.
+    """
+    parts: list[str] = []
+    for result in results or []:
+        if not getattr(result, "ok", False):
+            continue
+        args = getattr(result, "args", {}) or {}
+        paths = [str(args[key]) for key in PATH_ARGS if args.get(key)]
+        if paths:
+            parts.append(f"{result.tool} {' -> '.join(paths)}")
+    line = "; ".join(parts)
+    return line[:TOOLS_LINE_CHARS].rstrip() if len(line) > TOOLS_LINE_CHARS else line
 
 
 @dataclass
@@ -32,8 +76,8 @@ class SessionMemory:
 
     # -- writing --------------------------------------------------------
 
-    def add(self, task: str, response: str) -> None:
-        self.exchanges.append(Exchange(task, response))
+    def add(self, task: str, response: str, results=None) -> None:
+        self.exchanges.append(Exchange(task, response, tools=describe(results)))
         self.last_activity = time.time()
 
     def touch(self) -> None:

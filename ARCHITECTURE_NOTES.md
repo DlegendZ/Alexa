@@ -615,3 +615,81 @@ Three details that are easy to get wrong:
   destination for writing before reading anything, so a copy onto an alias of the source
   truncates it to nothing and then copies the nothing. The string compare cannot see that;
   a device-and-inode comparison can.
+
+## 45. The turn gets a second chance, and the loop's own instructions never reach the reply
+
+**Doc:** Stage 03 — one agent, a tool loop that runs until the model stops asking for tools.
+**Code:** `prompts.SECOND_CHANCE` and `prompts.RETRY_HINT`, appended through
+`TurnContext.scaffold`, and removed again by `clear_scaffolding` before `compose_reply`.
+`limits.tool_calls` 5 → 8.
+**Why:** the loop could see a tool *fail*. It could not see the model decline to act, and
+that is the failure that actually happens. Asked to move a file, the 2b did one of two
+things, both of which look like a finished turn from inside the loop: it claimed the move
+had happened with no tool call anywhere in it, or it refused with invented reasoning
+("today's tools are restricted to that drive"). No call ran, so nothing errored, so nothing
+prompted a retry.
+
+So a turn that reaches the end of a round with **no tool calls at all** is asked once more,
+with the request restated. Once, and only when nothing ran: a turn that already used a tool
+has evidence to write from, and nudging there is how a 2b talks itself into calling the same
+thing twice. `RETRY_HINT` is the same idea for the case the loop *can* see — a call came
+back refused, and the model needed telling that a corrected retry was an option at all.
+
+**The part that cost a working build.** Both nudges are instructions to the loop, and they
+sat in the message list when the reply was written. A 2b copies whatever wording is nearest,
+and these were nearest of all. It began answering *with them*: "I cannot use tools in this
+session", "Do not call any tools to reply. Only respond naturally" — sentences nobody wrote
+and nothing meant, delivered to the user as Sunday's own words. So the loop's instructions
+are now tracked and stripped before the final pass. Facts about the turn stay — the web door,
+a spent cap, an unresolved gap all have to be explained. Instructions about *how to think*
+go. Note 19 was the same lesson about retrieved memory; this is the third time it has been
+learned.
+
+Eight tool calls rather than five, because a turn now has to be able to be wrong once and
+still finish: the transcript that prompted this spent all five on reads and listings without
+ever reaching the tool that does the job.
+
+## 46. The system prompt got longer, and had to be cut back
+
+**Doc:** Stage 03 — "kept short on purpose. A 2b spends its attention on the last thing it
+read, so a long constitution costs more than it buys."
+**Code:** `prompts.SYSTEM` went from 325 tokens to 673, then back to 276.
+**Why:** the long version was written to fix real behaviour — the model narrating its own
+confirmation rules at the user, calling `list_dir` twice to answer "i love you sunday", and
+moving a file by reading it and writing it somewhere else. Each rule was earned by a
+transcript.
+
+Then it started reciting the prompt. "The user said they love you sunday. You are Sunday, a
+local personal assistant on their Windows computer. This statement is an expression of
+affection rather than a request. Do not call any tools to reply." That is the constitution
+coming back out of its mouth, and it is exactly the failure the original note predicted.
+
+The kept version is seven lines, each one paying for itself: no markdown, do not invent, do
+not claim you did something a tool did not do, moving is `move_file`, a folder as the
+destination, do not go looking to check whether you are allowed, and chat is not a job. The
+rules that were cut were true and not worth their length.
+
+## 47. Sunday does not create folders
+
+**Doc:** note 43 — a destination folder means "into it, keeping the name".
+**Code:** `_prepare` refuses when the destination's parent is not an existing directory, and
+neither transfer calls `mkdir` any more. `_landing` also reads an extensionless destination
+as a folder when the source has a suffix.
+**Why:** "move gold.txt to the documents folder" has no correct answer here — the configured
+root is `Documents/Sunday`, and there is no folder called `documents`. The model invented one
+three separate ways across three runs: as a *file* named `documents` holding the gold price,
+as a folder `E:/Work/Sunday/documents/`, and as `E:/Work/Sunday/documents/folder`. Every one
+of them succeeded, so every one of them moved the user's file somewhere the next turn could
+not find it, and the next turn then hunted through folders and gave up.
+
+Creating a folder was never asked for in any of those turns. A missing folder is a question
+for the user, and now that is what it becomes: the error names the folders that do exist. The
+model's next move, having been told, was to ask which one was meant — which is the right
+answer to an ambiguous instruction.
+
+The extensionless rule is the cheap half: `gold.txt` → `documents` is somebody naming a
+folder, not a file, and taken as a filename it silently swallows the file.
+
+**Still open.** The roots have no names. The user says "the documents folder" and means
+`C:/Users/User/Documents/Sunday`; nothing in the configuration says so, and the model is left
+matching words against paths. A label per root in `config.toml` would end this properly.

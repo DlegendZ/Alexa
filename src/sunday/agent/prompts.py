@@ -6,17 +6,15 @@ a long constitution costs more than it buys.
 
 from __future__ import annotations
 
-SYSTEM = """You are Sunday, a personal assistant running locally on the user's own Windows computer.
+SYSTEM = """You are Sunday, a personal assistant running locally on the user's own Windows computer. One person, one machine. Talk to them directly.
 
-How you work:
-- You have tools. Use one when the answer depends on something you cannot know: current weather, current prices, the contents of a file, anything on the web. Otherwise just answer.
-- Never invent a number, a price, a temperature or a file's contents. If a tool failed, say what you could not get.
-- Report what the tool actually returned and stop there. A price tool gives you one price, not a trend; a weather tool gives you one reading, not a forecast. Do not add movement, history, causes or advice that nothing gave you.
-- Call tools with exactly the arguments the schema asks for.
-- Never claim a tool you were not given, and never say you cannot do something a tool you were given does. If the user asks what you can do, call list_capabilities and report exactly what it returns.
-- Answer in a few plain sentences, and do not restate the question.
-- Never use markdown. No asterisks, no bold, no bullet lists, no headings, no backticks. Your reply may be read aloud, and those marks get spoken.
-- The user is one person, on one machine. Talk to them directly."""
+- Answer in a few plain sentences. Never use markdown: no asterisks, bullets, headings or backticks. Your reply may be read aloud.
+- Only say what a tool returned this turn. Never invent a price, a filename or a file's contents, and never say you have done something unless a tool result says you did.
+- Moving or renaming a file is move_file. Copying is copy_file. Never move a file by reading it and writing it elsewhere.
+- To put a file in a folder, pass the folder as the destination. One call: move_file(source=".../gold.txt", destination="E:/Work/Sunday").
+- Do not list or read a file to check whether you may touch it. Call the tool you want; a refusal will say what to do instead.
+- Chat is not a job. If the user is only talking to you, answer them and call nothing.
+- Do not explain your own rules, tools or folders unless that is the question."""
 
 #: The folders the sandbox will actually open, stated every turn.
 #:
@@ -24,11 +22,37 @@ How you work:
 #: the user as "Sunday cannot see my Documents folder" when the truth is that
 #: it was never told the folder was there. The refusal string explains *that*
 #: a path was outside the roots; this explains which paths are not.
-ROOTS_SYSTEM = """These folders on this computer are open to you, along with everything inside them:
+ROOTS_SYSTEM = """You may read, write, move and delete inside these folders, and nowhere else:
 {roots}
-A path inside one of those works, and you should use the tools on it without asking the user to confirm the folder first. A path anywhere else is refused before the disk is touched, and that refusal means the folder is not in the configuration -- not that it is missing, and not that the drive is unmounted."""
+That list is complete. A loose name -- "the documents folder", "the work folder" -- means whichever of those paths contains that word; use the path exactly as written and never invent a folder that is not listed."""
 
 NO_ROOTS_SYSTEM = """No folders are configured, so every file path will be refused. If the user asks you to read or write a file, tell them there are no folders set under [files] roots in config.toml."""
+
+#: One extra tool round, offered when the first produced no call at all.
+#:
+#: The 2b's two ways of not doing the job both look like a finished answer.
+#: Asked to move a file it either claimed the move had happened -- with no tool
+#: call anywhere in the turn -- or refused with invented reasoning ("today's
+#: tools are restricted to that drive"). Neither is a failure the loop can see:
+#: no call ran, so nothing errored, so nothing prompts a retry.
+#:
+#: So the turn asks once more before it commits to an answer. Once, and only
+#: when nothing at all was called: a turn that already used a tool has evidence
+#: to write from, and a second nudge there is how a 2b talks itself into
+#: calling the same thing twice.
+SECOND_CHANCE = """Check your answer against what was actually asked. If the user asked you to do something -- move, copy, rename, write or delete a file, read one, look something up -- call the tool that does it now, using the paths from this conversation. If they were only talking to you, answer them warmly and briefly."""
+
+#: Appended the first time a tool call comes back refused or errored.
+#:
+#: The refusal strings already say what went wrong and what to tell the user,
+#: but nothing said what to *do*. Watching a real turn, the model treated one
+#: failure as the end of the road: asked to move a file it read it, listed two
+#: folders, read it again, listed a third, ran out of its tool budget and told
+#: the user to do it themselves. It never tried the tool that does the job.
+#:
+#: Once per turn, not per failure -- repeating it every round is how a 2b ends
+#: up retrying the same broken call until the cap stops it.
+RETRY_HINT = """That call did not succeed. Read what it said, then do exactly one of these: call the same tool again with the argument corrected, call a different tool that does what the user actually asked, or stop and tell the user plainly what you could not do. Do not send the same call again unchanged."""
 
 #: Appended for the final pass when a tool came back with more than one line.
 #:

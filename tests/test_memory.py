@@ -60,10 +60,16 @@ def test_the_real_overhead_fits_the_reservation(cfg):
                 roots="\n".join(f"- {root}" for root in cfg.files.roots)
             )
         )
+        + budget.count(prompts.RETRY_HINT)
         # Only one of these can appear in a turn, so the larger one is the cap.
         + max(
             budget.count(runtime_module.DOOR_OFF_SYSTEM),
             budget.count(runtime_module.DOOR_UNBOUND),
+        )
+        # Same again for the two that can be appended before the final pass.
+        + max(
+            budget.count(prompts.LIST_HINT),
+            budget.count(prompts.UNRESOLVED_HINT),
         )
     )
     assert overhead <= cfg.models.overhead_tokens

@@ -141,6 +141,25 @@ class TurnContext:
         self.messages: list[Any] = []
         self.events = TurnEvents()
         self.log = log
+        #: Nudges that steer the tool loop and must not reach the final pass.
+        #: A 2b copies whatever wording is nearest, and these sit nearest of
+        #: all -- prompted to try again, it answered "I cannot use tools in
+        #: this session", which is a sentence nobody wrote and nothing meant.
+        #: Facts about the turn (the web door, a cap) stay; instructions go.
+        self.scaffolding: list[int] = []
+
+    def scaffold(self, content: str) -> None:
+        """Append a message the tool loop needs and the reply must not see."""
+        message = {"role": "system", "content": content}
+        self.scaffolding.append(id(message))
+        self.messages.append(message)
+
+    def clear_scaffolding(self) -> None:
+        if not self.scaffolding:
+            return
+        drop = set(self.scaffolding)
+        self.messages = [m for m in self.messages if id(m) not in drop]
+        self.scaffolding.clear()
 
 
 @dataclass
@@ -318,6 +337,8 @@ class Runtime:
         tools_budget = budget.slices(self.cfg).tools
         flags = Flags()
         told_about_the_door = False
+        told_about_failure = False
+        offered_second_chance = False
 
         # Two deterministic patterns run before the model is asked anything.
         # The answer arrives as an ordinary tool result, so the turn continues
@@ -367,6 +388,14 @@ class Runtime:
                 max_tokens=agent_loop.TOOL_ROUND_MAX_TOKENS,
             )
             if not reply.tool_calls:
+                # Nothing ran this turn, and the model has stopped. That is
+                # either a conversation or a job it talked itself out of, and
+                # the two are indistinguishable from here -- so ask once.
+                if not results and not offered_second_chance:
+                    offered_second_chance = True
+                    ctx.scaffold(prompts.SECOND_CHANCE)
+                    self._trace(trace.second_chance())
+                    continue
                 self._trace(trace.model_is_ready())
                 break
 
@@ -398,6 +427,13 @@ class Runtime:
                 ctx.messages.append(agent_loop.tool_message(results[-1]))
             if unresolved:
                 break
+
+            # A refusal that is never acted on is a turn that gives up. Said
+            # once, after the first failure, so a 2b does not read it as an
+            # instruction to keep retrying the same broken call.
+            if not told_about_failure and any(not r.ok for r in results):
+                ctx.scaffold(prompts.RETRY_HINT)
+                told_about_failure = True
 
             # Withdrawing the tool is silent unless we say so. Without this the
             # turn just loses its web half and nobody is told.
@@ -724,6 +760,8 @@ class Runtime:
         """The agent's final pass. One more turn of generation, this time
         producing the reply you see rather than another tool call."""
         ctx = self.ctx
+        # The loop's own instructions come out before the reply is written.
+        ctx.clear_scaffolding()
         think = agent_loop.should_think(state)
         for hint in (
             agent_loop.compose_instruction(state),
@@ -766,7 +804,7 @@ class Runtime:
         response = state["final_response"]
         results = state.get("tool_results") or []
 
-        self.session.add(task, response)
+        self.session.add(task, response, results)
         self.memory.add_turn(
             task=task,
             response=response,

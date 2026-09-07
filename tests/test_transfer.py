@@ -51,6 +51,7 @@ def test_a_folder_destination_means_into_it_keeping_the_name(sandbox):
 
 def test_a_move_can_rename_in_the_same_call(sandbox):
     (sandbox / "a.txt").write_text("x", encoding="utf-8")
+    (sandbox / "deep").mkdir()
     files.move_file(str(sandbox / "a.txt"), str(sandbox / "deep" / "b.txt"))
     assert (sandbox / "deep" / "b.txt").read_text(encoding="utf-8") == "x"
 
@@ -58,7 +59,7 @@ def test_a_move_can_rename_in_the_same_call(sandbox):
 def test_refuses_a_source_outside_every_root(sandbox, tmp_path):
     outside = tmp_path / "theirs.txt"
     outside.write_text("not yours", encoding="utf-8")
-    assert files.copy_file(str(outside), str(sandbox / "mine.txt")) == files.REFUSED
+    assert files.copy_file(str(outside), str(sandbox / "mine.txt")) == files.refused()
     assert not (sandbox / "mine.txt").exists()
 
 
@@ -66,7 +67,7 @@ def test_refuses_a_destination_outside_every_root(sandbox, tmp_path):
     """The interesting direction: this is how a file would leave the sandbox."""
     (sandbox / "gold.txt").write_text("sell at 7777", encoding="utf-8")
     escape = tmp_path / "escaped.txt"
-    assert files.copy_file(str(sandbox / "gold.txt"), str(escape)) == files.REFUSED
+    assert files.copy_file(str(sandbox / "gold.txt"), str(escape)) == files.refused()
     assert not escape.exists()
 
 
@@ -262,6 +263,7 @@ def test_a_cross_drive_move_falls_back_to_copying(sandbox, monkeypatch):
     monkeypatch.setattr("os.replace", refuse)
 
     (sandbox / "a.txt").write_text("travelling", encoding="utf-8")
+    (sandbox / "far").mkdir()
     out = files.move_file(str(sandbox / "a.txt"), str(sandbox / "far" / "b.txt"))
     assert out.startswith("moved ")
     assert (sandbox / "far" / "b.txt").read_text(encoding="utf-8") == "travelling"
@@ -304,3 +306,41 @@ def test_a_hard_linked_alias_counts_as_the_same_file(sandbox):
     out = files.copy_file(str(source), str(alias))
     assert "same file" in out
     assert source.read_text(encoding="utf-8") == "precious"
+
+
+def test_a_trailing_slash_means_a_folder_even_before_it_exists(sandbox):
+    """The model writes `E:/Work/Sunday/archive/` when it means a folder.
+    Without this that becomes a *file* named `archive`, which then blocks the
+    folder from ever being created -- a mess nobody thinks to look for."""
+    (sandbox / "gold.txt").write_text("sell at 7777", encoding="utf-8")
+    (sandbox / "archive").mkdir()
+    out = files.move_file(str(sandbox / "gold.txt"), str(sandbox / "archive") + "/")
+    assert out.startswith("moved ")
+    assert (sandbox / "archive").is_dir()
+    assert (sandbox / "archive" / "gold.txt").read_text(encoding="utf-8") == "sell at 7777"
+
+
+def test_an_extensionless_destination_is_read_as_a_folder(sandbox):
+    """`gold.txt` -> `documents` is somebody naming a folder. Taken as a file
+    name it silently creates a file called `documents`, the original is gone,
+    and the next turn goes hunting for it -- which is exactly what happened,
+    three runs in a row, when the model guessed at "the documents folder"."""
+    (sandbox / "gold.txt").write_text("sell at 7777", encoding="utf-8")
+    (sandbox / "documents").mkdir()
+    files.move_file(str(sandbox / "gold.txt"), str(sandbox / "documents"))
+    assert (sandbox / "documents" / "gold.txt").exists()
+    assert not (sandbox / "documents").is_file()
+
+
+def test_a_destination_folder_that_does_not_exist_is_reported_not_created(sandbox):
+    """Sunday does not create folders to make a move fit. Asked to move a file
+    to "the documents folder", the model invented one three separate ways --
+    as a file, as a folder, then as `documents/folder` -- and each time the
+    original landed somewhere the next turn could not find."""
+    (sandbox / "gold.txt").write_text("sell at 7777", encoding="utf-8")
+    for guess in ("nope/deep", "documents", "documents/folder"):
+        out = files.move_file(str(sandbox / "gold.txt"), str(sandbox / guess))
+        assert out.startswith("error: there is no folder at"), guess
+        assert (sandbox / "gold.txt").exists()
+    assert not (sandbox / "documents").exists()
+    assert not (sandbox / "nope").exists()

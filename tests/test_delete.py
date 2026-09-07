@@ -31,7 +31,7 @@ def test_deletes_a_file_inside_a_root(sandbox):
 def test_refuses_a_path_outside_every_root(sandbox, tmp_path):
     outside = tmp_path / "theirs.txt"
     outside.write_text("not yours", encoding="utf-8")
-    assert files.delete_file(str(outside)) == files.REFUSED
+    assert files.delete_file(str(outside)) == files.refused()
     assert outside.exists()
 
 
