@@ -80,6 +80,21 @@ def compose_instruction(state: SundayState) -> dict[str, Any] | None:
     }
 
 
+def list_instruction(state: SundayState) -> dict[str, Any] | None:
+    """The other last nudge: a multi-line tool result reaches the model as the
+    nearest thing it read, and it answers in that shape.
+
+    Separate from `compose_instruction` because the two can both apply -- a
+    folder listing that also hit a cap needs the gap explained *and* the list
+    spoken -- and because this one is about form where that one is about
+    honesty.
+    """
+    for result in state.get("tool_results") or []:
+        if result.ok and "\n" in result.content.strip():
+            return {"role": "system", "content": prompts.LIST_HINT}
+    return None
+
+
 def summarise_results(results: list[Result]) -> str:
     """One line per tool result, for logs and for the unresolved message."""
     return "; ".join(f"{r.tool}={'ok' if r.ok else 'error'}" for r in results)

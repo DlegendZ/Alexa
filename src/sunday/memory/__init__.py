@@ -7,11 +7,12 @@ never reach an outgoing query.
 
 from sunday.memory.budget import Slices, assemble, clip, count, slices
 from sunday.memory.session import Exchange, SessionMemory
-from sunday.memory.store import LongTermMemory, Recalled, strongest
+from sunday.memory.store import LongTermMemory, Probe, Recalled, strongest
 
 __all__ = [
     "Exchange",
     "LongTermMemory",
+    "Probe",
     "Recalled",
     "SessionMemory",
     "Slices",

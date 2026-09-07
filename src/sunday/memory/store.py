@@ -15,7 +15,7 @@ from __future__ import annotations
 import time
 import uuid
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +73,25 @@ class Recalled:
         return line
 
 
+@dataclass
+class Probe:
+    """What one retrieval actually did, for the backstage trace.
+
+    Retrieval swallows every exception on purpose -- memory must never be the
+    reason a turn fails. The cost of that is three very different outcomes
+    looking identical from outside: an empty store, a store that was searched
+    and had nothing close enough, and a store that could not be opened at all.
+    Only the last one is a fault, and without this record nobody could tell.
+    """
+
+    filed: int = 0        #: documents in the collection
+    pulled: int = 0       #: what the vector search handed back, before the cutoff
+    kept: int = 0         #: what survived the cutoff
+    nearest: float | None = None
+    cutoff: float = 0.0
+    error: str | None = None
+
+
 class LongTermMemory:
     """One collection. Private and public turns live in it together, labelled
     rather than separated: the boundary that matters is the airlock, not the
@@ -81,6 +100,8 @@ class LongTermMemory:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or config.MEMORY_DIR
         self._collection: Any = None
+        #: The last retrieval, for the trace. Never read by the graph.
+        self.last_probe = Probe()
 
     # -- lazily opened, so importing this module never touches the disk --
 
@@ -119,7 +140,10 @@ class LongTermMemory:
     def count(self) -> int:
         try:
             return self.collection.count()
-        except Exception:  # noqa: BLE001 - memory must never break a turn
+        except Exception as exc:  # noqa: BLE001 - memory must never break a turn
+            self.last_probe = replace(
+                self.last_probe, error=f"{type(exc).__name__}: {exc}"
+            )
             return 0
 
     # -- writing --------------------------------------------------------
@@ -177,7 +201,11 @@ class LongTermMemory:
         top_k = top_k if top_k is not None else cfg.top_k
         cutoff = cutoff if cutoff is not None else cfg.distance_cutoff
 
+        self.last_probe = Probe(cutoff=cutoff)
         total = self.count()
+        # count() writes an error into the probe if the store could not be
+        # opened; keep it rather than stamping a clean Probe over the top.
+        self.last_probe = replace(self.last_probe, filed=total)
         if total == 0 or not query.strip():
             return []
 
@@ -187,7 +215,10 @@ class LongTermMemory:
                 n_results=min(top_k, total),
                 include=["documents", "metadatas", "distances"],
             )
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            self.last_probe = replace(
+                self.last_probe, error=f"{type(exc).__name__}: {exc}"
+            )
             return []
 
         documents = (raw.get("documents") or [[]])[0]
@@ -212,4 +243,12 @@ class LongTermMemory:
                     tools_used=str(meta.get("tools_used", "")),
                 )
             )
+
+        numeric = [float(d) for d in distances if d is not None]
+        self.last_probe = replace(
+            self.last_probe,
+            pulled=len(documents),
+            kept=len(out),
+            nearest=min(numeric) if numeric else None,
+        )
         return out

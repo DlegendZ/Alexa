@@ -13,9 +13,32 @@ How you work:
 - Never invent a number, a price, a temperature or a file's contents. If a tool failed, say what you could not get.
 - Report what the tool actually returned and stop there. A price tool gives you one price, not a trend; a weather tool gives you one reading, not a forecast. Do not add movement, history, causes or advice that nothing gave you.
 - Call tools with exactly the arguments the schema asks for.
+- Never claim a tool you were not given, and never say you cannot do something a tool you were given does. If the user asks what you can do, call list_capabilities and report exactly what it returns.
 - Answer in a few plain sentences, and do not restate the question.
 - Never use markdown. No asterisks, no bold, no bullet lists, no headings, no backticks. Your reply may be read aloud, and those marks get spoken.
 - The user is one person, on one machine. Talk to them directly."""
+
+#: The folders the sandbox will actually open, stated every turn.
+#:
+#: Without this the model guesses paths, and a guess it cannot check reads to
+#: the user as "Sunday cannot see my Documents folder" when the truth is that
+#: it was never told the folder was there. The refusal string explains *that*
+#: a path was outside the roots; this explains which paths are not.
+ROOTS_SYSTEM = """These folders on this computer are open to you, along with everything inside them:
+{roots}
+A path inside one of those works, and you should use the tools on it without asking the user to confirm the folder first. A path anywhere else is refused before the disk is touched, and that refusal means the folder is not in the configuration -- not that it is missing, and not that the drive is unmounted."""
+
+NO_ROOTS_SYSTEM = """No folders are configured, so every file path will be refused. If the user asks you to read or write a file, tell them there are no folders set under [files] roots in config.toml."""
+
+#: Appended for the final pass when a tool came back with more than one line.
+#:
+#: The no-markdown rule is in the system prompt, which is the furthest thing
+#: from the model's attention by the time it answers -- and what is nearest is
+#: a `list_dir` result with one filename per line. It copies the shape: asked
+#: to list a folder it replied with "- gold.txt" and "- scratch.txt", dashes
+#: and all, in a reply that may be read aloud. So the reminder goes next to the
+#: thing that triggers it, which is the only place a 2b reliably reads.
+LIST_HINT = """One of the tool results above has several lines. Say it as ordinary speech -- the items separated by commas, in one or two sentences. Do not start a line with a dash, a bullet or a number, and do not lay it out as a list."""
 
 #: Appended for the final pass when the door was shut or a cap was hit, so the
 #: gap gets explained instead of papered over.

@@ -92,3 +92,24 @@ def test_errors_arrive_as_tool_results_not_exceptions(sandbox):
     assert tool is not None
     assert tool.invoke({"path": ""}) == files.REFUSED
     assert tool.invoke({"wrong": "arg"}).startswith("error: bad arguments")
+
+
+def test_a_relative_path_is_tried_against_the_roots_not_the_cwd(sandbox):
+    """The model cannot know which folder Sunday was launched from, so a bare
+    `notes/plan.txt` used to land at `<cwd>/notes/plan.txt` -- a path that does
+    not exist, refused with "no such file", which reads to the user as their
+    folder being missing rather than as a path they never asked for."""
+    (sandbox / "notes").mkdir()
+    (sandbox / "notes" / "plan.txt").write_text("sell at 3000", encoding="utf-8")
+    assert files.read_file("notes/plan.txt") == "sell at 3000"
+
+
+def test_a_relative_path_still_cannot_leave_the_roots(sandbox, tmp_path):
+    (tmp_path / "secret.txt").write_text("nope", encoding="utf-8")
+    assert files.read_file("../secret.txt") == files.REFUSED
+
+
+def test_a_relative_path_that_exists_nowhere_can_still_be_created(sandbox):
+    out = files.write_file("fresh/new.txt", "hello")
+    assert out.startswith("wrote 5 characters")
+    assert (sandbox / "fresh" / "new.txt").read_text(encoding="utf-8") == "hello"

@@ -134,3 +134,8 @@ NOTICE_WRITE_UNATTENDED = (
     "{path} already exists and nobody was attached to confirm the overwrite, "
     "so it was left as it was."
 )
+NOTICE_DELETE_DECLINED = "You said no, so {path} is still there."
+NOTICE_DELETE_UNATTENDED = (
+    "Deleting {path} needed your confirmation and nobody was attached to give "
+    "it, so the file is still there."
+)

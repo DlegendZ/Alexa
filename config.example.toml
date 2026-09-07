@@ -14,7 +14,7 @@ thinking_budget = 1024
 summariser      = "deepseek-v4-flash"
 # Taken off the top before the memory slices are sized: the system prompt, the
 # tool schemas and the memory framing block, then room for the reply itself.
-overhead_tokens = 1200
+overhead_tokens = 1750
 reply_tokens    = 768
 
 [audio]
@@ -83,3 +83,6 @@ fps_focused     = 60
 fps_blurred     = 10
 start_minimised = false
 autostart       = false
+# The backstage trace: one line per step, so you can see what ran rather than
+# only what came back. SUNDAY_TRACE=0 overrides this for a single run.
+trace           = true

@@ -22,12 +22,14 @@ from sunday import (
     stream,
     telemetry,
     tools as tool_registry,
+    trace,
     web,
 )
 from sunday.tools import files
 from sunday.agent import loop as agent_loop, prompts
 from sunday.agent.llm import Agent, OllamaDown
 from sunday.memory import LongTermMemory, SessionMemory, budget
+from sunday.memory import store as memory_store
 from sunday.state import Result, SundayState, TurnEvents, new_state
 
 TokenSink = Callable[[str], None]
@@ -99,6 +101,22 @@ WRITE_UNATTENDED = (
 )
 WRITE_QUESTION = "Overwrite {path} ({size})?"
 
+DELETE_DECLINED = (
+    "refused: the user was asked before deleting that file and said no. The "
+    "file is still there. Do not ask again unless they bring it up."
+)
+DELETE_UNATTENDED = (
+    "refused: deleting a file needs the user's confirmation, and there is "
+    "nobody attached to this session to ask. Tell them the file is still there."
+)
+DELETE_QUESTION = "Delete {path} ({size})? This cannot be undone."
+
+#: Tools whose `path` argument is checked against the deny overlay. Delete is
+#: in here for the same reason read is: the *name* of the file is the signal,
+#: and a turn that went looking at `.ssh/` has no business on the web
+#: afterwards, whatever it did when it got there.
+PATH_TOOLS = {"read_file", "list_dir", "write_file", "delete_file"}
+
 
 class Cancelled(Exception):
     """The turn was interrupted. Nothing about it is committed."""
@@ -145,6 +163,7 @@ class Runtime:
         self._on_sentence: TokenSink | None = None
         self._on_event: EventSink | None = None
         self._on_confirm: ConfirmSink | None = None
+        self._tracing = config.trace_enabled(self.cfg)
         self._graph = graph_module.build_graph(self)
 
     # -- lifecycle ------------------------------------------------------
@@ -172,6 +191,20 @@ class Runtime:
         if self._on_event is not None:
             self._on_event(event)
 
+    def _trace(self, line: trace.Line) -> None:
+        """One backstage line. Gated by config, because it is a lot of text --
+        but on by default, because the alternative is guessing whether memory
+        was read from the fact that it returned nothing."""
+        if not self._tracing:
+            return
+        self._emit(
+            type="trace",
+            step=line.step,
+            heading=line.heading(),
+            text=line.text,
+            detail=line.detail,
+        )
+
     def _token(self, text: str) -> None:
         if self._on_token is not None:
             self._on_token(text)
@@ -181,6 +214,14 @@ class Runtime:
         speak half of one."""
         if self._on_sentence is not None:
             self._on_sentence(text)
+
+    def _roots_line(self) -> str:
+        """Which folders are open, in the model's own message list."""
+        roots = list(self.cfg.files.roots)
+        if not roots:
+            return prompts.NO_ROOTS_SYSTEM
+        listed = "\n".join(f"- {root}" for root in roots)
+        return prompts.ROOTS_SYSTEM.format(roots=listed)
 
     def _bound_tools(self, flags: Flags) -> list[tool_registry.Tool]:
         """Unbinding protects the next model invocation; the in-loop check
@@ -200,6 +241,13 @@ class Runtime:
         it."""
         sl = budget.slices(self.cfg)
         recent = self.session.recent(sl.recent)
+        self._trace(
+            trace.short_term(
+                exchanges=len(self.session.exchanges),
+                tokens=budget.count(recent),
+            )
+        )
+
         recalled = self.memory.retrieve(state["task"])
 
         # Anything already in the recent block is not worth saying twice, and
@@ -214,7 +262,28 @@ class Runtime:
         ]
         retrieved = "\n\n".join(r.render() for r in fresh)
 
+        # The line this whole trace was built for. "Read and found nothing",
+        # "read and the store is empty" and "could not be opened at all" are
+        # three different facts that all look like silence from outside.
+        probe = getattr(self.memory, "last_probe", None)
+        self._trace(
+            trace.long_term(
+                filed=getattr(probe, "filed", 0),
+                pulled=getattr(probe, "pulled", len(recalled)),
+                kept=len(fresh),
+                dropped=len(recalled) - len(fresh),
+                nearest=getattr(probe, "nearest", None),
+                cutoff=getattr(probe, "cutoff", self.cfg.memory.distance_cutoff),
+                error=getattr(probe, "error", None),
+            )
+        )
+
         context, tokens = budget.assemble(self.session.summary, recent, retrieved, sl)
+        self._trace(
+            trace.context_built(
+                tokens=tokens, allowance=sl.summary + sl.recent + sl.retrieved
+            )
+        )
         self.ctx.log.set(
             retrieved=len(fresh),
             retrieval_scores=[round(r.distance, 3) for r in recalled],
@@ -249,6 +318,23 @@ class Runtime:
         if not self.cfg.external.enabled:
             ctx.messages.append({"role": "system", "content": DOOR_OFF_SYSTEM})
 
+        # The model cannot guess which folders it is allowed into, and a wrong
+        # guess reads to the user as "Sunday cannot see my Documents folder".
+        # Say it every turn, next to the tools it applies to.
+        ctx.messages.append({"role": "system", "content": self._roots_line()})
+        self._trace(trace.roots_bound(list(self.cfg.files.roots)))
+        bound = self._bound_tools(flags)
+        self._trace(
+            trace.tools_bound(
+                [t.name for t in bound],
+                withdrawn=[
+                    t.name
+                    for t in tool_registry.all_tools()
+                    if t.name not in {b.name for b in bound}
+                ],
+            )
+        )
+
         shortcut = fastpaths.match(state["task"])
         if shortcut is not None and not results:
             result = self._dispatch(shortcut.tool, dict(shortcut.args), state, flags)
@@ -256,18 +342,28 @@ class Runtime:
             results.append(result)
             ctx.messages.append(agent_loop.tool_message(result))
             ctx.log.set(fast_path=shortcut.tool)
+            self._trace(trace.fast_path(shortcut.tool, dict(shortcut.args)))
 
+        rounds = 0
         while True:
             self._check_cancelled()
             self._emit(type="state", value="thinking")
+            rounds += 1
+            self._trace(trace.round_start(rounds))
             reply = self.agent.chat(
                 ctx.messages,
                 tools=tool_registry.schemas(self._bound_tools(flags)),
                 max_tokens=agent_loop.TOOL_ROUND_MAX_TOKENS,
             )
             if not reply.tool_calls:
+                self._trace(trace.model_is_ready())
                 break
 
+            self._trace(
+                trace.model_wants(
+                    len(reply.tool_calls), [c.name for c in reply.tool_calls]
+                )
+            )
             ctx.messages.append(reply.raw)
             for call in reply.tool_calls:
                 self._check_cancelled()
@@ -278,6 +374,7 @@ class Runtime:
                     unresolved = (
                         f"stopped after {cap} tool calls, so some of this is unchecked"
                     )
+                    self._trace(trace.cap_spent(cap))
                     skipped = Result(call.name, call.args, CAP_SPENT, "public", ok=False)
                     results.append(skipped)
                     ctx.messages.append(agent_loop.tool_message(skipped))
@@ -353,14 +450,22 @@ class Runtime:
             if flags.tainted:
                 flags.blocked = True
                 self._emit(type="blocked", name=name)
+                self._trace(
+                    trace.blocked(name, "the door is bolted for this turn")
+                )
                 return Result(name, args, DOOR_SHUT, "public", ok=False)
             return self._ask_external(args, state, flags)
 
-        # Read is auto-execute; replacing something you already have is not.
-        # This lives here rather than in write_file because the tool has no
-        # channel to ask on -- the same reason the door checks live here.
+        # Read is auto-execute; replacing something you already have is not,
+        # and destroying it certainly is not. This lives here rather than in
+        # the tools because a tool has no channel to ask on -- the same reason
+        # the door checks live here.
         if name == "write_file":
             refusal = self._confirm_overwrite(args)
+            if refusal is not None:
+                return refusal
+        elif name == "delete_file":
+            refusal = self._confirm_delete(args)
             if refusal is not None:
                 return refusal
 
@@ -373,11 +478,12 @@ class Runtime:
         # returned nothing, so naming `~/.ssh/id_rsa` at a folder Sunday cannot
         # open would otherwise let the model shut its own door for the turn.
         if (
-            name in {"read_file", "list_dir", "write_file"}
+            name in PATH_TOOLS
             and result.ok
             and guardrail.is_secret_path(str(args.get("path", "")))
         ):
             flags.tainted = True
+            self._trace(trace.tainted(str(args.get("path", ""))))
             # The label exists to keep the record honest: the JSONL line and the
             # Chroma document should say a credential was touched, not "private".
             result = replace(result, provenance="secret")
@@ -387,9 +493,19 @@ class Runtime:
         if hits:
             flags.redactions += hits
             self.ctx.events.notice(guardrail.NOTICE_REDACTED_RESULT)
+            self._trace(trace.redacted(hits))
             result = replace(result, content=cleaned)
         if result.provenance in {"private", "secret"}:
             flags.saw_private = True
+        self._trace(
+            trace.tool_finished(
+                result.tool,
+                ok=result.ok,
+                provenance=result.provenance,
+                tokens=budget.count(result.content),
+                truncated=result.truncated,
+            )
+        )
         return result
 
     def _confirm_overwrite(self, args: dict[str, Any]) -> Result | None:
@@ -404,29 +520,97 @@ class Runtime:
         if target is None or not target.is_file():
             return None  # outside the roots, or a create -- neither asks
 
+        return self._ask(
+            tool="write_file",
+            args=args,
+            target=target,
+            action="overwrite",
+            question=WRITE_QUESTION,
+            declined=WRITE_DECLINED,
+            unattended=WRITE_UNATTENDED,
+            declined_notice=guardrail.NOTICE_WRITE_DECLINED,
+            unattended_notice=guardrail.NOTICE_WRITE_UNATTENDED,
+        )
+
+    def _confirm_delete(self, args: dict[str, Any]) -> Result | None:
+        """Deleting always asks, where overwriting only asks when there is
+        something to lose.
+
+        The asymmetry is the point. A write to a path that does not exist
+        leaves you with a file you did not have before; a delete of a path that
+        does exist leaves you with nothing at all, and no version of that is
+        safe to auto-execute. So the only cases that skip the question are the
+        ones the sandbox or the tool refuses anyway.
+        """
+        target = files.resolve(str(args.get("path", "")))
+        if target is None or not target.is_file():
+            # Outside the roots, a folder, or already gone. The tool says which,
+            # and there is nothing to consent to either way.
+            return None
+
+        return self._ask(
+            tool="delete_file",
+            args=args,
+            target=target,
+            action="delete",
+            question=DELETE_QUESTION,
+            declined=DELETE_DECLINED,
+            unattended=DELETE_UNATTENDED,
+            declined_notice=guardrail.NOTICE_DELETE_DECLINED,
+            unattended_notice=guardrail.NOTICE_DELETE_UNATTENDED,
+        )
+
+    def _ask(
+        self,
+        *,
+        tool: str,
+        args: dict[str, Any],
+        target: Any,
+        action: str,
+        question: str,
+        declined: str,
+        unattended: str,
+        declined_notice: str,
+        unattended_notice: str,
+    ) -> Result | None:
+        """One human in the loop, for whichever irreversible thing it is.
+
+        Shared rather than duplicated because the failure modes are identical
+        and only one of them is obvious: nobody attached must refuse, not
+        proceed, and the refusal string has to tell the model what to say --
+        both of which are easy to get right once and easy to forget twice.
+        """
         try:
             size = f"{target.stat().st_size} bytes"
         except OSError:  # pragma: no cover - raced or unreadable
             size = "unknown size"
         request = ConfirmRequest(
-            question=WRITE_QUESTION.format(path=target, size=size),
+            question=question.format(path=target, size=size),
             path=str(target),
+            action=action,
         )
 
         if self._on_confirm is None:
             # Fail closed. A session with nobody attached cannot consent, and
             # silence is not a yes.
-            self.ctx.events.notice(guardrail.NOTICE_WRITE_UNATTENDED.format(path=target.name))
-            return Result("write_file", args, WRITE_UNATTENDED, "private", ok=False)
+            self.ctx.events.notice(unattended_notice.format(path=target.name))
+            self._trace(
+                trace.confirmed(action, str(target), approved=False, asked=False)
+            )
+            return Result(tool, args, unattended, "private", ok=False)
 
+        self._trace(trace.confirming(action, str(target)))
         if not self._on_confirm(request):
-            self.ctx.events.notice(guardrail.NOTICE_WRITE_DECLINED.format(path=target.name))
-            return Result("write_file", args, WRITE_DECLINED, "private", ok=False)
+            self.ctx.events.notice(declined_notice.format(path=target.name))
+            self._trace(trace.confirmed(action, str(target), approved=False))
+            return Result(tool, args, declined, "private", ok=False)
+        self._trace(trace.confirmed(action, str(target), approved=True))
         return None
 
     def _run_tool(self, name: str, args: dict[str, Any], state: SundayState) -> Result:
         tool = tool_registry.get(name)
         if tool is None:
+            self._trace(trace.blocked(name, "no tool by that name"))
             return Result(
                 tool=name,
                 args=args,
@@ -435,6 +619,7 @@ class Runtime:
                 ok=False,
             )
         self._emit(type="tool", name=tool.name, scope=tool.scope)
+        self._trace(trace.tool_started(tool.name, args, tool.scope))
         content = tool.invoke(args)
         ok = not content.startswith(("error:", "refused:"))
         return Result(
@@ -501,11 +686,16 @@ class Runtime:
         producing the reply you see rather than another tool call."""
         ctx = self.ctx
         think = agent_loop.should_think(state)
-        hint = agent_loop.compose_instruction(state)
-        if hint:
-            ctx.messages.append(hint)
+        for hint in (
+            agent_loop.compose_instruction(state),
+            agent_loop.list_instruction(state),
+        ):
+            if hint:
+                ctx.messages.append(hint)
+        self._trace(trace.thinking(think, _why_thinking(state)))
 
         self._emit(type="state", value="speaking")
+        self._trace(trace.speaking())
 
         def pieces() -> Any:
             first = True
@@ -525,6 +715,12 @@ class Runtime:
         """Runs after the last token, never before, so a disk write cannot
         delay the first word. A cancelled or broken turn is not saved."""
         if not state.get("committed") or not state.get("final_response"):
+            why = (
+                "the turn was cancelled or failed"
+                if not state.get("committed")
+                else "there was no reply to file"
+            )
+            self._trace(trace.not_written(why))
             return {}
 
         task = state["task"]
@@ -540,8 +736,17 @@ class Runtime:
         )
 
         sl = budget.slices(self.cfg)
-        if self.session.fold(self._summarise, sl.recent):
+        folded = self.session.fold(self._summarise, sl.recent)
+        if folded:
             self.ctx.log.set(folded=True)
+        self._trace(
+            trace.written(
+                exchanges=len(self.session.exchanges),
+                provenance=memory_store.strongest(results),
+                filed=self.memory.count(),
+                folded=folded,
+            )
+        )
         return {}
 
     # -- summarising ----------------------------------------------------
@@ -607,6 +812,7 @@ class Runtime:
         self._on_event = on_event
         self._on_confirm = on_confirm
 
+        self._trace(trace.opening(task, modality=modality, trace_id=trace_id))
         state = new_state(
             task,
             session_id=self.session_id,
@@ -652,13 +858,40 @@ class Runtime:
         order matters: notices and `done` are emitted while a sink still
         exists to receive them."""
         log.set(**fields)
-        log.write()
+        record = log.write()
+        self._trace(
+            trace.closing(
+                tools=int(record.get("tool_calls", 0) or 0),
+                hops=int(record.get("hops", 0) or 0),
+                redactions=int(record.get("redactions", 0) or 0),
+                tainted_door=bool(record.get("tainted", False)),
+                committed=bool(fields.get("committed", False)),
+                ms=int(record.get("total_ms", 0) or 0),
+            )
+        )
         self._emit(type="done", committed=bool(fields.get("committed", False)))
         self._on_token = None
         self._on_sentence = None
         self._on_event = None
         self._on_confirm = None
         self._ctx = None
+
+
+def _why_thinking(state: SundayState) -> str:
+    """Which of the four conditions turned the dial. "thinking: ON" with no
+    reason is a fact you cannot act on, and the conditions live in
+    agent_loop.should_think, which returns a bool and keeps its reasons."""
+    results = state.get("tool_results") or []
+    if len(results) >= 3:
+        return f"{len(results)} tool results to reconcile"
+    if state.get("blocked"):
+        return "a lookup was refused and the gap has to be explained"
+    if state.get("unresolved"):
+        return "something did not complete"
+    kinds = {r.provenance for r in results}
+    if kinds & {"private", "secret"} and "public" in kinds:
+        return "a private half and a public half to weave together"
+    return "no condition matched"
 
 
 def notices_of(state: SundayState) -> Iterable[str]:

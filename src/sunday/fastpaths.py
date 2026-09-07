@@ -1,8 +1,14 @@
-"""Two deterministic patterns, run in code before the model is asked anything.
+"""Three deterministic patterns, run in code before the model is asked anything.
 
 These are not an optimisation. With a 2b and no larger model behind it, they
-are the insurance policy for the two most common requests -- the ones where a
-fumbled argument would be most obvious.
+are the insurance policy for the requests where a fumbled answer would be most
+obvious: the two most common ones, and the one the model cannot answer at all
+from its own head.
+
+That third one is "what can you do". A 2b does not read its bound schemas back
+to you -- it writes a confident paragraph about tools it does not have. The
+answer to a question about the machine's own state has to be read off the
+machine, so it is a tool call, and this fires it before the model gets a vote.
 
 The result is handed to the agent as an ordinary tool result, so the turn
 carries on normally: the model can still call more tools, and a mixed question
@@ -34,6 +40,23 @@ _TAIL = re.compile(
 )
 
 
+#: "what can you do", in the shapes people actually type it, including the
+#: Indonesian ones -- the user of this build asks in both languages.
+_CAPABILITIES = re.compile(
+    r"(?:"
+    r"what (?:can|could) you do"
+    r"|what (?:tools|abilities|capabilities|functions|commands)"
+    r"|list (?:your |all )?(?:tools|capabilities|abilities|functions)"
+    r"|which (?:tools|folders|directories)"
+    r"|what (?:folders|directories|dirs) (?:can|do) you"
+    r"|apa (?:saja |aja )?(?:yang bisa|kemampuan|tool|kamu bisa)"
+    r"|kemampuan (?:kamu|mu|apa)"
+    r"|bisa apa (?:aja|saja)"
+    r")",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True)
 class FastPath:
     tool: str
@@ -41,6 +64,11 @@ class FastPath:
 
 
 def match(task: str) -> FastPath | None:
+    # First, because "what can you do" contains no city and no asset but
+    # would otherwise fall through to the model, which invents an answer.
+    if _CAPABILITIES.search(task):
+        return FastPath("list_capabilities", {})
+
     weather = _WEATHER.search(task)
     if weather:
         city = _TAIL.sub("", weather.group(1)).strip(" .,'\"")

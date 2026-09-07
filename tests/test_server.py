@@ -330,3 +330,23 @@ async def test_a_ping_is_answered_while_a_turn_runs(sidecar_with):
     # blocked read loop that simply caught up afterwards.
     assert order[:1] == ["pong"], order
     await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_the_backstage_trace_crosses_the_socket(sidecar):
+    """The terminal client is not the only one that needs to see the steps --
+    the debug page and, later, the shell read the same stream."""
+    _, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "text_input", "text": "hello"}))
+    messages = await _drain(ws)
+
+    traces = [m for m in messages if m["type"] == "trace"]
+    assert traces, [m["type"] for m in messages]
+    assert {"step", "heading", "text", "detail"} <= set(traces[0])
+    steps = {m["step"] for m in traces}
+    assert {"memory_read", "agent", "compose_reply", "done"} <= steps
+    # And the client's end-of-turn marker is still the last thing it sees.
+    assert messages[-1]["type"] == "done"

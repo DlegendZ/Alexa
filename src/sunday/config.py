@@ -46,9 +46,13 @@ class Models:
     context_tokens: int = 8192
     thinking_budget: int = 1024
     summariser: str = "deepseek-v4-flash"
-    #: What no memory slice pays for: the system prompt, the bound tool schemas
-    #: and the memory framing block. Measured at ~1080 with five tools bound.
-    overhead_tokens: int = 1200
+    #: What no memory slice pays for: the system prompt, the bound tool
+    #: schemas, the memory framing block, and the standing system lines the
+    #: runtime adds every turn -- which folders are open, and what asks before
+    #: it happens. Measured at ~1630 worst case with eight tools bound; the
+    #: rest is headroom for the next tool, because underestimating this
+    #: overruns num_ctx and Ollama truncates without saying so.
+    overhead_tokens: int = 1750
     #: Room for the reply itself, which has no slice of its own.
     reply_tokens: int = 768
 
@@ -166,6 +170,12 @@ class UI:
     fps_blurred: int = 10
     start_minimised: bool = False
     autostart: bool = False
+    #: The backstage trace: one line per step, saying what actually ran. On by
+    #: default, and meant to stay that way until the app ships -- the whole
+    #: point is that you can see whether long-term memory was read, not merely
+    #: whether it returned anything. SUNDAY_TRACE=0 turns it off for one run
+    #: without editing config.toml.
+    trace: bool = True
 
 
 @dataclass
@@ -229,6 +239,15 @@ def reload(path: Path | None = None) -> Config:
     global _cache
     _cache = load(path)
     return _cache
+
+
+def trace_enabled(cfg: "Config | None" = None) -> bool:
+    """Config says yes or no; the environment gets the last word, so a single
+    noisy run can be quietened without a file edit."""
+    override = os.getenv("SUNDAY_TRACE")
+    if override is not None:
+        return override.strip().lower() not in {"0", "false", "no", "off", ""}
+    return (cfg or get()).ui.trace
 
 
 def require_deepseek_key() -> None:

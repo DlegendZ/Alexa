@@ -442,3 +442,98 @@ when only one hop is left.
 The check gated *entry*: a lookup whose snippets sufficed spent one hop and left the counter
 at 1, which passes `1 >= 2`, so the next lookup searched *and* fetched and the turn ended at
 three. Gating entry cannot bound a step that costs more than one.
+
+## 36. Deleting is a tool, and unlike writing it always asks
+
+**Doc:** Stage 04 — `read_file`, `write_file`, `list_dir`; "overwriting asks, creating does
+not".
+**Code:** `delete_file` joins them, and `runtime._confirm_delete` asks on every call. The
+two confirmations share `runtime._ask`.
+**Why:** the document's file-tool set had no way to remove a file, so asked to delete one
+the model said it could not and told the user to open File Explorer. The confirmation rule
+does not carry over unchanged, either. Overwriting asks only when there is something to
+lose, because a confirmation on every new note is one you learn to click past. Deleting has
+no such case: there is no arrangement of the arguments where it does not destroy something,
+so the only calls that skip the question are the ones the sandbox or the deny overlay
+refuses anyway. The refusal strings say what to tell the user, and it fails closed with
+nobody attached, exactly as the write does.
+
+## 37. The agent could not list its own tools, and did not know that
+
+**Doc:** Stage 04 — the tool table.
+**Code:** `sunday/tools/capabilities.py` registers `list_capabilities`, and a fast path in
+`sunday/fastpaths.py` fires it before the model is asked anything.
+**Why:** asked "what can you do", the 2b did not read its bound schemas back. It wrote a
+confident paragraph about a marketplace database, an email drafter and a grammar checker,
+none of which exist, and did not mention reading files, which does. That is not a prompt
+problem — "what are your tools" is a question about the machine's own state, like "what is
+in this folder", and the answer has to be read off the machine. The output is deliberately
+plain sentences rather than a bulleted list: the 2b copies the shape of whatever it read
+last, and the first version came back as a reply full of dashes, in a reply that may be
+spoken aloud.
+
+## 38. The folders it may open are stated every turn — but not as an instruction
+
+**Doc:** Stage 04 — the sandbox and its roots.
+**Code:** `runtime._roots_line()` appends `prompts.ROOTS_SYSTEM` to every turn's message
+list.
+**Why:** the model had no way to know which folders were configured, so it guessed paths,
+and a guess it cannot check reads to the user as "Sunday cannot see my Documents folder"
+when the truth is that it was never told the folder was there.
+
+The first wording of this line cost a working call, which is the part worth keeping. It
+ended with "Always pass a full path starting from one of those" — and the 2b read that as a
+precondition rather than a description. Handed
+`C:/Users/User/Documents/Sunday`, a path already inside a root, it refused to call
+`list_dir` and asked the user for "your full path starting from either Sunday or Work". The
+same turn had worked before the line was added. State the folders; do not instruct.
+
+## 39. A relative path resolves against the roots, not the working directory
+
+**Doc:** Stage 04 — "resolve, then check containment".
+**Code:** `files.resolve` builds one candidate per root for a non-absolute path, keeps the
+first that exists, and falls back to the cwd reading last. Every candidate is still checked
+for containment, so the sandbox is not widened by a byte.
+**Why:** `Documents/Sunday` used to resolve against whatever folder Sunday happened to be
+launched from. When that folder is itself a root the result is a real path inside the
+sandbox that simply does not exist, so the refusal read `no such directory` — a message
+about the user's folder being missing, for a path they never asked for.
+
+## 40. The backstage trace
+
+**Doc:** new. Stage 10 had the event protocol, but every event on it reports an outcome.
+**Code:** `sunday/trace.py` holds the phrasing, `runtime._trace` emits it as
+`{"type":"trace", step, heading, text, detail}`, `main.py` prints it and `web/debug.html`
+renders it in a Backstage panel. `[ui] trace` in config, `SUNDAY_TRACE=0` to override.
+**Why:** the question a person actually has mid-turn is not answerable from any existing
+channel. The one that forced this: *did it read long-term memory, or did that quietly fail?*
+Retrieval swallows every exception on purpose, so a store that cannot be opened, a store
+that is empty, and a store that was searched and had nothing close enough are three
+different facts that look identical from outside — and only one of them is a fault.
+`LongTermMemory.last_probe` records which, and the trace says so in those words.
+
+The phrasing lives in its own module rather than in the runtime because the runtime should
+read as the machine it is, and because these lines are meant to be read by someone tired.
+Numbers before jokes; a joke that costs you a number is a bug in that file.
+
+## 41. The overhead reservation was a measurement, and it had moved
+
+**Doc:** Stage 02 — `overhead_tokens`, the part of the window no memory slice pays for.
+**Code:** 1200 → 1750, and `test_the_real_overhead_fits_the_reservation` now measures the
+standing system lines too, not just the prompt and the schemas.
+**Why:** two new tools and the roots line put the real figure at ~1630. Leaving the
+reservation at 1200 sizes the memory slices against room that is not there, `num_ctx`
+overruns, and Ollama answers by dropping the oldest messages without saying so — the exact
+silent truncation Stage 02 exists to prevent. The test was already the guard; it just had to
+be told about the new lines.
+
+## 42. A multi-line tool result needs the no-markdown rule repeated next to it
+
+**Doc:** Stage 03 — "no markdown, ever", in the system prompt.
+**Code:** `agent_loop.list_instruction` appends `prompts.LIST_HINT` before the final pass
+whenever a successful tool result has more than one line.
+**Why:** the system prompt is the furthest thing from a 2b's attention by the time it
+answers, and what is nearest is a `list_dir` result with one filename per line. It copied
+the shape: asked to list a folder it replied with "- gold.txt" and "- scratch.txt", dashes
+and all. Same failure as the retrieved-memory framing in note 19, and the same fix — put the
+rule next to the thing that triggers it, which is the only place a 2b reliably reads.

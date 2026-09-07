@@ -79,7 +79,13 @@ def schemas(tools: list[Tool]) -> list[dict[str, Any]]:
 
 
 def _load_builtins() -> None:
-    from sunday.tools import assets, external, files, weather  # noqa: F401
+    from sunday.tools import (  # noqa: F401
+        assets,
+        capabilities,
+        external,
+        files,
+        weather,
+    )
 
 
 _load_builtins()

@@ -46,17 +46,48 @@ def resolve(raw: str) -> Path | None:
 
     Resolution happens first and containment is checked on the result, so
     symlinks and `..` cannot walk out of the sandbox.
+
+    A *relative* path is resolved against the roots rather than against the
+    process's working directory. Two reasons, and neither is convenience.
+    Whatever folder Sunday happens to be launched from is not a thing the model
+    can know, so `Documents/Sunday` used to land at `<cwd>/Documents/Sunday` --
+    which, when the cwd is itself a root, is a real path inside the sandbox
+    that simply does not exist, so the refusal read "no such directory" and the
+    user was told their folder was missing. Trying each root in order gives the
+    answer they meant, and gives it without widening the sandbox by one byte:
+    every candidate is still checked for containment below.
     """
     if not raw or not raw.strip():
         return None
+    text = raw.strip()
+
+    candidates: list[Path] = []
     try:
-        candidate = Path(raw.strip()).expanduser().resolve()
-    except (OSError, ValueError):
+        expanded = Path(text).expanduser()
+    except (OSError, ValueError, RuntimeError):
         return None
-    for root in roots():
-        if _under(candidate, root):
-            return candidate
-    return None
+    if expanded.is_absolute():
+        candidates.append(expanded)
+    else:
+        candidates.extend(root / expanded for root in roots())
+        # Last, and only as a fallback: the old cwd-relative reading, so a
+        # path that did work carries on working.
+        candidates.append(expanded)
+
+    resolved: list[Path] = []
+    for candidate in candidates:
+        try:
+            real = candidate.resolve()
+        except (OSError, ValueError):
+            continue
+        if not any(_under(real, root) for root in roots()):
+            continue
+        if real.exists():
+            return real  # an existing match beats a hypothetical one
+        resolved.append(real)
+    # Nothing exists yet: hand back the first allowed reading, so writing a new
+    # file to a relative path still works.
+    return resolved[0] if resolved else None
 
 
 def read_file(path: str) -> str:
@@ -94,6 +125,37 @@ def write_file(path: str, text: str) -> str:
     except OSError as exc:
         return f"error: could not write {path} ({exc.strerror or exc})"
     return f"wrote {len(text)} characters to {target}"
+
+
+def delete_file(path: str) -> str:
+    """Delete one file. The runtime asks you first -- always, unlike a write.
+
+    Overwriting leaves you a file with different contents; deleting leaves you
+    nothing, so there is no version of this that is safe to auto-execute. The
+    confirmation lives in the runtime for the same reason the write one does:
+    a tool has no channel to ask on.
+
+    Folders are refused outright. A recursive delete is not a thing a 2b gets
+    to reach for on a misparsed sentence.
+    """
+    target = resolve(path)
+    if target is None:
+        return REFUSED
+    if is_credential_path(target):
+        return "refused: will not delete a credential file"
+    if target.is_dir():
+        return (
+            f"error: {path} is a folder, and Sunday only deletes single files. "
+            "Tell the user to remove folders themselves."
+        )
+    if not target.exists():
+        return f"error: no such file: {path}"
+
+    try:
+        target.unlink()
+    except OSError as exc:
+        return f"error: could not delete {path} ({exc.strerror or exc})"
+    return f"deleted {target}"
 
 
 def list_dir(path: str) -> str:
@@ -155,7 +217,10 @@ register(
         name="write_file",
         description=(
             "Write text to a file on the user's machine, replacing what is "
-            "there. Only paths inside the configured folders are allowed."
+            "there. Only paths inside the configured folders are allowed. "
+            "Replacing an existing file asks the user first; creating a new "
+            "one does not. If the answer says they declined, that is their "
+            "decision -- do not try again and do not write it elsewhere."
         ),
         parameters={
             "type": "object",
@@ -166,6 +231,26 @@ register(
             "required": ["path", "text"],
         },
         fn=write_file,
+        provenance="private",
+    )
+)
+
+register(
+    Tool(
+        name="delete_file",
+        description=(
+            "Delete one file on the user's machine, permanently. Only paths "
+            "inside the configured folders are allowed, folders themselves are "
+            "refused, and the user is always asked before it happens."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Full path to the file"}
+            },
+            "required": ["path"],
+        },
+        fn=delete_file,
         provenance="private",
     )
 )

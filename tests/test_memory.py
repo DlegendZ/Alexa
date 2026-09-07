@@ -38,15 +38,33 @@ def test_the_slices_leave_room_for_everything_else_in_the_window(cfg):
 
 
 def test_the_real_overhead_fits_the_reservation(cfg):
-    """The 1200 is a measurement, not a guess -- so measure it."""
+    """The reservation is a measurement, not a guess -- so measure it.
+
+    Everything the runtime puts in the message list that no memory slice pays
+    for, including the standing system lines it appends every turn. Adding a
+    tool or a system line without moving the number is how num_ctx gets
+    overrun, and Ollama answers that by dropping the oldest messages silently.
+    """
+    from sunday import runtime as runtime_module
     from sunday import tools as tool_registry
     from sunday.agent import prompts
 
+    cfg.files.roots = ["C:/Users/User/Documents/Sunday", "E:/Work/Sunday"]
     schemas = tool_registry.schemas(tool_registry.available())
     overhead = (
         budget.count(prompts.SYSTEM)
         + budget.count(str(schemas))
         + budget.count(loop.build_messages({"task": "x", "context": "y"})[1]["content"])
+        + budget.count(
+            prompts.ROOTS_SYSTEM.format(
+                roots="\n".join(f"- {root}" for root in cfg.files.roots)
+            )
+        )
+        # Only one of these can appear in a turn, so the larger one is the cap.
+        + max(
+            budget.count(runtime_module.DOOR_OFF_SYSTEM),
+            budget.count(runtime_module.DOOR_UNBOUND),
+        )
     )
     assert overhead <= cfg.models.overhead_tokens
 

@@ -14,6 +14,7 @@
     --local: #d99b3d;   /* on your machine */
     --external: #3dbfb0; /* leaves your machine */
     --stop: #d9534f;
+    --memory: #6f8fd9;  /* the half you cannot otherwise watch happen */
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -75,6 +76,21 @@
   #sentences { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px;
                font-size: 13px; color: var(--dim); }
   #sentences li { border-left: 2px solid var(--local); padding-left: 10px; }
+
+  /* Backstage: one line per step, so "did it read long-term memory?" is a
+     thing you can see rather than infer from an empty answer. */
+  #backstage { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px;
+               font-size: 12px; max-height: 46vh; overflow-y: auto; }
+  #backstage li { border-left: 2px solid var(--line); padding-left: 9px;
+                  color: var(--dim); }
+  #backstage li b { display: block; color: #b9bfcc; font-weight: 600;
+                    font-size: 10.5px; text-transform: uppercase;
+                    letter-spacing: .07em; }
+  #backstage li[data-step="memory_read"], #backstage li[data-step="memory_write"] {
+    border-color: var(--memory); }
+  #backstage li[data-step="tools"] { border-color: var(--local); }
+  #backstage li[data-step="done"] { border-color: #3a3f49; color: #b9bfcc; }
+  .traceoff { opacity: .5; }
   code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
   @media (max-width: 800px) { body { grid-template-columns: minmax(0, 1fr); } }
 </style>
@@ -123,6 +139,12 @@
 
   <h2 style="margin-top:20px">Sentences to TTS</h2>
   <ul id="sentences"></ul>
+
+  <h2 style="margin-top:20px">Backstage
+    <button id="tracetoggle" type="button"
+            style="float:right;padding:2px 8px;font-size:10px">hide</button>
+  </h2>
+  <ul id="backstage"></ul>
 </aside>
 
 <script>
@@ -160,6 +182,18 @@ function addNote(text, kind) {
   note.textContent = text;
   transcript.append(note);
   transcript.scrollTop = transcript.scrollHeight;
+}
+
+function addTrace(message) {
+  const li = document.createElement("li");
+  li.dataset.step = message.step || "";
+  const head = document.createElement("b");
+  head.textContent = message.heading || message.step || "trace";
+  const body = document.createElement("span");
+  body.textContent = message.text || "";
+  li.append(head, body);
+  $("backstage").append(li);
+  $("backstage").scrollTop = $("backstage").scrollHeight;
 }
 
 function connect() {
@@ -247,6 +281,9 @@ function handle(message) {
       no.focus();
       break;
     }
+    case "trace":
+      addTrace(message);
+      break;
     case "notice":
       addNote(message.text);
       break;
@@ -268,11 +305,20 @@ $("composer").onsubmit = (event) => {
   const text = $("text").value.trim();
   if (!text || !socket) return;
   $("sentences").replaceChildren();
+  $("backstage").replaceChildren();
   socket.send(JSON.stringify({ type: "text_input", text }));
   $("text").value = "";
   $("stop").disabled = false;
 };
 $("stop").onclick = () => socket && socket.send(JSON.stringify({ type: "cancel" }));
+$("tracetoggle").onclick = () => {
+  // Hiding it locally, not switching it off in the sidecar -- the lines keep
+  // arriving, so unhiding shows the turn you are already in the middle of.
+  const list = $("backstage");
+  const hidden = list.classList.toggle("traceoff");
+  list.style.display = hidden ? "none" : "grid";
+  $("tracetoggle").textContent = hidden ? "show" : "hide";
+};
 $("mute").onclick = () => {
   const muted = $("mute").textContent === "Mute";
   socket.send(JSON.stringify({ type: "set_mute", muted }));
