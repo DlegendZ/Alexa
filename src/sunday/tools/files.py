@@ -10,6 +10,7 @@ does not shut the airlock door. That is the deny overlay's job, in guardrail.py.
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 from pathlib import Path
@@ -208,9 +209,29 @@ def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | st
         return f"refused: will not {verb} a file onto a credential path"
     if dst.is_dir():  # pragma: no cover - _landing only returns a dir's child
         return f"error: {destination} is a folder"
-    if os.path.normcase(str(src)) == os.path.normcase(str(dst)):
+    if _same_file(src, dst):
         return f"error: the source and the destination are the same file"
     return src, dst
+
+
+def _same_file(src: Path, dst: Path) -> bool:
+    """Are these two paths one file?
+
+    The string compare catches the ordinary case, and both paths have already
+    been through `resolve()`, so symlinks are gone. What is left is hard links:
+    two real, different names for one set of bytes. `samefile` compares the
+    device and inode, which is the only thing that sees them.
+
+    This is not a tidiness check. `copy2` opens the destination for writing
+    before it reads anything, so a copy onto an alias of the source truncates
+    the file to nothing and then copies the nothing.
+    """
+    if os.path.normcase(str(src)) == os.path.normcase(str(dst)):
+        return True
+    try:
+        return dst.exists() and os.path.samefile(src, dst)
+    except OSError:  # pragma: no cover - unreadable metadata is not "same"
+        return False
 
 
 def copy_file(source: str, destination: str) -> str:
@@ -228,14 +249,39 @@ def copy_file(source: str, destination: str) -> str:
     return f"copied {src} to {dst}"
 
 
+#: Cross-device, as each platform reports it. POSIX raises EXDEV; Windows
+#: raises winerror 17, "The system cannot move the file to a different disk
+#: drive", which CPython maps to EXDEV on some paths and not others -- so both
+#: are checked rather than trusting one.
+_CROSS_DEVICE = {errno.EXDEV}
+_CROSS_DEVICE_WINERROR = 17
+
+
+def _is_cross_device(exc: OSError) -> bool:
+    return exc.errno in _CROSS_DEVICE or getattr(exc, "winerror", None) == (
+        _CROSS_DEVICE_WINERROR
+    )
+
+
 def move_file(source: str, destination: str) -> str:
     """Move one file to another place inside the roots.
 
-    Copy-then-delete rather than a rename, because the roots can sit on
-    different drives -- C: and E: in the configuration this was built against --
-    and a rename across volumes fails. It also gives one predictable behaviour
-    when the destination already exists, where `os.rename` overwrites on POSIX
-    and raises on Windows.
+    A rename first, and a copy only when the filesystem refuses one. Within a
+    root -- which is where nearly every move happens, because "put this in that
+    folder" means a folder you already configured -- a rename touches only the
+    directory entries. It does not read or write a single byte of the file, so
+    it costs the same for a 2 KB note and a 2 GB recording, and it is atomic:
+    there is no instant where the file exists twice or not at all.
+
+    The copy path still exists because the roots can sit on different drives --
+    C: and E: in the configuration this was built against -- and no filesystem
+    can rename across that boundary. That case pays what it has to.
+
+    `os.replace` rather than `os.rename`, because rename's behaviour when the
+    destination exists differs by platform: POSIX overwrites, Windows raises.
+    `replace` overwrites on both, which is the one behaviour this needs -- and
+    by the time it runs, the runtime has already asked the user about that
+    destination.
     """
     prepared = _prepare(source, destination, "move")
     if isinstance(prepared, str):
@@ -244,6 +290,21 @@ def move_file(source: str, destination: str) -> str:
 
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"error: could not move {source} ({exc.strerror or exc})"
+
+    try:
+        os.replace(src, dst)
+    except OSError as exc:
+        if not _is_cross_device(exc):
+            return f"error: could not move {source} ({exc.strerror or exc})"
+        return _move_across_devices(src, dst, source)
+    return f"moved {src} to {dst}"
+
+
+def _move_across_devices(src: Path, dst: Path, source: str) -> str:
+    """The slow path: different drives, so the bytes really do have to travel."""
+    try:
         shutil.copy2(src, dst)
     except OSError as exc:
         return f"error: could not move {source} ({exc.strerror or exc})"

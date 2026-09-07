@@ -219,3 +219,88 @@ def test_a_credential_source_is_refused_and_leaves_the_door_open(cfg, tmp_path):
     assert not (root / "n.txt").exists()
     assert state["tool_results"][0].ok is False
     assert state["tainted"] is False
+
+
+# -- the fast path ----------------------------------------------------------
+
+
+def test_a_move_inside_a_root_never_copies_the_bytes(sandbox, monkeypatch):
+    """A rename touches directory entries, nothing else. It costs the same for
+    a 2 KB note and a 2 GB recording, and there is no instant where the file
+    exists twice or not at all. Blow up if anything reads the file."""
+
+    def explode(*args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("the bytes were copied for a same-volume move")
+
+    monkeypatch.setattr("shutil.copy2", explode)
+
+    (sandbox / "big.bin").write_bytes(b"x" * 4096)
+    out = files.move_file(str(sandbox / "big.bin"), str(sandbox / "moved.bin"))
+    assert out.startswith("moved ")
+    assert (sandbox / "moved.bin").read_bytes() == b"x" * 4096
+    assert not (sandbox / "big.bin").exists()
+
+
+def test_a_move_onto_an_existing_file_still_replaces_it(sandbox):
+    """`os.replace`, not `os.rename`: rename overwrites on POSIX and raises on
+    Windows, and this needs one behaviour. The runtime has already asked."""
+    (sandbox / "a.txt").write_text("new", encoding="utf-8")
+    (sandbox / "b.txt").write_text("old", encoding="utf-8")
+    files.move_file(str(sandbox / "a.txt"), str(sandbox / "b.txt"))
+    assert (sandbox / "b.txt").read_text(encoding="utf-8") == "new"
+    assert not (sandbox / "a.txt").exists()
+
+
+def test_a_cross_drive_move_falls_back_to_copying(sandbox, monkeypatch):
+    """No filesystem renames across volumes, so that case pays what it has to.
+    Faked here, because the test suite cannot count on a second drive."""
+    import errno as errno_module
+
+    def refuse(*args, **kwargs):
+        raise OSError(errno_module.EXDEV, "Invalid cross-device link")
+
+    monkeypatch.setattr("os.replace", refuse)
+
+    (sandbox / "a.txt").write_text("travelling", encoding="utf-8")
+    out = files.move_file(str(sandbox / "a.txt"), str(sandbox / "far" / "b.txt"))
+    assert out.startswith("moved ")
+    assert (sandbox / "far" / "b.txt").read_text(encoding="utf-8") == "travelling"
+    assert not (sandbox / "a.txt").exists()
+
+
+def test_a_real_rename_failure_is_not_mistaken_for_a_cross_drive_one(sandbox, monkeypatch):
+    """Only a cross-device error may fall back. Anything else is a failure and
+    has to be reported as one, or a permissions problem turns into a silent
+    copy that leaves the original behind."""
+
+    def refuse(*args, **kwargs):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr("os.replace", refuse)
+
+    (sandbox / "a.txt").write_text("stay", encoding="utf-8")
+    out = files.move_file(str(sandbox / "a.txt"), str(sandbox / "b.txt"))
+    assert out.startswith("error: could not move")
+    assert (sandbox / "a.txt").read_text(encoding="utf-8") == "stay"
+    assert not (sandbox / "b.txt").exists()
+
+
+def test_a_hard_linked_alias_counts_as_the_same_file(sandbox):
+    """Two real names for one set of bytes. The string compare cannot see it,
+    and `copy2` truncates the destination before it reads anything -- so a copy
+    onto an alias of the source empties the file and then copies the nothing."""
+    import os as os_module
+
+    source = sandbox / "a.txt"
+    source.write_text("precious", encoding="utf-8")
+    alias = sandbox / "alias.txt"
+    try:
+        os_module.link(source, alias)
+    except (OSError, NotImplementedError, AttributeError):
+        import pytest
+
+        pytest.skip("no hard links on this filesystem")
+
+    out = files.copy_file(str(source), str(alias))
+    assert "same file" in out
+    assert source.read_text(encoding="utf-8") == "precious"

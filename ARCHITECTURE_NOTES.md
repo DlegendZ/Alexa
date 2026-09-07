@@ -584,3 +584,34 @@ put the bound schemas at 1239 tokens of an 8192 window, paid every turn whether 
 tool is called, out of the memory slices. Eight tools was 1630 all-in; ten is ~1870. There
 is not room for many more at this window size, and the next tool should either replace one
 or come with a larger model behind it.
+
+## 44. A move inside a root renames; it does not copy
+
+**Doc:** note 43 said copy-then-unlink, always, because the roots can sit on different
+drives.
+**Code:** `files.move_file` calls `os.replace` first and falls back to
+`_move_across_devices` only on a cross-device error.
+**Why:** note 43 chose the fallback as the *only* path, which made the rare case pay for
+the common one. Nearly every move is inside one root — "put this in that folder" means a
+folder that is already configured — and a rename there touches directory entries and
+nothing else. Measured on this machine with a 64 MB file: 18–28 ms copying, 0.2 ms
+renaming, and the rename figure does not move when the file gets bigger.
+
+Speed is the smaller half. A rename is atomic: there is no instant where the file exists
+twice, or where a crash leaves a half-written destination next to an intact source. The
+copy path cannot offer that, which is why its failure message has to name both files.
+
+Three details that are easy to get wrong:
+
+- **`os.replace`, not `os.rename`.** When the destination exists, rename overwrites on
+  POSIX and raises on Windows. This needs one behaviour, and by the time it runs the
+  runtime has already asked the user about that destination.
+- **Only a cross-device error may fall back.** A permissions failure that fell through to
+  the copy path would silently succeed at copying and leave the original behind — a "move"
+  that duplicated the file. `_is_cross_device` checks `errno.EXDEV` and Windows error 17,
+  because CPython does not consistently map the latter to the former.
+- **`samefile`, not just a string compare.** Both paths are already resolved, so symlinks
+  are gone, but hard links are two real names for one set of bytes. `copy2` opens the
+  destination for writing before reading anything, so a copy onto an alias of the source
+  truncates it to nothing and then copies the nothing. The string compare cannot see that;
+  a device-and-inode comparison can.
