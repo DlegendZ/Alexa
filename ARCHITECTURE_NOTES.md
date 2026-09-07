@@ -237,7 +237,7 @@ to take deliberately rather than mid-build.
 
 ## 22. The v2 write-confirmation decision was never carried into v3
 
-**Status: open, needs a ruling from the user. Not yet applied to the HTML.**
+**Status: RESOLVED — option 2 chosen and built. Applied to the HTML.**
 
 **Doc:** `doc/sunday_context.md` section 7, marked LOCKED — "Read = auto-execute.
 Write/create/modify/delete = always confirm with user first, no exceptions", implemented as
@@ -258,9 +258,8 @@ Options, with the recommendation:
 3. Drop it deliberately — decide the sandbox plus credential refusal is enough, and strike
    section 7 rather than leaving a locked decision unmet.
 
-Whichever is chosen, it needs writing into the architecture HTML: option 1 or 2 as a stage
-in the tool loop and a row in the failure-mode table, option 3 as an explicit entry under
-Deliberately out of scope.
+**Chosen: option 2.** Overwriting an existing file asks; creating one does not. See note 31
+for how it is built.
 
 ---
 
@@ -349,3 +348,31 @@ git hashes and UUIDs.
 by `Result.provenance` through `AIRLOCK_VISIBLE`, which is the stronger mechanism.
 **Why:** nothing read the field. A state field nothing reads is a claim the code is not
 making — either the comment was wrong or a consumer was missing, and it was the comment.
+
+## 31. Confirmation is a sink, not a graph interrupt
+
+**Doc (v2):** a LangGraph interrupt — the graph pauses, state is saved, the next user
+message resumes it.
+**Code:** a `ConfirmSink` passed into `run_turn`, called synchronously from `_dispatch`
+immediately before `write_file`, alongside the door checks.
+**Why:** an interrupt suspends the whole graph and resumes it as a new invocation, which
+means the turn's message list, tool results and streaming sinks all have to survive a
+round trip through checkpoint storage. A blocking callback gets the same guarantee — the
+write does not happen until a person says so — without any of that. It also works
+identically for both clients, which an interrupt would not: the terminal prompts on stdin,
+the sidecar sends `confirm` and waits for `confirm_response`.
+
+**The rules, as built:**
+- Creating a file passes through. Nothing is lost, and a prompt on every new note is one
+  you learn to click past — which would cost the prompt its meaning when it matters.
+- Overwriting an existing file inside the roots asks, and names the file and its size.
+- No confirm sink means no consent: the write is refused with a script telling the user the
+  file was left alone. Silence is not a yes, and a background session cannot approve.
+- The sandbox still answers first. A path outside the roots, or a credential file, is
+  refused before anything is asked -- confirmation widens what the user may allow, never
+  what the sandbox allows.
+- A cancelled turn releases any question still waiting, refusing, so barge-in cannot leave
+  a write pending on a 120-second timeout.
+
+**Protocol addition:** `confirm` out (`{id, text, path}`), `confirm_response` in
+(`{id, approved}`). `web/debug.html` renders it as two buttons, focused on "Keep it".

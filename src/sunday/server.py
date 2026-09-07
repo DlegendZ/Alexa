@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,6 +28,18 @@ from sunday.agent.llm import OllamaDown
 from sunday.runtime import Runtime
 
 PROTOCOL_VERSION = 1
+
+#: How long a confirmation waits for an answer before deciding for itself. The
+#: decision it makes is "no", because silence is not consent.
+CONFIRM_TIMEOUT_S = 120
+
+
+@dataclass
+class _Pending:
+    """One question in flight, waited on by the turn's worker thread."""
+
+    event: threading.Event = field(default_factory=threading.Event)
+    approved: bool = False
 
 
 @dataclass
@@ -82,6 +95,7 @@ class Sidecar:
         self._turn_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._clients: set[ServerConnection] = set()
+        self._pending: dict[str, _Pending] = {}
 
     # -- lifecycle ------------------------------------------------------
 
@@ -164,7 +178,17 @@ class Sidecar:
             await self._broadcast(
                 {"type": "state", "value": "muted" if self.muted else "idle"}
             )
+        elif kind == "confirm_response":
+            pending = self._pending.get(str(message.get("id", "")))
+            if pending is not None:
+                pending.approved = bool(message.get("approved"))
+                pending.event.set()
         elif kind == "cancel":
+            # A cancelled turn must not leave its question hanging until the
+            # timeout: release every waiter, refusing, so the write is skipped.
+            for pending in list(self._pending.values()):
+                pending.approved = False
+                pending.event.set()
             self.runtime.cancel()
         elif kind == "shutdown":
             await self.stop()
@@ -189,6 +213,20 @@ class Sidecar:
             def push(event: dict) -> None:
                 loop.call_soon_threadsafe(queue.put_nowait, event)
 
+            def confirm(question: str) -> bool:
+                """Runs on the worker thread. Asks every attached client and
+                blocks until one answers or the timeout decides no."""
+                request_id = secrets.token_urlsafe(8)
+                pending = _Pending()
+                self._pending[request_id] = pending
+                push({"type": "confirm", "id": request_id, "text": question})
+                try:
+                    if not pending.event.wait(CONFIRM_TIMEOUT_S):
+                        return False
+                    return pending.approved
+                finally:
+                    self._pending.pop(request_id, None)
+
             def work() -> None:
                 try:
                     self.runtime.run_turn(
@@ -197,6 +235,7 @@ class Sidecar:
                         on_token=lambda t: push({"type": "token", "text": t}),
                         on_sentence=lambda s: push({"type": "sentence", "text": s}),
                         on_event=push,
+                        on_confirm=confirm,
                     )
                 except OllamaDown as exc:
                     push({"type": "error", "text": str(exc)})

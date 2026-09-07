@@ -19,6 +19,8 @@ from sunday.runtime import (
     EXTERNAL_TOOL,
     HOPS_SPENT,
     NO_ROOM,
+    WRITE_DECLINED,
+    WRITE_UNATTENDED,
     Runtime,
 )
 from sunday.state import Result
@@ -412,3 +414,143 @@ def test_the_additions_carry_no_false_positive_tax(cfg):
     cleaned, hits = guardrail.redact(ordinary)
     assert hits == 0
     assert cleaned == ordinary
+
+
+# -- 11. write confirmation (option 2: confirm on overwrite, create passes) --
+
+
+def _write_call(path, text="new contents"):
+    return ToolCall("write_file", {"path": str(path), "text": text})
+
+
+def test_creating_a_new_file_does_not_ask(cfg, tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    target = root / "fresh.txt"
+
+    asked: list[str] = []
+    agent = Scripted([Reply(tool_calls=[_write_call(target)])])
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "write me a note", on_confirm=lambda q: asked.append(q) or True
+    )
+
+    assert asked == []  # nothing is lost by creating, so nothing interrupts
+    assert target.read_text(encoding="utf-8") == "new contents"
+    assert state["tool_results"][0].ok is True
+
+
+def test_overwriting_asks_first_and_honours_yes(cfg, tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    target = root / "gold.txt"
+    target.write_text("sell at 4600", encoding="utf-8")
+
+    asked: list[str] = []
+
+    def yes(question):
+        asked.append(question)
+        return True
+
+    agent = Scripted([Reply(tool_calls=[_write_call(target)])])
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "replace my note", on_confirm=yes
+    )
+
+    assert len(asked) == 1
+    assert "gold.txt" in asked[0]
+    assert "bytes" in asked[0]  # the question says what is at stake
+    assert target.read_text(encoding="utf-8") == "new contents"
+    assert state["tool_results"][0].ok is True
+
+
+def test_saying_no_leaves_the_file_exactly_as_it_was(cfg, tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    target = root / "gold.txt"
+    target.write_text("sell at 4600", encoding="utf-8")
+
+    agent = Scripted([Reply(tool_calls=[_write_call(target)])])
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "replace my note", on_confirm=lambda q: False
+    )
+
+    assert target.read_text(encoding="utf-8") == "sell at 4600"
+    result = state["tool_results"][0]
+    assert result.ok is False
+    assert result.content == WRITE_DECLINED
+    assert any("left as it was" in n for n in state["notices"])  # type: ignore[typeddict-item]
+
+
+def test_with_nobody_attached_the_overwrite_fails_closed(cfg, tmp_path):
+    """Silence is not consent. A session with no confirm sink cannot approve."""
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    target = root / "gold.txt"
+    target.write_text("sell at 4600", encoding="utf-8")
+
+    agent = Scripted([Reply(tool_calls=[_write_call(target)])])
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "replace my note"
+    )
+
+    assert target.read_text(encoding="utf-8") == "sell at 4600"
+    assert state["tool_results"][0].content == WRITE_UNATTENDED
+    assert state["tool_results"][0].ok is False
+
+
+def test_a_path_outside_the_roots_is_refused_without_asking(cfg, tmp_path):
+    """The sandbox answers first; there is nothing to confirm."""
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not yours", encoding="utf-8")
+
+    asked: list[str] = []
+    agent = Scripted([Reply(tool_calls=[_write_call(outside)])])
+    Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "overwrite that", on_confirm=lambda q: asked.append(q) or True
+    )
+
+    assert asked == []
+    assert outside.read_text(encoding="utf-8") == "not yours"
+
+
+def test_a_credential_file_is_still_refused_even_with_a_yes(cfg, tmp_path):
+    """Confirmation widens what the user can allow; it does not widen the
+    sandbox's own refusals."""
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    target = root / ".env"
+    target.write_text("KEY=1", encoding="utf-8")
+
+    agent = Scripted([Reply(tool_calls=[_write_call(target)])])
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "overwrite my env", on_confirm=lambda q: True
+    )
+
+    assert target.read_text(encoding="utf-8") == "KEY=1"
+    assert "credential" in state["tool_results"][0].content
+
+
+def test_the_confirm_event_reaches_the_client(cfg, tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    target = root / "gold.txt"
+    target.write_text("sell at 4600", encoding="utf-8")
+
+    events: list[dict] = []
+    agent = Scripted([Reply(tool_calls=[_write_call(target)])])
+    Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "replace it", on_event=events.append, on_confirm=lambda q: False
+    )
+
+    confirms = [e for e in events if e["type"] == "confirm"]
+    assert len(confirms) == 1
+    assert confirms[0]["path"] == str(target)

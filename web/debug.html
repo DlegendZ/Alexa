@@ -216,6 +216,37 @@ function handle(message) {
       setState("blocked");
       addNote(`${message.name} refused`, "stop");
       break;
+    case "confirm": {
+      // Overwriting a file you already have is the one thing that stops to ask.
+      const wrap = document.createElement("div");
+      wrap.className = "note stop";
+      const q = document.createElement("div");
+      q.textContent = message.text;
+      const row = document.createElement("div");
+      row.className = "buttons";
+      row.style.marginTop = "8px";
+      const answer = (approved) => {
+        socket.send(JSON.stringify({
+          type: "confirm_response", id: message.id, approved,
+        }));
+        row.replaceChildren();
+        q.textContent = message.text + (approved ? "  → overwritten" : "  → left alone");
+      };
+      const yes = document.createElement("button");
+      yes.type = "button";
+      yes.textContent = "Overwrite";
+      yes.onclick = () => answer(true);
+      const no = document.createElement("button");
+      no.type = "button";
+      no.textContent = "Keep it";
+      no.onclick = () => answer(false);
+      row.append(no, yes);
+      wrap.append(q, row);
+      transcript.append(wrap);
+      transcript.scrollTop = transcript.scrollHeight;
+      no.focus();
+      break;
+    }
     case "notice":
       addNote(message.text);
       break;

@@ -24,6 +24,7 @@ from sunday import (
     tools as tool_registry,
     web,
 )
+from sunday.tools import files
 from sunday.agent import loop as agent_loop, prompts
 from sunday.agent.llm import Agent, OllamaDown
 from sunday.memory import LongTermMemory, SessionMemory, budget
@@ -31,6 +32,8 @@ from sunday.state import Result, SundayState, TurnEvents, new_state
 
 TokenSink = Callable[[str], None]
 EventSink = Callable[[dict[str, Any]], None]
+#: Asks the person a yes/no question and blocks until they answer.
+ConfirmSink = Callable[[str], bool]
 
 EXTERNAL_TOOL = "ask_external"
 DOOR_SHUT = (
@@ -67,6 +70,17 @@ NO_ROOM = (
 
 #: Below this, a clipped result carries no information worth the confusion.
 MIN_RESULT_TOKENS = 24
+
+WRITE_DECLINED = (
+    "refused: the user was asked before overwriting that file and said no. Do "
+    "not try again or write it somewhere else unless they ask you to."
+)
+WRITE_UNATTENDED = (
+    "refused: overwriting an existing file needs the user's confirmation, and "
+    "there is nobody attached to this session to ask. Tell them the file was "
+    "left as it was."
+)
+WRITE_QUESTION = "Overwrite {path} ({size})?"
 
 
 class Cancelled(Exception):
@@ -113,6 +127,7 @@ class Runtime:
         self._on_token: TokenSink | None = None
         self._on_sentence: TokenSink | None = None
         self._on_event: EventSink | None = None
+        self._on_confirm: ConfirmSink | None = None
         self._graph = graph_module.build_graph(self)
 
     # -- lifecycle ------------------------------------------------------
@@ -324,6 +339,14 @@ class Runtime:
                 return Result(name, args, DOOR_SHUT, "public", ok=False)
             return self._ask_external(args, state, flags)
 
+        # Read is auto-execute; replacing something you already have is not.
+        # This lives here rather than in write_file because the tool has no
+        # channel to ask on -- the same reason the door checks live here.
+        if name == "write_file":
+            refusal = self._confirm_overwrite(args)
+            if refusal is not None:
+                return refusal
+
         result = self._run_tool(name, args, state)
 
         # Source taint: catches secrets that look ordinary. A password in your
@@ -351,6 +374,36 @@ class Runtime:
         if result.provenance in {"private", "secret"}:
             flags.saw_private = True
         return result
+
+    def _confirm_overwrite(self, args: dict[str, Any]) -> Result | None:
+        """None to go ahead, or the refusal to hand back instead.
+
+        Creating a file passes through: nothing is lost, and asking about every
+        new note makes the confirmation itself something you learn to click
+        past. Replacing a file you already have is the irreversible case, and
+        it is the only one worth interrupting for.
+        """
+        target = files.resolve(str(args.get("path", "")))
+        if target is None or not target.is_file():
+            return None  # outside the roots, or a create -- neither asks
+
+        try:
+            size = f"{target.stat().st_size} bytes"
+        except OSError:  # pragma: no cover - raced or unreadable
+            size = "unknown size"
+        question = WRITE_QUESTION.format(path=target, size=size)
+        self._emit(type="confirm", text=question, path=str(target))
+
+        if self._on_confirm is None:
+            # Fail closed. A session with nobody attached cannot consent, and
+            # silence is not a yes.
+            self.ctx.events.notice(guardrail.NOTICE_WRITE_UNATTENDED.format(path=target.name))
+            return Result("write_file", args, WRITE_UNATTENDED, "private", ok=False)
+
+        if not self._on_confirm(question):
+            self.ctx.events.notice(guardrail.NOTICE_WRITE_DECLINED.format(path=target.name))
+            return Result("write_file", args, WRITE_DECLINED, "private", ok=False)
+        return None
 
     def _run_tool(self, name: str, args: dict[str, Any], state: SundayState) -> Result:
         tool = tool_registry.get(name)
@@ -516,6 +569,7 @@ class Runtime:
         on_token: TokenSink | None = None,
         on_sentence: TokenSink | None = None,
         on_event: EventSink | None = None,
+        on_confirm: ConfirmSink | None = None,
     ) -> SundayState:
         if self.session.is_idle(self.cfg):
             self.close_session()
@@ -529,6 +583,7 @@ class Runtime:
         self._on_token = on_token
         self._on_sentence = on_sentence
         self._on_event = on_event
+        self._on_confirm = on_confirm
 
         state = new_state(
             task,
@@ -580,6 +635,7 @@ class Runtime:
         self._on_token = None
         self._on_sentence = None
         self._on_event = None
+        self._on_confirm = None
         self._ctx = None
 
 

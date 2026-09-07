@@ -112,3 +112,8 @@ NOTICE_BLOCKED = (
 NOTICE_EXTERNAL_OFF = (
     "I could not look that up: web lookups are switched off in config.toml."
 )
+NOTICE_WRITE_DECLINED = "You said no, so {path} was left as it was."
+NOTICE_WRITE_UNATTENDED = (
+    "{path} already exists and nobody was attached to confirm the overwrite, "
+    "so it was left as it was."
+)

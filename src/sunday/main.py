@@ -20,6 +20,21 @@ RED = "\033[31m"
 RESET = "\033[0m"
 
 
+def _confirm(question: str) -> bool:
+    """Overwriting a file you already have is the one thing worth stopping for.
+
+    Anything that is not clearly a yes is a no, including a closed stdin: the
+    default has to be the one that leaves your file alone.
+    """
+    print(f"\n{AMBER}  ? {question} [y/N] {RESET}", end="", flush=True)
+    try:
+        answer = input().strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer in {"y", "yes"}
+
+
 def _print_event(event: dict) -> None:
     kind = event.get("type")
     if kind == "tool":
@@ -77,7 +92,12 @@ def main() -> int:
         first_token[0] = True
         # Ctrl-C during a turn is handled inside run_turn, which cancels, logs
         # and tears down. It comes back as an uncommitted state, not a raise.
-        state = runtime.run_turn(text, on_token=on_token, on_event=_print_event)
+        state = runtime.run_turn(
+            text,
+            on_token=on_token,
+            on_event=_print_event,
+            on_confirm=_confirm,
+        )
         if not state.get("committed") and not state.get("final_response"):
             print(f"\n{GREY}  · cancelled{RESET}\n")
             continue
