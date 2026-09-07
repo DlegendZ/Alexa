@@ -14,7 +14,7 @@ thinking_budget = 1024
 summariser      = "deepseek-v4-flash"
 # Taken off the top before the memory slices are sized: the system prompt, the
 # tool schemas and the memory framing block, then room for the reply itself.
-overhead_tokens = 1750
+overhead_tokens = 2000
 reply_tokens    = 768
 
 [audio]

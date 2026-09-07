@@ -537,3 +537,50 @@ answers, and what is nearest is a `list_dir` result with one filename per line. 
 the shape: asked to list a folder it replied with "- gold.txt" and "- scratch.txt", dashes
 and all. Same failure as the retrieved-memory framing in note 19, and the same fix — put the
 rule next to the thing that triggers it, which is the only place a 2b reliably reads.
+
+## 43. Moving and copying, and why the source rule matters more than the destination
+
+**Doc:** Stage 04 — the file tools were read, write, delete and list. Nothing moved a file.
+**Code:** `files.copy_file` and `files.move_file`, both taking `source` and `destination`,
+both confirmed by `runtime._confirm_landing` when something is already at the destination.
+`PATH_TOOLS` grew, and the taint check now walks `PATH_ARGS` rather than a single `path`.
+**Why:** "put this in that folder" is one of the few things a person asks an assistant to do
+with files, and it could not be done at all.
+
+The security argument is the part worth writing down, because it is the opposite of the
+obvious one. The obvious worry is the destination: a copy is how a file leaves the sandbox,
+so the destination is resolved and checked for containment exactly like every other path.
+That much is the sandbox doing its normal job.
+
+The *source* rule is the one that is easy to miss. The deny overlay works on paths: reading
+`.env` marks the turn `secret` and bolts the web door for the rest of it. Copying `.env` to
+`notes.txt` leaves the same bytes at a path the overlay says nothing about — so the next
+read is an ordinary private read, the turn stays clean, and the door stays open. Taint does
+not help, because by then the credential is at a path that was never on the list. A copy is
+a laundering operation on the one thing the overlay protects, so a credential source is
+**refused outright** rather than allowed-and-tainted.
+
+Three smaller decisions:
+
+- **A destination that is an existing folder means "into it, keeping the name."** That is
+  what a person means by copy-paste, and what the model passes when it repeats the folder
+  back. Anything else is the new full path, so a rename is the same call.
+- **The confirmation is about the destination, not the source.** A copy leaves the source
+  alone and a move leaves it one call away from coming back; what cannot be undone is
+  whatever was already sitting at the destination. So the write rule applies unchanged:
+  replacing asks, creating does not.
+- **Copy-then-unlink, not rename.** The roots can sit on different drives — `C:` and `E:` in
+  the configuration this was built against — and a rename across volumes fails. It also
+  gives one behaviour when the destination exists, where `os.rename` overwrites on POSIX and
+  raises on Windows. If the copy lands and the unlink fails, the result says so and names
+  both files rather than reporting a clean failure the user would read as "nothing
+  happened".
+
+Copying a file onto itself is refused. `shutil.copy2` would open the destination for writing
+first and truncate it to nothing — a data-loss bug wearing the clothes of a no-op.
+
+**Cost:** `overhead_tokens` 1750 → 2000, and the trend is now the thing to watch. Ten tools
+put the bound schemas at 1239 tokens of an 8192 window, paid every turn whether or not a
+tool is called, out of the memory slices. Eight tools was 1630 all-in; ten is ~1870. There
+is not room for many more at this window size, and the next tool should either replace one
+or come with a larger model behind it.

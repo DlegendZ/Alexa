@@ -111,11 +111,22 @@ DELETE_UNATTENDED = (
 )
 DELETE_QUESTION = "Delete {path} ({size})? This cannot be undone."
 
-#: Tools whose `path` argument is checked against the deny overlay. Delete is
+#: Tools whose path arguments are checked against the deny overlay. Delete is
 #: in here for the same reason read is: the *name* of the file is the signal,
 #: and a turn that went looking at `.ssh/` has no business on the web
 #: afterwards, whatever it did when it got there.
-PATH_TOOLS = {"read_file", "list_dir", "write_file", "delete_file"}
+PATH_TOOLS = {
+    "read_file",
+    "list_dir",
+    "write_file",
+    "delete_file",
+    "copy_file",
+    "move_file",
+}
+
+#: Every argument name that carries a path. A tool with two of them needs both
+#: checked: a copy is only as safe as its more sensitive end.
+PATH_ARGS = ("path", "source", "destination")
 
 
 class Cancelled(Exception):
@@ -468,6 +479,10 @@ class Runtime:
             refusal = self._confirm_delete(args)
             if refusal is not None:
                 return refusal
+        elif name in {"copy_file", "move_file"}:
+            refusal = self._confirm_landing(name, args)
+            if refusal is not None:
+                return refusal
 
         result = self._run_tool(name, args, state)
 
@@ -477,13 +492,10 @@ class Runtime:
         # Only a call that actually reached the file counts. A refused path
         # returned nothing, so naming `~/.ssh/id_rsa` at a folder Sunday cannot
         # open would otherwise let the model shut its own door for the turn.
-        if (
-            name in PATH_TOOLS
-            and result.ok
-            and guardrail.is_secret_path(str(args.get("path", "")))
-        ):
+        touched = _secret_arg(name, args) if result.ok else None
+        if touched is not None:
             flags.tainted = True
-            self._trace(trace.tainted(str(args.get("path", ""))))
+            self._trace(trace.tainted(touched))
             # The label exists to keep the record honest: the JSONL line and the
             # Chroma document should say a credential was touched, not "private".
             result = replace(result, provenance="secret")
@@ -558,6 +570,33 @@ class Runtime:
             unattended=DELETE_UNATTENDED,
             declined_notice=guardrail.NOTICE_DELETE_DECLINED,
             unattended_notice=guardrail.NOTICE_DELETE_UNATTENDED,
+        )
+
+    def _confirm_landing(self, tool: str, args: dict[str, Any]) -> Result | None:
+        """A copy or a move asks about where it lands, not where it came from.
+
+        The source survives a copy and is not lost by a move -- it is one call
+        away from coming back. What cannot be undone is the file already sitting
+        at the destination, so that is the one worth interrupting for, and the
+        rule is the write rule: replacing asks, creating does not.
+        """
+        source = files.resolve(str(args.get("source", "")))
+        if source is None:
+            return None  # the sandbox answers first
+        target = files._landing(source, str(args.get("destination", "")))
+        if target is None or not target.is_file():
+            return None  # outside the roots, or nothing there to lose
+
+        return self._ask(
+            tool=tool,
+            args=args,
+            target=target,
+            action="overwrite",
+            question=WRITE_QUESTION,
+            declined=WRITE_DECLINED,
+            unattended=WRITE_UNATTENDED,
+            declined_notice=guardrail.NOTICE_WRITE_DECLINED,
+            unattended_notice=guardrail.NOTICE_WRITE_UNATTENDED,
         )
 
     def _ask(
@@ -875,6 +914,22 @@ class Runtime:
         self._on_event = None
         self._on_confirm = None
         self._ctx = None
+
+
+def _secret_arg(name: str, args: dict[str, Any]) -> str | None:
+    """The first path argument on the deny list, or None.
+
+    Only a call that actually reached the file counts, which is why the caller
+    checks `result.ok` first: naming `~/.ssh/id_rsa` at a folder Sunday cannot
+    open would otherwise let the model shut its own door for the turn.
+    """
+    if name not in PATH_TOOLS:
+        return None
+    for key in PATH_ARGS:
+        value = str(args.get(key, ""))
+        if value and guardrail.is_secret_path(value):
+            return value
+    return None
 
 
 def _why_thinking(state: SundayState) -> str:

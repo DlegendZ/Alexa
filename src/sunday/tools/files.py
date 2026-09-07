@@ -11,6 +11,7 @@ does not shut the airlock door. That is the deny overlay's job, in guardrail.py.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 from sunday import config
@@ -158,6 +159,106 @@ def delete_file(path: str) -> str:
     return f"deleted {target}"
 
 
+def _landing(source: Path, destination: str) -> Path | None:
+    """Where the file actually ends up.
+
+    A destination that is an existing folder means "into it, keeping the name",
+    which is what a person means by copy-paste and what the model will pass when
+    it repeats the folder back. Anything else is taken as the new full path,
+    so renaming while moving works in one call.
+    """
+    target = resolve(destination)
+    if target is None:
+        return None
+    return target / source.name if target.is_dir() else target
+
+
+def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | str:
+    """Both ends checked before either is touched, or the refusal to return.
+
+    The credential rules here are the load-bearing part, and the *source* rule
+    is the one that is easy to miss. The deny overlay works on paths: reading
+    `.env` marks the turn secret and bolts the web door. Copying `.env` to
+    `notes.txt` would leave the same bytes at a path the overlay says nothing
+    about -- so the next read is ordinary, the turn stays clean, and the door
+    stays open. A copy is a laundering operation on the one thing the overlay
+    protects, so a credential source is refused outright rather than tainted.
+    """
+    src = resolve(source)
+    if src is None:
+        return REFUSED
+    if not src.exists():
+        return f"error: no such file: {source}"
+    if src.is_dir():
+        return (
+            f"error: {source} is a folder, and Sunday only {verb}s one file at "
+            f"a time. Tell the user to {verb} folders themselves."
+        )
+    if is_credential_path(src):
+        return (
+            f"refused: will not {verb} a credential file. Tell the user that "
+            f"plainly -- copying one out from under its own name is exactly "
+            f"what the rule exists to stop."
+        )
+
+    dst = _landing(src, destination)
+    if dst is None:
+        return REFUSED
+    if is_credential_path(dst):
+        return f"refused: will not {verb} a file onto a credential path"
+    if dst.is_dir():  # pragma: no cover - _landing only returns a dir's child
+        return f"error: {destination} is a folder"
+    if os.path.normcase(str(src)) == os.path.normcase(str(dst)):
+        return f"error: the source and the destination are the same file"
+    return src, dst
+
+
+def copy_file(source: str, destination: str) -> str:
+    """Copy one file to another place inside the roots."""
+    prepared = _prepare(source, destination, "copy")
+    if isinstance(prepared, str):
+        return prepared
+    src, dst = prepared
+
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    except OSError as exc:
+        return f"error: could not copy {source} ({exc.strerror or exc})"
+    return f"copied {src} to {dst}"
+
+
+def move_file(source: str, destination: str) -> str:
+    """Move one file to another place inside the roots.
+
+    Copy-then-delete rather than a rename, because the roots can sit on
+    different drives -- C: and E: in the configuration this was built against --
+    and a rename across volumes fails. It also gives one predictable behaviour
+    when the destination already exists, where `os.rename` overwrites on POSIX
+    and raises on Windows.
+    """
+    prepared = _prepare(source, destination, "move")
+    if isinstance(prepared, str):
+        return prepared
+    src, dst = prepared
+
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    except OSError as exc:
+        return f"error: could not move {source} ({exc.strerror or exc})"
+    try:
+        src.unlink()
+    except OSError as exc:
+        # The copy landed, so say where it is. Reporting a clean failure here
+        # would leave the user believing nothing happened, with two files.
+        return (
+            f"error: copied {src} to {dst} but could not remove the original "
+            f"({exc.strerror or exc}). Both copies exist."
+        )
+    return f"moved {src} to {dst}"
+
+
 def list_dir(path: str) -> str:
     target = resolve(path)
     if target is None:
@@ -251,6 +352,54 @@ register(
             "required": ["path"],
         },
         fn=delete_file,
+        provenance="private",
+    )
+)
+
+register(
+    Tool(
+        name="copy_file",
+        description=(
+            "Copy a file. Both paths must be inside the configured folders. "
+            "A destination folder means 'into it, same name'; otherwise it is "
+            "the new full path. Replacing an existing file asks the user."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Full path of the file"},
+                "destination": {
+                    "type": "string",
+                    "description": "New full path, or a folder to put it in",
+                },
+            },
+            "required": ["source", "destination"],
+        },
+        fn=copy_file,
+        provenance="private",
+    )
+)
+
+register(
+    Tool(
+        name="move_file",
+        description=(
+            "Move or rename a file. Both paths must be inside the configured "
+            "folders. A destination folder means 'into it, same name'; "
+            "otherwise it is the new full path. Replacing asks the user."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Full path of the file"},
+                "destination": {
+                    "type": "string",
+                    "description": "New full path, or a folder to put it in",
+                },
+            },
+            "required": ["source", "destination"],
+        },
+        fn=move_file,
         provenance="private",
     )
 )
