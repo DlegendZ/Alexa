@@ -1,8 +1,16 @@
 # Architecture notes — deviations found while building
 
 Running list of places where the build departed from `doc/sunday_architecture.html`,
-or filled in something the document left open. Nothing here is applied to the HTML
-yet — this is the queue for that update.
+or filled in something the document left open.
+
+**Entries 1–21 have been applied to the HTML.** They are kept here as the record of
+why each passage in that document reads the way it does — the HTML states the
+decisions, this file states what they replaced. Add new entries below as they come up,
+and apply them in a batch rather than editing the HTML mid-build.
+
+Two of the applied entries are decisions, not fixes, and remain open in the document's
+own Open decisions list: **#10**, the intent hint the agent writes, and **#21**, the
+2b's prose. Applying them meant writing the limitation down, not removing it.
 
 Each entry: what the doc says, what the code does, why.
 
