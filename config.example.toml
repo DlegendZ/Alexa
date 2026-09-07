@@ -12,6 +12,10 @@ thinking_budget = 1024
 # The airlock summariser. The only model that is not local, and it only ever
 # sees a cleared query plus text that was already public.
 summariser      = "deepseek-v4-flash"
+# Taken off the top before the memory slices are sized: the system prompt, the
+# tool schemas and the memory framing block, then room for the reply itself.
+overhead_tokens = 1200
+reply_tokens    = 768
 
 [audio]
 sample_rate   = 16000
@@ -59,9 +63,17 @@ extract_max_chars = 12000
 query_max_chars   = 200
 
 [guardrail]
-secret_paths = [".env", "*.key", "*.pem", "id_rsa", "credentials*",
-                ".ssh/", ".aws/", "*.kdbx", "google_token.json"]
-key_shapes   = ["sk-", "ghp_", "AKIA", "xoxb-", "eyJ", "-----BEGIN"]
+# Reading any of these taints the turn: the web door shuts for the rest of it.
+secret_paths = [".env", ".env.*", "*.key", "*.pem", "*.pfx", "*.p12",
+                "id_rsa", "id_ed25519", "credentials*", ".ssh/", ".aws/",
+                ".gnupg/", "*.kdbx", "google_token.json", "token.json",
+                "service-account*.json", "secrets.*", ".npmrc", ".pypirc",
+                ".netrc"]
+# Prefixes only, each unambiguous enough to carry no false-positive tax.
+# Deliberately no entropy scoring and no Luhn checks -- see Stage 05.
+key_shapes   = ["sk-", "sk_live_", "ghp_", "gho_", "glpat-", "AKIA", "ASIA",
+                "xoxb-", "xoxp-", "xapp-", "AIza", "ya29.", "hf_", "dop_v1_",
+                "eyJ", "-----BEGIN"]
 
 [limits]
 tool_calls = 5   # hard cap on tool calls per turn

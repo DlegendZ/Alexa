@@ -42,6 +42,31 @@ DOOR_UNBOUND = (
     "withdrawn for the rest of it. If the user asked for something looked up, "
     "say plainly that you could not, and why."
 )
+DOOR_OFF = (
+    "refused: web lookups are switched off in config. Tell the user that "
+    "plainly, and that they can re-enable it under [external] in config.toml. "
+    "Do not answer the question from memory as though you had looked it up."
+)
+DOOR_OFF_SYSTEM = (
+    "System: web lookups are switched off in this configuration, so you have no "
+    "way to reach the internet this turn. If the user asks you to look something "
+    "up, say plainly that you cannot rather than answering from memory."
+)
+HOPS_SPENT = (
+    "refused: this turn has already used its {cap} web lookups. Answer with what "
+    "you have and tell the user which part you could not check."
+)
+CAP_SPENT = (
+    "refused: the tool-call cap for this turn was reached before this call ran. "
+    "Answer with what you already have and say which part is unchecked."
+)
+NO_ROOM = (
+    "refused: this result was too large for what is left of the context window. "
+    "Tell the user you could not read it in full and suggest a narrower request."
+)
+
+#: Below this, a clipped result carries no information worth the confusion.
+MIN_RESULT_TOKENS = 24
 
 
 class Cancelled(Exception):
@@ -185,6 +210,13 @@ class Runtime:
         # Two deterministic patterns run before the model is asked anything.
         # The answer arrives as an ordinary tool result, so the turn continues
         # normally and a mixed question loses nothing.
+        # A tool that was never bound leaves no trace to explain, exactly as
+        # with taint. Config-off is a standing state rather than a per-turn
+        # event, so the model is told and the user hears about it only if the
+        # model actually reached for the web.
+        if not self.cfg.external.enabled:
+            ctx.messages.append({"role": "system", "content": DOOR_OFF_SYSTEM})
+
         shortcut = fastpaths.match(state["task"])
         if shortcut is not None and not results:
             result = self._dispatch(shortcut.tool, dict(shortcut.args), state, flags)
@@ -208,24 +240,22 @@ class Runtime:
             for call in reply.tool_calls:
                 self._check_cancelled()
                 if tool_calls >= cap:
+                    # Every declared call needs an answer. The assistant message
+                    # above announces N of them, so breaking outright leaves the
+                    # chat template holding tool calls nothing ever replied to.
                     unresolved = (
                         f"stopped after {cap} tool calls, so some of this is unchecked"
                     )
-                    break
+                    skipped = Result(call.name, call.args, CAP_SPENT, "public", ok=False)
+                    results.append(skipped)
+                    ctx.messages.append(agent_loop.tool_message(skipped))
+                    continue
+
                 tool_calls += 1
                 working: SundayState = {**state, "tool_results": results}
                 result = self._dispatch(call.name, call.args, working, flags)
-
-                # Tool results are a claimant on the window like any other.
-                spent = sum(budget.count(r.content) for r in results)
-                room = max(0, tools_budget - spent)
-                if budget.count(result.content) > room:
-                    result = replace(
-                        result, content=budget.clip(result.content, room), truncated=True
-                    )
-
-                results.append(result)
-                ctx.messages.append(agent_loop.tool_message(result))
+                results.append(self._fit(result, results, tools_budget))
+                ctx.messages.append(agent_loop.tool_message(results[-1]))
             if unresolved:
                 break
 
@@ -239,6 +269,8 @@ class Runtime:
             ctx.events.notice(guardrail.NOTICE_BLOCKED)
         if flags.blocked:
             unresolved = unresolved or "a web lookup was refused this turn"
+            if not self.cfg.external.enabled:
+                ctx.events.notice(guardrail.NOTICE_EXTERNAL_OFF)
 
         return {
             "tool_results": results,
@@ -250,6 +282,24 @@ class Runtime:
             "saw_private": flags.saw_private or bool(state.get("saw_private")),
             "hops": flags.hops,
         }
+
+    def _fit(self, result: Result, so_far: list[Result], tools_budget: int) -> Result:
+        """Make a result fit the tools slice, or say it does not.
+
+        Clipping to nothing produces a bare `[truncated]` marker with ok=True --
+        a successful call that returned no content, which a 2b reads as licence
+        to fill the gap itself. The marker means "there is more than this", so
+        there has to be a this.
+        """
+        spent = sum(budget.count(r.content) for r in so_far)
+        room = max(0, tools_budget - spent)
+        if budget.count(result.content) <= room:
+            return result
+        if room < MIN_RESULT_TOKENS:
+            return replace(result, content=NO_ROOM, ok=False, truncated=True)
+        return replace(
+            result, content=budget.clip(result.content, room), truncated=True
+        )
 
     # -- the tool loop's one guarded step -------------------------------
 
@@ -278,10 +328,19 @@ class Runtime:
 
         # Source taint: catches secrets that look ordinary. A password in your
         # .env is just a word and no pattern will ever match it -- its path will.
-        if name in {"read_file", "list_dir", "write_file"} and guardrail.is_secret_path(
-            str(args.get("path", ""))
+        #
+        # Only a call that actually reached the file counts. A refused path
+        # returned nothing, so naming `~/.ssh/id_rsa` at a folder Sunday cannot
+        # open would otherwise let the model shut its own door for the turn.
+        if (
+            name in {"read_file", "list_dir", "write_file"}
+            and result.ok
+            and guardrail.is_secret_path(str(args.get("path", "")))
         ):
             flags.tainted = True
+            # The label exists to keep the record honest: the JSONL line and the
+            # Chroma document should say a credential was touched, not "private".
+            result = replace(result, provenance="secret")
 
         # Shape match: catches known key formats wherever they came from.
         cleaned, hits = guardrail.redact(result.content)
@@ -318,24 +377,40 @@ class Runtime:
         self, args: dict[str, Any], state: SundayState, flags: Flags
     ) -> Result:
         if not self.cfg.external.enabled:
+            flags.blocked = True
+            self._emit(type="blocked", name=EXTERNAL_TOOL)
+            return Result(EXTERNAL_TOOL, args, DOOR_OFF, "public", ok=False)
+
+        # The hop cap has to refuse, not tally. `tool_calls` bounds how many
+        # times the model may ask; without this, five ask_external calls make
+        # five searches and five fetches under a cap that reads as two.
+        if flags.hops >= self.cfg.external.max_hops:
+            flags.blocked = True
+            self._emit(type="blocked", name=EXTERNAL_TOOL)
             return Result(
                 EXTERNAL_TOOL,
                 args,
-                "refused: web lookups are switched off in config",
+                HOPS_SPENT.format(cap=self.cfg.external.max_hops),
                 "public",
                 ok=False,
             )
+
         intent = str(args.get("intent") or args.get("query") or "").strip()
         self._emit(type="tool", name=EXTERNAL_TOOL, scope="external")
-        query = airlock.compose(self.agent, state, intent)
-        query, hits = guardrail.scrub_query(query)
-        if hits:
-            flags.redactions += hits
+
+        # compose() scrubs and reports; scrubbing again here would count zero,
+        # because `[redacted]` holds no key shape, and the notice would die.
+        cleared = airlock.compose(self.agent, state, intent)
+        if cleared.redactions:
+            flags.redactions += cleared.redactions
             self.ctx.events.notice(guardrail.NOTICE_REDACTED)
-        self._emit(type="query", text=query)
-        content, hops, ok = self._web(query)
+
+        self._emit(type="query", text=cleared.query)
+        content, hops, ok = self._web(cleared.query)
         flags.hops += hops
-        return Result(EXTERNAL_TOOL, {"query": query}, content, "public", ok=ok)
+        return Result(
+            EXTERNAL_TOOL, {"query": cleared.query}, content, "public", ok=ok
+        )
 
     def _web(self, query: str) -> tuple[str, int, bool]:
         """search -> decide -> fetch -> extract -> summarise, hop-capped."""
@@ -463,7 +538,11 @@ class Runtime:
         )
         try:
             final: SundayState = self._graph.invoke(state)
-        except Cancelled:
+        except (Cancelled, KeyboardInterrupt):
+            # Ctrl-C is a barge-in by another name. Catching it here means the
+            # turn still gets its log line, its `done` event and its teardown;
+            # letting it escape leaves the sinks and the turn context set.
+            self._cancel.set()
             self._finish(log, cancelled=True, committed=False)
             return {**state, "committed": False, "notices": []}  # type: ignore[typeddict-unknown-key]
         except OllamaDown as exc:
@@ -480,6 +559,7 @@ class Runtime:
             provenance=[r.provenance for r in final.get("tool_results", [])],
             tainted=final.get("tainted", False),
             blocked=final.get("blocked", False),
+            saw_private=final.get("saw_private", False),
             redactions=final.get("redactions", 0),
             hops=final.get("hops", 0),
             tool_calls=final.get("tool_calls", 0),

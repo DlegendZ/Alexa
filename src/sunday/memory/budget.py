@@ -51,16 +51,49 @@ class Slices:
         """What is left of the window once the context is in it."""
         return max(0, self.total - context_tokens)
 
+    def scaled_to(self, available: int) -> Slices:
+        """Shrink every slice by the same factor, keeping the ratios."""
+        if self.total <= 0 or available >= self.total:
+            return self
+        factor = available / self.total
+        return Slices(
+            summary=int(self.summary * factor),
+            recent=int(self.recent * factor),
+            retrieved=int(self.retrieved * factor),
+            tools=int(self.tools * factor),
+            thinking=int(self.thinking * factor),
+        )
+
 
 def slices(cfg: config.Config | None = None) -> Slices:
+    """The five allowances, sized against what is actually free.
+
+    The configured slices sum to the whole context window, but they are not the
+    only claimants on it: the system prompt, the bound tool schemas and the
+    memory framing block cost around 1080 tokens that no slice pays for, and
+    the reply needs room of its own. Sizing the slices *to* the window rather
+    than to what is left of it overruns `num_ctx`, and Ollama answers by
+    dropping the oldest messages without saying so -- the silent truncation
+    Stage 02 exists to prevent.
+
+    So the fixed overhead comes off the top and the slices are scaled into what
+    remains, keeping the ratios the config asked for.
+    """
     cfg = cfg or config.get()
-    return Slices(
+    want = Slices(
         summary=cfg.memory.slice_summary,
         recent=cfg.memory.slice_recent,
         retrieved=cfg.memory.slice_retrieved,
         tools=cfg.memory.slice_tools,
         thinking=cfg.models.thinking_budget,
     )
+    available = max(
+        0,
+        cfg.models.context_tokens
+        - cfg.models.overhead_tokens
+        - cfg.models.reply_tokens,
+    )
+    return want.scaled_to(available)
 
 
 def assemble(summary: str, recent: str, retrieved: str, sl: Slices) -> tuple[str, int]:

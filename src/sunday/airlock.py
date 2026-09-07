@@ -53,8 +53,14 @@ def compose_prompt(state: SundayState, intent: str) -> list[dict[str, str]]:
     ]
 
 
-def compose(agent: Agent, state: SundayState, intent: str) -> str:
-    """One model call, fresh context, one query out."""
+def compose(agent: Agent, state: SundayState, intent: str) -> Cleared:
+    """One model call, fresh context, one query out.
+
+    Scrubbing happens here and only here, and the count comes back with the
+    query. Scrubbing twice would be harmless for the data and fatal for the
+    telling: the second pass counts zero, because `[redacted]` contains no key
+    shape, and the notice that says a credential was stripped would never fire.
+    """
     from sunday import guardrail
 
     reply = agent.chat(compose_prompt(state, intent), think=False, max_tokens=64)
@@ -63,5 +69,5 @@ def compose(agent: Agent, state: SundayState, intent: str) -> str:
         # Fall back to the user's own words, never to the intent: the intent
         # was written by the agent, which had the private half in scope.
         query = state["task"]
-    query, _ = guardrail.scrub_query(query)
-    return query
+    query, redactions = guardrail.scrub_query(query)
+    return Cleared(query=query, redactions=redactions)

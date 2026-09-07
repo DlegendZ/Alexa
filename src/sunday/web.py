@@ -124,20 +124,27 @@ def gather(query: str) -> WebResult:
     if enough or hops >= cfg.max_hops:
         return WebResult(snippets, hops, sources=sources)
 
-    for hit in hits[:2]:
-        try:
-            body = extract(fetch(hit.url))
-        except (net.HttpError, Exception):  # noqa: B014 - readable failure only
-            continue
-        if len(body) > 400:
-            return WebResult(
-                f"{snippets}\n\nFrom {hit.url}:\n{body}",
-                hops + 1,
-                sources=sources,
-                fetched=hit.url,
-            )
-        break
+    # One fetch. Not one *successful* fetch: the attempt is the hop, and a
+    # failed one falls through to the snippets rather than trying the next URL.
+    # net.request already retries once behind a 1 s sleep, so a second attempt
+    # here would put roughly 40 s between the user finishing and the first
+    # token -- which reads as a hang, not as thoroughness.
+    hit = hits[0]
+    hops += 1
+    try:
+        body = extract(fetch(hit.url))
+    except net.HttpError:
+        body = ""
+    except Exception:  # noqa: BLE001 - extraction bugs must not kill the turn
+        body = ""
 
+    if len(body) > 400:
+        return WebResult(
+            f"{snippets}\n\nFrom {hit.url}:\n{body}",
+            hops,
+            sources=sources,
+            fetched=hit.url,
+        )
     return WebResult(snippets, hops, sources=sources)
 
 

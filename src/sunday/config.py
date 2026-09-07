@@ -46,6 +46,11 @@ class Models:
     context_tokens: int = 8192
     thinking_budget: int = 1024
     summariser: str = "deepseek-v4-flash"
+    #: What no memory slice pays for: the system prompt, the bound tool schemas
+    #: and the memory framing block. Measured at ~1080 with five tools bound.
+    overhead_tokens: int = 1200
+    #: Room for the reply itself, which has no slice of its own.
+    reply_tokens: int = 768
 
 
 @dataclass
@@ -107,18 +112,46 @@ class Guardrail:
     secret_paths: list[str] = field(
         default_factory=lambda: [
             ".env",
+            ".env.*",  # .env.local is the one that actually happens
             "*.key",
             "*.pem",
+            "*.pfx",
+            "*.p12",
             "id_rsa",
+            "id_ed25519",
             "credentials*",
             ".ssh/",
             ".aws/",
+            ".gnupg/",
             "*.kdbx",
             "google_token.json",
+            "token.json",
+            "service-account*.json",
+            "secrets.*",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
         ]
     )
     key_shapes: list[str] = field(
-        default_factory=lambda: ["sk-", "ghp_", "AKIA", "xoxb-", "eyJ", "-----BEGIN"]
+        default_factory=lambda: [
+            "sk-",
+            "sk_live_",
+            "ghp_",
+            "gho_",
+            "glpat-",
+            "AKIA",
+            "ASIA",
+            "xoxb-",
+            "xoxp-",
+            "xapp-",
+            "AIza",
+            "ya29.",
+            "hf_",
+            "dop_v1_",
+            "eyJ",
+            "-----BEGIN",
+        ]
     )
 
 

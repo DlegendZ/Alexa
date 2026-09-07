@@ -45,7 +45,14 @@ def request(
                 follow_redirects=follow_redirects,
                 max_redirects=1,
             ) as client:
-                response = client.request(method, url, params=params, headers=headers)
+                if max_bytes is None:
+                    response = client.request(
+                        method, url, params=params, headers=headers
+                    )
+                else:
+                    response = _capped(
+                        client, method, url, params, headers, max_bytes
+                    )
         except httpx.TimeoutException:
             last = f"timed out after {timeout:.0f}s"
         except httpx.HTTPError as exc:
@@ -56,14 +63,40 @@ def request(
             if response.status_code >= 500:
                 last = f"HTTP {response.status_code} from {_host(url)}"
             else:
-                if max_bytes is not None and len(response.content) > max_bytes:
-                    raise HttpError(
-                        f"response larger than the {max_bytes} byte cap"
-                    )
                 return response
         if attempts < 2:
             time.sleep(RETRY_DELAY_S)
     raise HttpError(last)
+
+
+def _capped(
+    client: httpx.Client,
+    method: str,
+    url: str,
+    params: dict[str, Any] | None,
+    headers: dict[str, str] | None,
+    max_bytes: int,
+) -> httpx.Response:
+    """Stream the body and stop reading at the cap.
+
+    Checking `len(response.content)` afterwards rejects an oversized page but
+    only after the whole of it is already in memory, which is the one thing the
+    cap exists to prevent.
+    """
+    with client.stream(method, url, params=params, headers=headers) as response:
+        if response.status_code >= 400:
+            response.read()
+            return response
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in response.iter_bytes():
+            total += len(chunk)
+            if total > max_bytes:
+                raise HttpError(f"response larger than the {max_bytes} byte cap")
+            chunks.append(chunk)
+        # httpx needs the body set before .text is readable on a streamed response.
+        response._content = b"".join(chunks)  # noqa: SLF001 - no public setter
+        return response
 
 
 def get_json(

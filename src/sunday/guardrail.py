@@ -26,9 +26,17 @@ REDACTED = "[redacted]"
 #: pattern is the prefix plus the run of token characters that follows it.
 _SHAPE_TAIL = r"[A-Za-z0-9_\-\./+=]{8,}"
 
+#: A whole key block, and -- separately -- one whose END never arrives.
+#: `read_file` truncates at max_read_bytes before the guardrail sees anything,
+#: so a key straddling the cap would otherwise reach the model as plain base64.
+#: The BEGIN line is unambiguous, so matching forward from it costs no false
+#: positives, which is the bar Stage 05 sets.
 _PEM = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
     re.DOTALL,
+)
+_PEM_UNTERMINATED = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*", re.MULTILINE
 )
 
 
@@ -36,7 +44,10 @@ def _shape_patterns() -> list[re.Pattern[str]]:
     patterns: list[re.Pattern[str]] = []
     for shape in config.get().guardrail.key_shapes:
         if shape.startswith("-----BEGIN"):
+            # Order matters: the terminated form first, so a complete block is
+            # replaced as one match rather than swallowed to end of text.
             patterns.append(_PEM)
+            patterns.append(_PEM_UNTERMINATED)
         else:
             patterns.append(re.compile(re.escape(shape) + _SHAPE_TAIL))
     return patterns
@@ -97,4 +108,7 @@ NOTICE_REDACTED_RESULT = (
 )
 NOTICE_BLOCKED = (
     "This turn read a credential file, so I did not look anything up on the web."
+)
+NOTICE_EXTERNAL_OFF = (
+    "I could not look that up: web lookups are switched off in config.toml."
 )

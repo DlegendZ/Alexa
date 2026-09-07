@@ -261,3 +261,91 @@ Options, with the recommendation:
 Whichever is chosen, it needs writing into the architecture HTML: option 1 or 2 as a stage
 in the tool loop and a row in the failure-mode table, option 3 as an explicit entry under
 Deliberately out of scope.
+
+---
+
+*Entries 23–29 come from the review in `CODE_REVIEW.md`. Not yet applied to the HTML.*
+
+## 23. The window reserves what no slice pays for
+
+**Doc:** Stage 02 — five slices summing to the 8192-token window.
+**Code:** `[models] overhead_tokens = 1200` and `reply_tokens = 768` come off the top, and
+the five slices are scaled into what remains, keeping the configured ratios. The default
+now resolves to 778/2334/778/1556/778 = 6224, plus 1968 reserved, exactly 8192.
+**Why:** the slices were never the only claimants. The system prompt (270), the bound tool
+schemas (695) and the memory framing block (116) cost about 1080 tokens that no slice paid
+for, and the reply had no reservation at all — so a full window asked Ollama for roughly
+9300 against `num_ctx = 8192`, and Ollama drops the oldest messages without saying so.
+Stage 02's claim is that overflow is "arithmetic you can check"; it now balances.
+
+## 24. The hop cap refuses instead of tallying
+
+**Doc:** Stage 06 — `hops ≤ 2`.
+**Code:** `_ask_external` checks `flags.hops` before composing and refuses once the cap is
+spent, the way `tool_calls` does.
+**Why:** `hops` accumulated and nothing read it. Three `ask_external` calls in one model
+response produced `hops: 6` against `max_hops: 2` — with `tool_calls = 5` the real bound
+on outbound requests was five searches and five fetches.
+
+## 25. `secret` is assigned, and only on a read that happened
+
+**Doc:** Stage 03 — `secret`: anything read from a credential path.
+**Code:** `_dispatch` relabels the result `secret` when `is_secret_path` matches *and* the
+call succeeded.
+**Why:** nothing in `src/` ever produced `"secret"` — it was read in three places and
+written in none, so a `.env` read was filed in Chroma and logged as `private`. No leak
+(the airlock excludes both alike), but the audit record was wrong. The `result.ok`
+condition is new too: a refused path returned nothing, so tainting on it let the model
+shut its own door for the turn by naming `~/.ssh/id_rsa`.
+
+## 26. One fetch, and the attempt is the hop
+
+**Doc:** Stage 05 — "one search, at most one page fetch".
+**Code:** `web.gather` tries the first hit only, counts the attempt whether or not it
+succeeded, and falls through to the snippets on failure.
+**Why:** the loop ran over two hits, so a failing first URL bought a second fetch. With
+`net.request` retrying once behind a 1 s sleep, that is up to 42 s before the turn can
+answer — Stage 01 calls that gap the thing streaming cannot fix, and 40 s of it reads as a
+hang. The returned `hops` also under-reported, since it added 1 regardless of attempts.
+
+## 27. Truncated credentials still redact
+
+**Doc:** Stage 05 lists `-----BEGIN … PRIVATE KEY-----` as a shape.
+**Code:** a second pattern matches `BEGIN` plus everything after it, for the case where
+`END` never arrives.
+**Why:** `read_file` truncates at `max_read_bytes` *before* the guardrail runs, so a key
+straddling the cap reached the model as plain base64. The same will hold for mail bodies
+at milestone 13. The BEGIN line is unambiguous, so this costs no false positives — the bar
+Stage 05 sets.
+
+## 28. The credential and shape lists are longer
+
+**Doc:** the two lists in `config.toml`.
+**Code:** `secret_paths` gains `.env.*` (the one that actually happens), `*.pfx`, `*.p12`,
+`id_ed25519`, `.gnupg/`, `token.json`, `service-account*.json`, `secrets.*`, `.npmrc`,
+`.pypirc`, `.netrc`. `key_shapes` gains `sk_live_`, `gho_`, `glpat-`, `ASIA`, `xoxp-`,
+`xapp-`, `AIza`, `ya29.`, `hf_`, `dop_v1_`.
+**Why:** every addition is a fixed prefix or a filename, so none of them costs the
+false-positive tax Stage 05 rejects entropy scoring over. Tested against invoice numbers,
+git hashes and UUIDs.
+
+## 29. Refusals where there used to be silence
+
+**Doc:** silent on all three.
+**Code:** three new refusal scripts, each written for the model to relay.
+- `[external] enabled = false` now sets `blocked`, notices, and puts a system line in the
+  turn — the same treatment taint gets, which it previously did not have. A user who
+  switched the web off was answered confidently out of the 2b's own head.
+- Calls skipped by the `tool_calls` cap get a synthetic refusal each, so every tool call
+  the assistant message declares has an answer. Breaking outright left the chat template
+  holding unanswered calls.
+- A result clipped to no remaining room returns a refusal instead of a bare `[truncated]`
+  marker with `ok=True`, which read as a successful call that returned nothing.
+
+## 30. `saw_private` is audit, not a mechanism
+
+**Doc:** state schema — `saw_private  # drives the airlock, not the door`.
+**Code:** comment corrected and the field written to the JSONL line. The airlock filters
+by `Result.provenance` through `AIRLOCK_VISIBLE`, which is the stronger mechanism.
+**Why:** nothing read the field. A state field nothing reads is a claim the code is not
+making — either the comment was wrong or a consumer was missing, and it was the comment.

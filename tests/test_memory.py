@@ -12,6 +12,7 @@ import time
 import pytest
 
 from sunday.agent.llm import Reply, ToolCall
+from sunday.agent import loop
 from sunday.memory import budget, session as session_mod, store
 from sunday.runtime import Runtime
 from sunday.state import Result
@@ -20,9 +21,41 @@ from sunday.state import Result
 # -- the window ------------------------------------------------------------
 
 
-def test_slices_add_up_to_the_window(cfg):
+def test_the_slices_leave_room_for_everything_else_in_the_window(cfg):
+    """Stage 02's claim is that overflow is arithmetic you can check. Check it.
+
+    The slices are not the only claimants: the system prompt, the bound tool
+    schemas and the memory framing block cost around 1080 tokens no slice pays
+    for, and the reply needs room too. Sizing the slices *to* the window
+    overruns num_ctx, and Ollama drops the oldest messages without saying so.
+    """
     sl = budget.slices(cfg)
-    assert sl.total == cfg.models.context_tokens
+    accounted = sl.total + cfg.models.overhead_tokens + cfg.models.reply_tokens
+    assert accounted <= cfg.models.context_tokens
+    # And the ratios the config asked for survive the scaling.
+    assert sl.recent > sl.tools > sl.summary
+    assert sl.summary == sl.retrieved
+
+
+def test_the_real_overhead_fits_the_reservation(cfg):
+    """The 1200 is a measurement, not a guess -- so measure it."""
+    from sunday import tools as tool_registry
+    from sunday.agent import prompts
+
+    schemas = tool_registry.schemas(tool_registry.available())
+    overhead = (
+        budget.count(prompts.SYSTEM)
+        + budget.count(str(schemas))
+        + budget.count(loop.build_messages({"task": "x", "context": "y"})[1]["content"])
+    )
+    assert overhead <= cfg.models.overhead_tokens
+
+
+def test_a_generous_window_needs_no_scaling(cfg):
+    cfg.models.context_tokens = 32768
+    sl = budget.slices(cfg)
+    assert sl.summary == cfg.memory.slice_summary
+    assert sl.thinking == cfg.models.thinking_budget
 
 
 def test_clip_says_when_it_cuts():

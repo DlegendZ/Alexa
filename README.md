@@ -16,20 +16,20 @@ Deviations found while building: [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md).
 
 Ollama must be running with the model pulled:
 
-```bash
+```powershell
 ollama pull qwen3.5:2b
 ```
 
 Install Sunday into the virtualenv. This is what makes `sunday` runnable from
 any directory, with no `PYTHONPATH` to remember:
 
-```bash
+```powershell
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
 ## Running it
 
-```bash
+```powershell
 .venv\Scripts\sunday.exe
 ```
 
@@ -39,7 +39,7 @@ fastest way to test the core without an app in the way. `.venv\Scripts\python.ex
 
 The sidecar exposes the same core over a WebSocket:
 
-```bash
+```powershell
 .venv\Scripts\sunday-sidecar.exe
 ```
 
@@ -48,7 +48,7 @@ per-launch token to `%LOCALAPPDATA%\Sunday\handshake.json`. Serve `web/debug.htm
 over loopback — not `file://`, because a page from an opaque origin cannot open
 a WebSocket — and paste both in:
 
-```bash
+```powershell
 .venv\Scripts\python.exe -m http.server 8777 --bind 127.0.0.1 --directory web
 ```
 
@@ -107,8 +107,8 @@ rather than failing.
 
 ## Tests
 
-```bash
-.venv/Scripts/python.exe -m pytest
+```powershell
+.venv\Scripts\python.exe -m pytest
 ```
 
 The privacy guarantees are tested rather than asserted: reading `.env` taints

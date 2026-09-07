@@ -1,6 +1,6 @@
 """Entry point for the sidecar process.
 
-    PYTHONPATH=src python -m sunday.sidecar
+    .venv\Scripts\sunday-sidecar.exe
 
 The Tauri shell spawns this and reads handshake.json to find it. Until that
 shell exists, web/debug.html drives the same protocol from a browser.

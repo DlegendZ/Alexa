@@ -9,10 +9,13 @@ the rules run in this order:
 
 1. Split on `.` `?` `!` -- but only when whitespace or the end of the stream
    follows.
-2. Never split inside a known non-break: a dot between digits, a short
-   capitalised word before the dot, a trailing ellipsis.
-3. Force a split at a comma once the buffer passes 180 characters, so one long
-   unpunctuated sentence still starts playing.
+2. Never split inside a known non-break: a dot between digits, a known
+   abbreviation before the dot, a single initial, a trailing ellipsis. A
+   length heuristic was tried first and ate "Sure." and "Yes.", which are
+   exactly the short openers rule 1 exists to release early.
+3. Force a split at the last comma at or before 180 characters, so one long
+   unpunctuated sentence still starts playing. Searching forward from 180
+   instead would never fire for a sentence whose only comma sits at 140.
 4. Send whatever is left when the stream ends.
 
 The first sentence is allowed to be very short on purpose. A two-word opener

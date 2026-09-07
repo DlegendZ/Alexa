@@ -75,11 +75,11 @@ def main() -> int:
             break
 
         first_token[0] = True
-        try:
-            state = runtime.run_turn(text, on_token=on_token, on_event=_print_event)
-        except KeyboardInterrupt:
-            runtime.cancel()
-            print(f"\n{GREY}  · cancelled{RESET}")
+        # Ctrl-C during a turn is handled inside run_turn, which cancels, logs
+        # and tears down. It comes back as an uncommitted state, not a raise.
+        state = runtime.run_turn(text, on_token=on_token, on_event=_print_event)
+        if not state.get("committed") and not state.get("final_response"):
+            print(f"\n{GREY}  · cancelled{RESET}\n")
             continue
 
         if first_token[0] and state.get("final_response"):

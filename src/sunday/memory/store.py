@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -93,7 +94,27 @@ class LongTermMemory:
             self._collection = client.get_or_create_collection(
                 COLLECTION, metadata={"hnsw:space": SPACE}
             )
+            self._check_space(self._collection)
         return self._collection
+
+    @staticmethod
+    def _check_space(collection: Any) -> None:
+        """`get_or_create_collection` ignores a conflicting space on an existing
+        collection rather than raising, so a store created before the cosine
+        change would run squared L2 under a cosine cutoff and quietly return
+        nothing. Say so instead of failing silently."""
+        try:
+            space = (collection.metadata or {}).get("hnsw:space")
+        except Exception:  # noqa: BLE001 - never break a turn over a warning
+            return
+        if space and space != SPACE:
+            warnings.warn(
+                f"Chroma collection {COLLECTION!r} uses {space!r}, not {SPACE!r}. "
+                f"The distance_cutoff in config assumes cosine, so retrieval "
+                f"will behave unexpectedly. Delete the store or migrate it.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     def count(self) -> int:
         try:

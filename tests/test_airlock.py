@@ -132,9 +132,9 @@ def test_an_empty_query_falls_back_to_the_users_own_words_not_the_intent(cfg):
             return Reply(content="done")
 
     state = _state([])
-    query = airlock.compose(Blank([]), state, "sell target 4600 gold")  # type: ignore[arg-type]
-    assert SECRET not in query
-    assert query.startswith("what is my sell target")
+    cleared = airlock.compose(Blank([]), state, "sell target 4600 gold")  # type: ignore[arg-type]
+    assert SECRET not in cleared.query
+    assert cleared.query.startswith("what is my sell target")
 
 
 def test_the_query_is_scrubbed_and_capped(cfg):
@@ -144,9 +144,12 @@ def test_the_query_is_scrubbed_and_capped(cfg):
         def chat(self, messages, *, tools=None, think=False, max_tokens=None):
             return Reply(content="ghp_16C7e42F292c6912E7710c838347Ae178B4a " + "gold " * 40)
 
-    query = airlock.compose(Leaky([]), _state([]), "anything")  # type: ignore[arg-type]
-    assert "ghp_" not in query
-    assert len(query) <= 30
+    cleared = airlock.compose(Leaky([]), _state([]), "anything")  # type: ignore[arg-type]
+    assert "ghp_" not in cleared.query
+    assert len(cleared.query) <= 30
+    # The count has to survive the call: scrubbing twice would report zero,
+    # because "[redacted]" holds no key shape, and the notice would never fire.
+    assert cleared.redactions == 1
 
 
 # -- the pipeline's own decisions -----------------------------------------

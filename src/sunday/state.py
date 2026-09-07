@@ -49,7 +49,10 @@ class SundayState(TypedDict, total=False):
     tainted: bool  # a credential path was read -> door shut
     blocked: bool  # a call to ask_external was refused
     redactions: int  # key shapes stripped this turn
-    saw_private: bool  # drives the airlock, not the door
+    # Audit only. The airlock filters by Result.provenance through
+    # AIRLOCK_VISIBLE, which is the stronger mechanism -- this records, for the
+    # log line, whether the turn touched anything private at all.
+    saw_private: bool
 
     # --- bounded loops ---
     tool_calls: int  # hard cap from config [limits]
