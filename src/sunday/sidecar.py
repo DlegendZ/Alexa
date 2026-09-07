@@ -1,4 +1,4 @@
-"""Entry point for the sidecar process.
+r"""Entry point for the sidecar process.
 
     .venv\Scripts\sunday-sidecar.exe
 

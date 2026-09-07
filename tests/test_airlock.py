@@ -89,7 +89,7 @@ def test_a_private_file_and_a_web_search_in_one_turn(cfg, tmp_path, monkeypatch)
 
     sent: list[str] = []
 
-    def fake_run(query):
+    def fake_run(query, budget=None):
         sent.append(query)
         return web.WebResult("Analysts are split on gold.", hops=1)
 
@@ -204,7 +204,7 @@ def test_summarise_degrades_without_a_key(cfg, monkeypatch):
 
 def test_a_summariser_failure_still_returns_the_public_material(cfg, monkeypatch):
     monkeypatch.setattr(
-        web, "gather", lambda q: web.WebResult("snippets here", hops=1, sources=[])
+        web, "gather", lambda q, budget=None: web.WebResult("snippets here", hops=1, sources=[])
     )
 
     def boom(query, material):

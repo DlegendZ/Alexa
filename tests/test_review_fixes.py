@@ -79,7 +79,9 @@ def _system_lines(messages):
 def test_a_key_in_the_composed_query_is_counted_and_announced(cfg, monkeypatch):
     """compose() scrubs and reports. Scrubbing again in the caller counted the
     already-clean string, so the notice was unreachable code."""
-    monkeypatch.setattr(web, "run", lambda q: web.WebResult("public text", hops=1))
+    monkeypatch.setattr(
+        web, "run", lambda q, budget=None: web.WebResult("public text", hops=1)
+    )
 
     leaky = "gold price ghp_16C7e42F292c6912E7710c838347Ae178B4a news"
     agent = Scripted(
@@ -180,7 +182,7 @@ def test_the_hop_cap_refuses_rather_than_tallies(cfg, monkeypatch):
     cfg.limits.tool_calls = 5
     calls: list[str] = []
 
-    def fake_run(query):
+    def fake_run(query, budget=None):
         calls.append(query)
         return web.WebResult("public text", hops=2)
 
@@ -392,7 +394,7 @@ def test_the_credential_list_covers_what_really_turns_up(cfg, path):
     "text",
     [
         "glpat-abcdefghij1234567890",
-        "AIzaSyD-abcdefghijklmnopqrstuvwxyz123",
+        "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY",
         "hf_abcdefghijklmnopqrstuvwxyzABCD",
         "sk_live_abcdefghijklmnopqrstuvwx",
         "xapp-1-ABCDEFGH-1234567890",
@@ -459,8 +461,10 @@ def test_overwriting_asks_first_and_honours_yes(cfg, tmp_path):
     )
 
     assert len(asked) == 1
-    assert "gold.txt" in asked[0]
-    assert "bytes" in asked[0]  # the question says what is at stake
+    assert "gold.txt" in asked[0].question
+    assert "bytes" in asked[0].question  # the question says what is at stake
+    assert asked[0].path == str(target)
+    assert asked[0].action == "overwrite"
     assert target.read_text(encoding="utf-8") == "new contents"
     assert state["tool_results"][0].ok is True
 
@@ -538,7 +542,14 @@ def test_a_credential_file_is_still_refused_even_with_a_yes(cfg, tmp_path):
     assert "credential" in state["tool_results"][0].content
 
 
-def test_the_confirm_event_reaches_the_client(cfg, tmp_path):
+def test_the_question_is_not_also_broadcast_as_an_event(cfg, tmp_path):
+    """One owner for the prompt.
+
+    The runtime used to `_emit` a confirm event *and* call the sink, so a client
+    watching both rendered two cards -- and the first had no id to answer with,
+    so its buttons did nothing. The sink is the prompt; the event stream is for
+    watching. See round-2 finding 2.
+    """
     root = tmp_path / "root"
     root.mkdir()
     cfg.files.roots = [str(root)]
@@ -546,11 +557,134 @@ def test_the_confirm_event_reaches_the_client(cfg, tmp_path):
     target.write_text("sell at 4600", encoding="utf-8")
 
     events: list[dict] = []
+    asked: list[object] = []
     agent = Scripted([Reply(tool_calls=[_write_call(target)])])
     Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
-        "replace it", on_event=events.append, on_confirm=lambda q: False
+        "replace it",
+        on_event=events.append,
+        on_confirm=lambda r: asked.append(r) or False,
     )
 
-    confirms = [e for e in events if e["type"] == "confirm"]
-    assert len(confirms) == 1
-    assert confirms[0]["path"] == str(target)
+    assert len(asked) == 1
+    assert [e for e in events if e["type"] == "confirm"] == []
+
+
+# ===================== round 2 =====================
+
+
+# -- 3. ASIA, hf_ and a missing left edge redacted ordinary text -----------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Our ASIA-PACIFIC-2024 revenue report is in the shared drive.",
+        "The ASIA_REGION_SUMMARY spreadsheet has the numbers.",
+        "See hf_dataset_loader.py for the loader.",
+        "import hf_hub_download",
+        "ASIA and EMEA both reported growth this quarter.",
+        # No left edge meant the prefix matched mid-word. These are the ones
+        # the review did not reach: ordinary English, silently blanked.
+        "We took a task-oriented approach to the rewrite.",
+        "Restore from the disk-image-backup folder.",
+        "The whisk-and-fold method works better here.",
+    ],
+)
+def test_ordinary_prose_is_not_mistaken_for_a_credential(cfg, text):
+    cleaned, hits = guardrail.redact(text)
+    assert hits == 0
+    assert cleaned == text
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "AKIAIOSFODNN7EXAMPLE",
+        "ASIAY34FZKBOKMSDIQ7B",
+        "hf_abcdefghijklmnopqrstuvwxyzABCD",
+        "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY",
+    ],
+)
+def test_the_precise_shapes_still_catch_the_real_thing(cfg, token):
+    cleaned, hits = guardrail.redact(f"the key is {token} ok")
+    assert hits == 1
+    assert token not in cleaned
+
+
+def test_a_prefix_at_the_start_of_the_text_still_matches(cfg):
+    """The left edge must not require a preceding character."""
+    cleaned, hits = guardrail.redact("ghp_16C7e42F292c6912E7710c838347Ae178B4a")
+    assert hits == 1
+    assert cleaned == guardrail.REDACTED
+
+
+# -- 4. the hop cap was still reachable at three --------------------------
+
+
+def test_two_lookups_cannot_spend_three_hops(cfg, monkeypatch):
+    """A first lookup whose snippets sufficed spends one hop and leaves the
+    counter at 1, which passed `1 >= 2` -- so the second searched and fetched
+    and the turn ended at three."""
+    cfg.external.max_hops = 2
+    cfg.limits.tool_calls = 5
+
+    budgets: list[int] = []
+
+    def fake_gather(query, budget=None):
+        budgets.append(budget)
+        # A search always costs one; a fetch costs another when affordable.
+        hops = 2 if (budget or 0) >= 2 else 1
+        return web.WebResult("public text", hops=hops)
+
+    monkeypatch.setattr(web, "gather", fake_gather)
+    monkeypatch.setattr(web, "summarise", lambda q, m: "a summary")
+
+    call = ToolCall(EXTERNAL_TOOL, {"intent": "news"})
+    agent = Scripted([Reply(tool_calls=[call, call, call])])
+    state = _runtime(cfg, agent).run_turn("look it up twice over")
+
+    assert state["hops"] <= cfg.external.max_hops
+    assert budgets[0] == 2  # the first lookup has the whole budget
+
+
+def test_a_lookup_with_one_hop_left_searches_but_does_not_fetch(cfg, monkeypatch):
+    monkeypatch.setattr(
+        web,
+        "search",
+        lambda query, limit=5: [web.Hit("t", "https://x.example", "unrelated")],
+    )
+
+    def must_not_fetch(url):  # pragma: no cover - must not run
+        raise AssertionError("fetched with only one hop left")
+
+    monkeypatch.setattr(web, "fetch", must_not_fetch)
+    result = web.gather("a query the snippet does not answer", budget=1)
+
+    assert result.hops == 1
+    assert result.ok is True
+
+
+def test_no_budget_at_all_is_a_stated_gap(cfg):
+    result = web.gather("anything", budget=0)
+    assert result.ok is False
+    assert result.hops == 0
+
+
+# -- 5. the sidecar docstring was a syntax warning ------------------------
+
+
+def test_the_entry_point_modules_compile_without_warnings():
+    r"""`.venv\Scripts\...` in a plain docstring makes `\S` an invalid escape,
+    and it printed at launch because sidecar.py is the entry point.
+
+    This test's own docstring had the same bug on the first attempt, which is
+    the neatest possible argument for pinning it.
+    """
+    import warnings
+    from pathlib import Path
+
+    for name in ("sidecar", "server", "main", "runtime"):
+        source = Path("src/sunday") / f"{name}.py"
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", SyntaxWarning)
+            compile(source.read_text(encoding="utf-8"), str(source), "exec")

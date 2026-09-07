@@ -101,10 +101,18 @@ def extract(html: str) -> str:
     return text[:cap]
 
 
-def gather(query: str) -> WebResult:
+def gather(query: str, budget: int | None = None) -> WebResult:
     """Steps 1 to 4. Everything here is our own code and stays on this machine
-    apart from the query itself."""
+    apart from the query itself.
+
+    `budget` is how many hops are left in the whole turn, not in this lookup.
+    A search costs one and a fetch costs another, so with only one left the
+    fetch is skipped rather than overrunning the cap by a hop.
+    """
     cfg = config.get().external
+    budget = cfg.max_hops if budget is None else budget
+    if budget < 1:
+        return WebResult("no web lookups left in this turn", 0, ok=False)
     try:
         hits = search(query, limit=5)
     except Exception as exc:  # noqa: BLE001 - any search failure reads the same
@@ -121,7 +129,8 @@ def gather(query: str) -> WebResult:
         len(snippets) >= SNIPPETS_ENOUGH_CHARS
         and coverage(query, snippets) >= COVERAGE_ENOUGH
     )
-    if enough or hops >= cfg.max_hops:
+    # The fetch needs a hop of its own, so it needs one still unspent.
+    if enough or budget - hops < 1:
         return WebResult(snippets, hops, sources=sources)
 
     # One fetch. Not one *successful* fetch: the attempt is the hop, and a
@@ -182,9 +191,9 @@ def summarise(query: str, material: str) -> str:
     return "".join(parts).strip()
 
 
-def run(query: str) -> WebResult:
+def run(query: str, budget: int | None = None) -> WebResult:
     """The whole pipeline, with every failure ending as a readable sentence."""
-    gathered = gather(query)
+    gathered = gather(query, budget)
     if not gathered.ok:
         return gathered
 

@@ -11,7 +11,7 @@ import sys
 
 from sunday import config
 from sunday.agent.llm import OllamaDown
-from sunday.runtime import Runtime
+from sunday.runtime import ConfirmRequest, Runtime
 
 GREY = "\033[90m"
 TEAL = "\033[36m"
@@ -20,13 +20,13 @@ RED = "\033[31m"
 RESET = "\033[0m"
 
 
-def _confirm(question: str) -> bool:
+def _confirm(request: ConfirmRequest) -> bool:
     """Overwriting a file you already have is the one thing worth stopping for.
 
     Anything that is not clearly a yes is a no, including a closed stdin: the
     default has to be the one that leaves your file alone.
     """
-    print(f"\n{AMBER}  ? {question} [y/N] {RESET}", end="", flush=True)
+    print(f"\n{AMBER}  ? {request.question} [y/N] {RESET}", end="", flush=True)
     try:
         answer = input().strip().lower()
     except (EOFError, KeyboardInterrupt):

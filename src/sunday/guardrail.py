@@ -26,6 +26,22 @@ REDACTED = "[redacted]"
 #: pattern is the prefix plus the run of token characters that follows it.
 _SHAPE_TAIL = r"[A-Za-z0-9_\-\./+=]{8,}"
 
+#: A prefix only counts at the start of a word. Without this, `sk-` matched
+#: inside "ta|sk-oriented" and "di|sk-image-backup", redacting ordinary English
+#: mid-word and firing the credential notice over it.
+_LEFT_EDGE = r"(?<![A-Za-z0-9_])"
+
+#: Prefixes that need their real shape rather than a generic tail, because the
+#: prefix alone is something people write. `ASIA` is an English word that `AKIA`
+#: is not, and `hf_` collides with ordinary snake_case. Both are exact-length
+#: credentials, so the precise form costs nothing and ends the ambiguity.
+_PRECISE_TAILS = {
+    "AKIA": r"[A-Z0-9]{16}",  # AWS access key id: 20 chars total
+    "ASIA": r"[A-Z0-9]{16}",  # AWS temporary key id, same shape
+    "hf_": r"[A-Za-z0-9]{30,}",  # Hugging Face token
+    "AIza": r"[A-Za-z0-9_\-]{35}",  # Google API key: 39 chars total
+}
+
 #: A whole key block, and -- separately -- one whose END never arrives.
 #: `read_file` truncates at max_read_bytes before the guardrail sees anything,
 #: so a key straddling the cap would otherwise reach the model as plain base64.
@@ -49,7 +65,8 @@ def _shape_patterns() -> list[re.Pattern[str]]:
             patterns.append(_PEM)
             patterns.append(_PEM_UNTERMINATED)
         else:
-            patterns.append(re.compile(re.escape(shape) + _SHAPE_TAIL))
+            tail = _PRECISE_TAILS.get(shape, _SHAPE_TAIL)
+            patterns.append(re.compile(_LEFT_EDGE + re.escape(shape) + tail))
     return patterns
 
 

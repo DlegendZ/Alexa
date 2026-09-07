@@ -376,3 +376,69 @@ the sidecar sends `confirm` and waits for `confirm_response`.
 
 **Protocol addition:** `confirm` out (`{id, text, path}`), `confirm_response` in
 (`{id, approved}`). `web/debug.html` renders it as two buttons, focused on "Keep it".
+
+---
+
+*Entries 32–35 come from round 2 of the review. Applied to the HTML.*
+
+## 32. The sidecar runs the turn beside the read loop, not inside it
+
+**Doc:** Desktop 01 lists `cancel` as the stop button and, since note 31, `confirm` as a
+message expecting an answer.
+**Code:** `text_input` now spawns the turn as a task; the connection keeps reading.
+**Why — this is the one that mattered.** `_run_turn` was awaited inside the client's own
+`async for`, so that connection processed nothing further until the turn ended. With one
+client — the shipped case until the Tauri shell exists — every mid-turn message was
+unreachable:
+
+- **the confirmation could not be answered.** The reply sat unread in the socket buffer
+  while the worker thread waited out `CONFIRM_TIMEOUT_S` and then refused. In production
+  that is a two-minute hang on every overwrite, ending in a refusal, which reads as the app
+  being broken. Reproduced: approval sent, `approval honoured? False`.
+- **`cancel` was wired and unreachable.** It was read only after the turn it was cancelling
+  had committed. Milestone 9's barge-in worked in the runtime and the terminal and had
+  never worked over the socket.
+
+The `_turn_lock` guard already handled a second input arriving mid-turn, so one-turn-at-a-
+time still holds. Three socket-level tests now drive a confirm, a cancel and a ping through
+a real WebSocket; against the old code they take 123 s and fail, against the new one 3 s
+and pass.
+
+## 33. One owner for the confirmation prompt
+
+**Doc:** note 31 — `confirm` out, `confirm_response` in.
+**Code:** the sidecar's `confirm()` is the only producer of a `confirm` message, and the
+runtime hands the sink a `ConfirmRequest` (question, path, action) instead of also emitting
+an event.
+**Why:** both layers emitted `type: "confirm"` with different shapes, so a client rendered
+two prompt cards. The runtime's came first and had no `id`; clicking it sent a response the
+sidecar resolved to `None` and dropped without a word. The user clicked Overwrite, nothing
+happened, and the second card was the real one. A prompt that cannot be answered is worse
+than no prompt.
+
+## 34. Key shapes need a left edge, and two needed their real shape
+
+**Doc:** Stage 05 — prefix plus length, no entropy scoring, no false-positive tax.
+**Code:** every shape is anchored with `(?<![A-Za-z0-9_])`, and `AKIA`, `ASIA`, `hf_` and
+`AIza` carry their exact tails rather than a generic run.
+**Why:** the claim in note 28 that the additions carry no false-positive tax was wrong, and
+the original list was wrong too.
+
+- `ASIA` is an English word where `AKIA` is not, so `ASIA-PACIFIC-2024` redacted.
+- `hf_` collides with snake_case: `hf_dataset_loader.py` redacted.
+- Worse, and not in the review: with no left edge a prefix matched *mid-word*. `sk-` turned
+  "a ta|sk-oriented approach" into "a ta[redacted] approach", and "di|sk-image-backup" into
+  "di[redacted]". Ordinary English, silently blanked, with the credential notice fired over
+  it — the exact daily tax Stage 05 rejects entropy scoring to avoid.
+
+The old test passed because its sample had no capitalised word and no snake_case identifier.
+
+## 35. The hop cap counts the hop, not the entry
+
+**Doc:** Stage 05 "one search, at most one page fetch"; Stage 06 `hops ≤ 2`.
+**Code:** the remaining turn budget is passed into `web.run` and `gather` skips the fetch
+when only one hop is left.
+**Why:** note 24 made the cap refuse, which fixed six hops down to three but not to two.
+The check gated *entry*: a lookup whose snippets sufficed spent one hop and left the counter
+at 1, which passes `1 >= 2`, so the next lookup searched *and* fetched and the turn ended at
+three. Gating entry cannot bound a step that costs more than one.

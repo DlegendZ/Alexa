@@ -32,8 +32,25 @@ from sunday.state import Result, SundayState, TurnEvents, new_state
 
 TokenSink = Callable[[str], None]
 EventSink = Callable[[dict[str, Any]], None]
-#: Asks the person a yes/no question and blocks until they answer.
-ConfirmSink = Callable[[str], bool]
+
+
+@dataclass(frozen=True)
+class ConfirmRequest:
+    """What the person is being asked to approve.
+
+    Structured rather than a bare string so a UI can render the stakes itself:
+    the terminal reads `question`, the sidecar forwards `path` alongside it.
+    """
+
+    question: str
+    path: str
+    action: str = "overwrite"
+
+
+#: Asks the person and blocks until they answer. The question does NOT also go
+#: out as an event: an unanswerable copy of a prompt is worse than no copy, and
+#: a client that rendered both had a first card whose buttons did nothing.
+ConfirmSink = Callable[[ConfirmRequest], bool]
 
 EXTERNAL_TOOL = "ask_external"
 DOOR_SHUT = (
@@ -391,8 +408,10 @@ class Runtime:
             size = f"{target.stat().st_size} bytes"
         except OSError:  # pragma: no cover - raced or unreadable
             size = "unknown size"
-        question = WRITE_QUESTION.format(path=target, size=size)
-        self._emit(type="confirm", text=question, path=str(target))
+        request = ConfirmRequest(
+            question=WRITE_QUESTION.format(path=target, size=size),
+            path=str(target),
+        )
 
         if self._on_confirm is None:
             # Fail closed. A session with nobody attached cannot consent, and
@@ -400,7 +419,7 @@ class Runtime:
             self.ctx.events.notice(guardrail.NOTICE_WRITE_UNATTENDED.format(path=target.name))
             return Result("write_file", args, WRITE_UNATTENDED, "private", ok=False)
 
-        if not self._on_confirm(question):
+        if not self._on_confirm(request):
             self.ctx.events.notice(guardrail.NOTICE_WRITE_DECLINED.format(path=target.name))
             return Result("write_file", args, WRITE_DECLINED, "private", ok=False)
         return None
@@ -459,15 +478,18 @@ class Runtime:
             self.ctx.events.notice(guardrail.NOTICE_REDACTED)
 
         self._emit(type="query", text=cleared.query)
-        content, hops, ok = self._web(cleared.query)
+        # What is left for the whole turn, not for this lookup: the cap is on
+        # outbound requests, so a second lookup inherits what the first spent.
+        remaining = self.cfg.external.max_hops - flags.hops
+        content, hops, ok = self._web(cleared.query, remaining)
         flags.hops += hops
         return Result(
             EXTERNAL_TOOL, {"query": cleared.query}, content, "public", ok=ok
         )
 
-    def _web(self, query: str) -> tuple[str, int, bool]:
+    def _web(self, query: str, budget: int) -> tuple[str, int, bool]:
         """search -> decide -> fetch -> extract -> summarise, hop-capped."""
-        result = web.run(query)
+        result = web.run(query, budget)
         if not result.ok:
             return (f"error: {result.text}", result.hops, False)
         return (result.text, result.hops, True)

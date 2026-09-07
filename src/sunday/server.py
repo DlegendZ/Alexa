@@ -1,4 +1,4 @@
-"""The sidecar's socket.
+r"""The sidecar's socket.
 
 Binds to 127.0.0.1 on an ephemeral port, writes `{port, token}` to
 SUNDAY_HOME/handshake.json, and waits. Loopback only, plus a per-launch bearer
@@ -25,7 +25,7 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from sunday import config
 from sunday.agent.llm import OllamaDown
-from sunday.runtime import Runtime
+from sunday.runtime import ConfirmRequest, Runtime
 
 PROTOCOL_VERSION = 1
 
@@ -96,6 +96,7 @@ class Sidecar:
         self._stop = asyncio.Event()
         self._clients: set[ServerConnection] = set()
         self._pending: dict[str, _Pending] = {}
+        self._turns: set[asyncio.Task] = set()
 
     # -- lifecycle ------------------------------------------------------
 
@@ -163,11 +164,11 @@ class Sidecar:
         elif kind == "text_input":
             text = str(message.get("text") or "").strip()
             if text:
-                await self._run_turn(text, modality="text")
+                self._start_turn(text, modality="text")
         elif kind == "voice_input":
             text = str(message.get("text") or "").strip()
             if text:
-                await self._run_turn(text, modality="voice")
+                self._start_turn(text, modality="voice")
         elif kind == "set_mode":
             self.mode = "voice" if message.get("mode") == "voice" else "text"
             await self._broadcast({"type": "mode", "value": self.mode})
@@ -199,6 +200,20 @@ class Sidecar:
 
     # -- turns ----------------------------------------------------------
 
+    def _start_turn(self, text: str, *, modality: str) -> None:
+        """Run the turn beside the read loop, not inside it.
+
+        Awaiting the turn here would block this connection's `async for` until
+        it finished, so nothing the client sent mid-turn could be read -- and
+        with one client, that is every mid-turn message. `cancel` went unread
+        until the turn it was cancelling had already committed, and a `confirm`
+        answer sat in the socket buffer while the worker thread waited out the
+        two-minute timeout and then refused it.
+        """
+        task = asyncio.create_task(self._run_turn(text, modality=modality))
+        self._turns.add(task)
+        task.add_done_callback(self._turns.discard)
+
     async def _run_turn(self, text: str, *, modality: str) -> None:
         if self._turn_lock.locked():
             await self._broadcast(
@@ -213,13 +228,24 @@ class Sidecar:
             def push(event: dict) -> None:
                 loop.call_soon_threadsafe(queue.put_nowait, event)
 
-            def confirm(question: str) -> bool:
+            def confirm(request: ConfirmRequest) -> bool:
                 """Runs on the worker thread. Asks every attached client and
-                blocks until one answers or the timeout decides no."""
+                blocks until one answers or the timeout decides no.
+
+                This is the only place a `confirm` message is produced, so the
+                one the client renders is always the one carrying the id it has
+                to answer with.
+                """
                 request_id = secrets.token_urlsafe(8)
                 pending = _Pending()
                 self._pending[request_id] = pending
-                push({"type": "confirm", "id": request_id, "text": question})
+                push({
+                    "type": "confirm",
+                    "id": request_id,
+                    "text": request.question,
+                    "path": request.path,
+                    "action": request.action,
+                })
                 try:
                     if not pending.event.wait(CONFIRM_TIMEOUT_S):
                         return False

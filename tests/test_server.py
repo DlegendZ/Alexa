@@ -176,3 +176,157 @@ async def test_the_handshake_is_removed_on_shutdown(cfg, tmp_path, monkeypatch):
     await side.stop()
     await asyncio.wait_for(task, timeout=5)
     assert not path.exists()
+
+
+# -- round 2, finding 1: the read loop must stay live during a turn --------
+
+
+class SlowTalker:
+    """A turn long enough to send something into the middle of it."""
+
+    def __init__(self, tool_calls=None):
+        self.tool_calls = tool_calls or []
+
+    def chat(self, messages, *, tools=None, think=False, max_tokens=None):
+        calls, self.tool_calls = self.tool_calls, []
+        return Reply(tool_calls=calls)
+
+    def stream(self, messages, *, think=False):
+        import time
+
+        for piece in ["thinking ", "about ", "it ", "now"]:
+            time.sleep(0.15)
+            yield piece
+
+    def preflight(self):
+        return None
+
+
+@pytest.fixture
+async def sidecar_with(cfg, tmp_path, monkeypatch):
+    """A sidecar whose agent and roots the test chooses."""
+    from sunday import config as config_module
+
+    monkeypatch.setattr(config_module, "HANDSHAKE_PATH", tmp_path / "handshake.json")
+
+    made: list = []
+
+    async def build(agent):
+        runtime = Runtime(cfg, agent=agent, memory=NoMemory())  # type: ignore[arg-type]
+        side = Sidecar(runtime, port=0, token="test-token")
+        task = asyncio.create_task(side.serve())
+        made.append((side, task))
+        for _ in range(200):
+            if (tmp_path / "handshake.json").exists():
+                break
+            await asyncio.sleep(0.01)
+        handshake = json.loads((tmp_path / "handshake.json").read_text(encoding="utf-8"))
+        return side, handshake
+
+    yield build
+
+    for side, task in made:
+        await side.stop()
+        await asyncio.wait_for(task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_an_overwrite_can_actually_be_approved_over_the_socket(
+    sidecar_with, cfg, tmp_path
+):
+    """The turn used to be awaited inside the read loop, so the answer sat
+    unread in the socket buffer until the timeout refused it."""
+    from sunday.agent.llm import ToolCall
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    target = root / "gold.txt"
+    target.write_text("original", encoding="utf-8")
+
+    agent = SlowTalker(
+        [ToolCall("write_file", {"path": str(target), "text": "replaced"})]
+    )
+    _, handshake = await sidecar_with(agent)
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "text_input", "text": "rewrite it"}))
+
+    seen = []
+    for _ in range(200):
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        seen.append(message)
+        if message["type"] == "confirm":
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "confirm_response",
+                        "id": message["id"],
+                        "approved": True,
+                    }
+                )
+            )
+        if message["type"] == "done":
+            break
+
+    confirms = [m for m in seen if m["type"] == "confirm"]
+    assert len(confirms) == 1  # one prompt, and it carries the id to answer with
+    assert confirms[0]["path"] == str(target)
+    assert target.read_text(encoding="utf-8") == "replaced"
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_cancel_sent_mid_turn_reaches_the_runtime(sidecar_with):
+    """`cancel` is documented as the stop button. It went unread until the turn
+    it was meant to stop had already committed."""
+    _, handshake = await sidecar_with(SlowTalker())
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "text_input", "text": "say something long"}))
+    # Wait for the reply to start, then interrupt it.
+    while True:
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        if message["type"] == "token":
+            break
+    await ws.send(json.dumps({"type": "cancel"}))
+
+    done = None
+    for _ in range(200):
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        if message["type"] == "done":
+            done = message
+            break
+
+    assert done == {"type": "done", "committed": False}
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_ping_is_answered_while_a_turn_runs(sidecar_with):
+    """The general form of the same bug: the connection stays readable."""
+    _, handshake = await sidecar_with(SlowTalker())
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "text_input", "text": "say something"}))
+    while True:
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        if message["type"] == "token":
+            break
+
+    await ws.send(json.dumps({"type": "ping"}))
+    order: list[str] = []
+    for _ in range(200):
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        if message["type"] in {"pong", "done"}:
+            order.append(message["type"])
+        if message["type"] == "done":
+            break
+
+    # The pong has to arrive *before* the turn finishes, or this passes for a
+    # blocked read loop that simply caught up afterwards.
+    assert order[:1] == ["pong"], order
+    await ws.close()
