@@ -232,3 +232,32 @@ Neither is a privacy failure and neither survives into the airlock. Both are exa
 the trade the document names. `qwen3:8b` is already pulled on this machine, so the
 comparison is cheap to run — but it needs the iGPU move first, and that is a decision
 to take deliberately rather than mid-build.
+
+---
+
+## 22. The v2 write-confirmation decision was never carried into v3
+
+**Status: open, needs a ruling from the user. Not yet applied to the HTML.**
+
+**Doc:** `doc/sunday_context.md` section 7, marked LOCKED — "Read = auto-execute.
+Write/create/modify/delete = always confirm with user first, no exceptions", implemented as
+a LangGraph interrupt. The architecture HTML does not mention confirmation at all; every
+occurrence of "interrupt" in it refers to voice barge-in.
+**Code:** `tools/files.py:write_file` writes immediately. It is sandboxed to the configured
+roots and refuses to overwrite a credential path, but inside those roots the model can
+overwrite one of the user's files on its own judgement with no prompt.
+**Why it is here:** this was not argued down during the v2→v3 redesign — it fell out
+silently. Found while updating the context log, not by testing. A locked decision that
+disappears without a counter-argument is exactly what a design log exists to catch.
+
+Options, with the recommendation:
+
+1. Reinstate in full — confirm before every write. A round trip, and awkward in voice.
+2. **(recommended)** Confirm only when overwriting an existing file; creating a new one
+   passes through. Protects the irreversible case, leaves the common one fluid.
+3. Drop it deliberately — decide the sandbox plus credential refusal is enough, and strike
+   section 7 rather than leaving a locked decision unmet.
+
+Whichever is chosen, it needs writing into the architecture HTML: option 1 or 2 as a stage
+in the tool loop and a row in the failure-mode table, option 3 as an explicit entry under
+Deliberately out of scope.
