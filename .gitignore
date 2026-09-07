@@ -7,3 +7,8 @@ __pycache__/
 data/
 CLAUDE.md
 config.toml
+
+# editable install artefacts
+*.egg-info/
+build/
+dist/

@@ -62,7 +62,10 @@ def main() -> int:
 
     while True:
         try:
-            text = input("you> ").strip()
+            # PowerShell puts a UTF-8 BOM on the first line it pipes to a
+            # native exe, so a scripted `"exit" | sunday` would otherwise be
+            # answered as a question instead of quitting.
+            text = input("you> ").lstrip("﻿").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break

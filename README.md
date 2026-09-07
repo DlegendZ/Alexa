@@ -12,7 +12,7 @@ is written by something that has never seen your private data.
 Full design: `doc/sunday_architecture.html` (local, not in git).
 Deviations found while building: [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md).
 
-## Running it
+## Setup, once
 
 Ollama must be running with the model pulled:
 
@@ -20,29 +20,46 @@ Ollama must be running with the model pulled:
 ollama pull qwen3.5:2b
 ```
 
-Then, from the repo root:
+Install Sunday into the virtualenv. This is what makes `sunday` runnable from
+any directory, with no `PYTHONPATH` to remember:
 
 ```bash
-PYTHONPATH=src .venv/Scripts/python.exe -m sunday.main
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+## Running it
+
+```bash
+.venv\Scripts\sunday.exe
 ```
 
 That is the terminal client. It stays alive for the whole build — it is the
-fastest way to test the core without an app in the way.
+fastest way to test the core without an app in the way. `.venv\Scripts\python.exe
+-m sunday.main` does the same thing if you prefer the module form.
 
 The sidecar exposes the same core over a WebSocket:
 
 ```bash
-PYTHONPATH=src .venv/Scripts/python.exe -m sunday.sidecar
+.venv\Scripts\sunday-sidecar.exe
 ```
 
 It binds to `127.0.0.1` on an ephemeral port and writes the port and a
-per-launch token to `%LOCALAPPDATA%\Sunday\handshake.json`. Open `web/debug.html`
-over loopback (not `file://` — a page from an opaque origin cannot open a
-WebSocket) and paste both in:
+per-launch token to `%LOCALAPPDATA%\Sunday\handshake.json`. Serve `web/debug.html`
+over loopback — not `file://`, because a page from an opaque origin cannot open
+a WebSocket — and paste both in:
 
 ```bash
-python -m http.server 8777 --bind 127.0.0.1 --directory web
+.venv\Scripts\python.exe -m http.server 8777 --bind 127.0.0.1 --directory web
 ```
+
+### A note on shells
+
+These commands are written for **PowerShell**, which is what Windows gives you
+by default. Do not prefix them with `PYTHONPATH=src` — that is bash syntax, and
+PowerShell reads it as a command name and fails with
+`The term 'PYTHONPATH=src' is not recognized`. Since the editable install above,
+nothing needs it. In Git Bash the same commands work with forward slashes:
+`.venv/Scripts/sunday.exe`.
 
 ## Configuration
 
