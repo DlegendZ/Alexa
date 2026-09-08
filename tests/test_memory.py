@@ -33,9 +33,13 @@ def test_the_slices_leave_room_for_everything_else_in_the_window(cfg):
     sl = budget.slices(cfg)
     accounted = sl.total + cfg.models.overhead_tokens + cfg.models.reply_tokens
     assert accounted <= cfg.models.context_tokens
-    # At 32768 there is nothing to scale, so the slices are what config says.
+    # The shipped slices are sized to fit, so nothing is scaled and the
+    # configured numbers are the numbers in use. A scaled default is a config
+    # file that lies about itself, which is note 51 in a different place.
     assert sl.recent == cfg.memory.slice_recent
     assert sl.tools == cfg.memory.slice_tools
+    assert sl.summary == cfg.memory.slice_summary
+    assert sl.retrieved == cfg.memory.slice_retrieved
     # And the ratios the config asked for survive the scaling.
     assert sl.recent > sl.tools > sl.summary
     assert sl.summary == sl.retrieved

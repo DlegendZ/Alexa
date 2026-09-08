@@ -1,8 +1,11 @@
 """The window, split five ways.
 
-The window is 32768. It was 8192 for most of this build -- a number chosen
-before anything was measured, while the model itself goes to 262144 -- and the
-cost of that was invisible: every slice was being scaled down to fit under it.
+The window is 16384, and it belongs to the model rather than to this file. It
+was 8192 for most of the build -- chosen before anything was measured -- then
+32768 once it was, because on a 2b reserved KV that never fills is nearly free.
+The 4b is larger and the card is not, so it came back down: past 16384 Ollama
+leaves part of the model on the CPU, which costs 28% of generation speed and is
+reported by nothing except `ollama ps`.
 
 Memory is not the only claimant. Tool results land in the window, and so does
 thinking when it is switched on. Give each a fixed allowance and overflow
@@ -81,9 +84,14 @@ def slices(cfg: config.Config | None = None) -> Slices:
     truncation Stage 02 exists to prevent.
 
     So the fixed overhead comes off the top and the slices are scaled into what
-    remains, keeping the ratios the config asked for. At 32768 there is nothing
-    to scale; the scaling stays because it is what makes a smaller window
-    degrade rather than break.
+    remains, keeping the ratios the config asked for.
+
+    The shipped slices are sized so that nothing is scaled, and that is worth
+    keeping true. This function is silent when it fires: carrying the old
+    2048/6144/2048/4096 into a 16384 window would have shrunk every one by 0.81
+    while `config.toml` went on claiming the old numbers. The scaling stays,
+    because it is what makes a smaller window degrade rather than break -- but
+    the configuration that ships must not be one that needs it.
     """
     cfg = cfg or config.get()
     want = Slices(

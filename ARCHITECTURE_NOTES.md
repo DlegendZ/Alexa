@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–74 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–77 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1232,3 +1232,79 @@ It saves the recording because the second round of every voice bug is a question
 summary cannot answer: was the phrase even in there, is the room noisy, did it clip.
 Notes 67 and 69 were both settled from the file rather than from the numbers printed
 above it.
+
+## 75. The voice models are on the processor, and the VRAM plan assumed otherwise
+
+**Doc:** Resources sizes a 6 GB card with Moonshine at 0.50 GB and Kokoro at 1.20 GB
+resident on it, plus 0.50 GB of CUDA contexts, and concludes that moving the Windows
+desktop to the integrated adapter "is not optional".
+**Code:** the `onnxruntime` that arrives with the rest of the dependencies offers
+`CPUExecutionProvider` and nothing else. All four voice models run on the processor
+and hold **0 GB of VRAM**. They cost about 1.2 GB of ordinary RAM in the sidecar and
+roughly a fifth of one core while listening.
+**Why it is worth an entry:** the whole VRAM budget was built around a number that is
+zero. Measured with everything running, `qwen3.5:4b` at a 16384 window is 3379 MiB
+entirely on the card and the machine sits at 4390 MiB of 6144 with a browser open. Two
+of the three savings in that section are consequently free money nobody needs: there is
+one CUDA context rather than three, and the desktop is not competing with a full card.
+
+It also removes a precondition the document had put on the model-size decision. "It
+needs the integrated-graphics move first" was true of a plan in which the synthesiser
+held 1.2 GB. It was not true of the build.
+
+## 76. `qwen3.5:2b` to `qwen3.5:4b`, and the window came down to pay for it
+
+**Doc:** Stage 03 — "a 2b that reliably picks the right tool beats a 4b that fumbles the
+arguments. The trade is prose quality, and it is a real trade." Open decisions listed
+2b prose quality as fixable only by a larger model.
+**Code:** `[models] agent = "qwen3.5:4b"`, `context_tokens = 16384`, and the four memory
+slices sized down to 1536/4608/1536/3072.
+**Why:** the argument was the right way round and the wrong conclusion. Measured on the
+same three questions, the 4b picks the same tools with the same arguments, so the trade
+the 2b was accepted for was never collected. What changed is the sentences:
+
+| asked | `qwen3.5:2b` | `qwen3.5:4b` |
+| --- | --- | --- |
+| gold price | "…$4,367.50 per ounce. I have provided the information directly here without…" | "The current gold price is 4,367.50 USD per ounce." |
+| weather | "Jakarta is currently 26.5°C… If you need further informa…" | "It is 26.5 degrees Celsius in Jakarta with a clear sky…" |
+
+Both 2b answers narrate their own conduct after answering, which is the decoration habit
+Stage 03 measured and could not prompt away. And `26.5°C` is a degree sign in text that
+gets spoken aloud.
+
+**The window is the cost, and it is a hard one.** Measured on the 6 GB card, browser
+open:
+
+| model | window | on the GPU | tokens/s |
+| --- | --- | --- | --- |
+| 2b | 32768 | 100% | 64.8 |
+| 4b | 16384 | 100% | 46.7 |
+| 4b | 24576 | 85% | 41.0 |
+| 4b | 32768 | 79% | 33.7 |
+
+Past 16384 Ollama leaves part of the model on the CPU and says so in exactly one place:
+`ollama ps`. Nothing else reports it, the turn still works, and it is 28% slower. This is
+the rule the document has carried since milestone 1 — *check `ollama ps` says 100% GPU* —
+earning its keep on the first change that could have broken it.
+
+**One habit did not improve.** Asked what it can do, the 4b paraphrases the
+`list_capabilities` result rather than reading it back, and dropped the file tools while
+doing so. The fast path hands it correct prose and it edits it anyway. `qwen3:8b` is
+pulled, would need the window smaller again, and has not been compared.
+
+## 77. The slices were sized to fit rather than scaled into the smaller window
+
+**Doc:** Stage 02 — "at 32768 there is nothing to scale."
+**Code:** the shipped slices are 1536/4608/1536/3072, which with the thinking
+reservation come to 12800 of the 13216 left after overhead and the reply. Nothing is
+scaled, and a test now asserts that all four match the config rather than only two.
+**Why:** carrying 2048/6144/2048/4096 into a 16384 window would have worked. `scaled_to`
+would have shrunk every slice by 0.81 and no one would have been told — the recent-turns
+allowance would read 6144 in `config.toml` and be 4956 in use.
+
+That is note 51 arriving from the other direction. There the number was never measured;
+here it would have been measured, written down, and then silently overridden by a
+mechanism whose whole job is to be invisible. The scaling stays, because it is what makes
+a smaller window degrade rather than break. But the shipped configuration must not be a
+configuration that needs it, or the file is a description of something that is not
+running.

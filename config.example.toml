@@ -5,9 +5,9 @@
 # both exist. Set SUNDAY_HOME to move the data directory somewhere else.
 
 [models]
-agent           = "qwen3.5:2b"
+agent           = "qwen3.5:4b"
 ollama_url      = "http://127.0.0.1:11434"
-context_tokens  = 32768      # measured: 32k costs 260 MiB more VRAM and no speed
+context_tokens  = 16384      # measured: the largest 4b window that stays 100% on the card
 thinking_budget = 2048
 # The airlock summariser. The only model that is not local, and it only ever
 # sees a cleared query plus text that was already public.
@@ -69,12 +69,13 @@ max_read_bytes = 200000
 distance_cutoff = 0.45   # tune with real turns
 top_k           = 5
 idle_minutes    = 10
-# Doubled with the window. Measured: ~0.15 ms of prompt eval per token above
-# 3k, so slices that actually fill are paid for before the first word.
-slice_summary   = 2048
-slice_recent    = 6144
-slice_retrieved = 2048
-slice_tools     = 4096
+# Sized to fit 16384 rather than scaled into it: these four plus the thinking
+# reservation come to 12800 of the 13216 left after overhead and the reply, so
+# the numbers here are the numbers used. Raise the window and raise these too.
+slice_summary   = 1536
+slice_recent    = 4608
+slice_retrieved = 1536
+slice_tools     = 3072
 
 [external]
 enabled           = true

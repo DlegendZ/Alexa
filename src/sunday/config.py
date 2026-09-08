@@ -41,18 +41,25 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/ant
 
 @dataclass
 class Models:
-    agent: str = "qwen3.5:2b"
+    agent: str = "qwen3.5:4b"
     ollama_url: str = "http://127.0.0.1:11434"
-    #: 32768, not because the model tops out there -- it goes to 262144 --
-    #: but because this is where the trade stops being free. Measured on the
-    #: 6 GB card this was built for: 8192 costs 3286 MiB and 32768 costs 3546,
-    #: at the same 63 tokens a second. Reserved KV that is never filled is
-    #: nearly free, and prompt processing scales with the tokens a turn
-    #: actually uses, not with the size of the window they sit in.
+    #: 16384, and the number belongs to the model rather than to the window.
+    #: On the 2b, reserved KV was nearly free and 32768 cost 260 MiB more than
+    #: 8192 at the same 63 tokens a second. The 4b is larger, and the card runs
+    #: out. Measured here, with a browser open:
     #:
-    #: 8192 was chosen before any of that was measured, and it cost more than
-    #: it looked: the slices were being scaled down by 0.61 to fit under it.
-    context_tokens: int = 32768
+    #:      model  ctx     on GPU   tok/s
+    #:      2b     32768   100%      64.8
+    #:      4b     16384   100%      46.7
+    #:      4b     24576    85%      41.0
+    #:      4b     32768    79%      33.7
+    #:
+    #: Past 16384 Ollama leaves part of the model on the CPU and never says so
+    #: -- `ollama ps` reports it and nothing else does. The cost is not the
+    #: window, it is the 28% of generation speed that goes with the spill. So
+    #: this is the largest window that stays entirely on the card, and Stage 12
+    #: has said since milestone 1 that `ollama ps` must read 100%.
+    context_tokens: int = 16384
     thinking_budget: int = 2048
     summariser: str = "deepseek-v4-flash"
     #: What no memory slice pays for: the system prompt, the bound tool
@@ -66,9 +73,10 @@ class Models:
     #: The trend is still the thing to watch -- all of it is paid every turn,
     #: whether or not a tool is called -- but it is no longer a crisis. At the
     #: old 8192 window this was 29% of everything and the slices were being
-    #: scaled to 0.61 to fit under it; at 32768 the same 2400 is 7% and
-    #: nothing is scaled. Ten tools costing 1239 tokens of bound schema is a
-    #: cost worth knowing rather than a reason not to add the eleventh.
+    #: scaled to 0.61 to fit under it; at 16384 the same 2400 is 15% and the
+    #: slices are sized to fit rather than scaled into it. Ten tools costing
+    #: 1239 tokens of bound schema is a cost worth knowing rather than a
+    #: reason not to add the eleventh.
     overhead_tokens: int = 2400
     #: Room for the reply itself, which has no slice of its own.
     reply_tokens: int = 768
@@ -229,21 +237,25 @@ class Memory:
     distance_cutoff: float = 0.45
     top_k: int = 5
     idle_minutes: int = 10
-    #: Doubled once the window went to 32768, keeping the ratios. Not tripled,
-    #: and the reason is measured rather than felt: prompt processing runs at
-    #: about 0.15 ms per token above 3k on this card, so a turn that actually
-    #: fills its slices pays for them before it says a word. 8192 of slices is
-    #: ~1.6 s of prompt eval at worst, 16384 is ~2.9 s, and 24576 would be over
-    #: four seconds on every turn of a long session -- which is the wrong trade
-    #: for something meant to be spoken to.
+    #: Sized to fit the window rather than scaled into it. With 16384 of
+    #: window, 2400 of overhead and 768 for the reply, 13216 is left; these
+    #: four plus the thinking reservation come to 12800, so nothing is
+    #: scaled and the numbers here are the numbers used.
     #:
-    #: These are allowances, not usage: a short session fills none of them, so
-    #: the cost arrives gradually and only in the sessions long enough to have
-    #: earned it.
-    slice_summary: int = 2048
-    slice_recent: int = 6144
-    slice_retrieved: int = 2048
-    slice_tools: int = 4096
+    #: That last part is the point. `scaled_to` exists so a smaller window
+    #: degrades rather than breaks, and it is very good at hiding the fact
+    #: that it fired: at 32768 these read 2048/6144/2048/4096 and were used
+    #: whole, and moving to 16384 without touching them would have quietly
+    #: shrunk every one by 0.81. A configured number that is not the number
+    #: in use is the failure note 51 was written about.
+    #:
+    #: They are allowances, not usage. A short session fills none of them, so
+    #: the prompt-eval cost -- about 0.15 ms per token above 3k -- arrives
+    #: gradually and only in sessions long enough to have earned it.
+    slice_summary: int = 1536
+    slice_recent: int = 4608
+    slice_retrieved: int = 1536
+    slice_tools: int = 3072
 
 
 @dataclass

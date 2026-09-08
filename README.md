@@ -4,7 +4,7 @@ A voice assistant that lives on one Windows desktop, runs on a single 6 GB
 graphics card, and treats the internet as a door it has to unlock — not a place
 it sends your work.
 
-One small local model (`qwen3.5:2b` via Ollama) does the thinking, reads your
+One small local model (`qwen3.5:4b` via Ollama) does the thinking, reads your
 files, checks the weather and looks up prices. When it genuinely needs the open
 web, it goes through a single guarded door — and what passes through that door
 is written by something that has never seen your private data.
@@ -17,7 +17,7 @@ Deviations found while building: [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md).
 Ollama must be running with the model pulled:
 
 ```powershell
-ollama pull qwen3.5:2b
+ollama pull qwen3.5:4b
 ```
 
 Install Sunday into the virtualenv. This is what makes `sunday` runnable from
@@ -25,6 +25,27 @@ any directory, with no `PYTHONPATH` to remember:
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+### Voice, once more
+
+Speaking to it needs two extra packages and about 600 MB of models, which are
+not in the repo:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e ".[voice]"
+```
+
+```powershell
+.venv\Scripts\python.exe -m sunday.audio.models
+```
+
+Then measure your own microphone, because every threshold in `[audio]` and
+`[wake]` is a guess until somebody does. It records eight seconds while you
+talk and prints what each piece made of it:
+
+```powershell
+.venv\Scripts\python.exe -m sunday.audio.check
 ```
 
 ## Running it
@@ -36,6 +57,14 @@ any directory, with no `PYTHONPATH` to remember:
 That is the terminal client. It stays alive for the whole build — it is the
 fastest way to test the core without an app in the way. `.venv\Scripts\python.exe
 -m sunday.main` does the same thing if you prefer the module form.
+
+Add `--voice` to open the microphone as well. Say "hey jarvis", then ask; it
+answers out loud, and for eight seconds afterwards you can just keep talking
+without the wake word. Talking over it stops it.
+
+```powershell
+.venv\Scripts\sunday.exe --voice
+```
 
 The sidecar exposes the same core over a WebSocket:
 
