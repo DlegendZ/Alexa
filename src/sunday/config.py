@@ -58,16 +58,17 @@ class Models:
     #: What no memory slice pays for: the system prompt, the bound tool
     #: schemas, the memory framing block, and the standing system lines the
     #: runtime adds every turn -- which folders are open, and what asks before
-    #: it happens. Measured at ~2260 worst case: 1239 of bound schemas, 576 of
+    #: it happens. Measured at ~2260 worst case: 1239 of bound schemas, 276 of
     #: system prompt, and the rest in framing and the situational lines.
     #: Underestimating this overruns num_ctx, and Ollama answers by dropping
     #: the oldest messages without saying so, so the rest is headroom.
     #:
-    #: The trend is the thing to watch: all of it is paid every turn, whether
-    #: or not a tool is called, out of the memory slices. Eight tools and a
-    #: short prompt was 1630; ten tools and a prompt that actually routes them
-    #: is 2260. At an 8k window that leaves the five slices about 5000 tokens
-    #: between them, and there is no room for another round of this.
+    #: The trend is still the thing to watch -- all of it is paid every turn,
+    #: whether or not a tool is called -- but it is no longer a crisis. At the
+    #: old 8192 window this was 29% of everything and the slices were being
+    #: scaled to 0.61 to fit under it; at 32768 the same 2400 is 7% and
+    #: nothing is scaled. Ten tools costing 1239 tokens of bound schema is a
+    #: cost worth knowing rather than a reason not to add the eleventh.
     overhead_tokens: int = 2400
     #: Room for the reply itself, which has no slice of its own.
     reply_tokens: int = 768

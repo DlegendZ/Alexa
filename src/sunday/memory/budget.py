@@ -1,4 +1,8 @@
-"""The 8k window, split five ways.
+"""The window, split five ways.
+
+The window is 32768. It was 8192 for most of this build -- a number chosen
+before anything was measured, while the model itself goes to 262144 -- and the
+cost of that was invisible: every slice was being scaled down to fit under it.
 
 Memory is not the only claimant. Tool results land in the window, and so does
 thinking when it is switched on. Give each a fixed allowance and overflow
@@ -68,16 +72,18 @@ class Slices:
 def slices(cfg: config.Config | None = None) -> Slices:
     """The five allowances, sized against what is actually free.
 
-    The configured slices sum to the whole context window, but they are not the
-    only claimants on it: the system prompt, the bound tool schemas and the
-    memory framing block cost around 1080 tokens that no slice pays for, and
-    the reply needs room of its own. Sizing the slices *to* the window rather
-    than to what is left of it overruns `num_ctx`, and Ollama answers by
-    dropping the oldest messages without saying so -- the silent truncation
-    Stage 02 exists to prevent.
+    The five slices are a statement of ratios, and they are not the only
+    claimants: the system prompt, the bound tool schemas, the memory framing
+    block and the standing system lines cost around 2260 tokens that no slice
+    pays for, and the reply needs room of its own. Sizing the slices *to* the
+    window rather than to what is left of it overruns `num_ctx`, and Ollama
+    answers by dropping the oldest messages without saying so -- the silent
+    truncation Stage 02 exists to prevent.
 
     So the fixed overhead comes off the top and the slices are scaled into what
-    remains, keeping the ratios the config asked for.
+    remains, keeping the ratios the config asked for. At 32768 there is nothing
+    to scale; the scaling stays because it is what makes a smaller window
+    degrade rather than break.
     """
     cfg = cfg or config.get()
     want = Slices(

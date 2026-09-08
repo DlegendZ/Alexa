@@ -688,3 +688,72 @@ def test_the_entry_point_modules_compile_without_warnings():
         with warnings.catch_warnings():
             warnings.simplefilter("error", SyntaxWarning)
             compile(source.read_text(encoding="utf-8"), str(source), "exec")
+
+
+# -- 6. a broken turn owed you the notices it had already earned -----------
+
+
+def test_a_turn_that_breaks_still_reports_what_it_already_did(cfg, tmp_path):
+    """The door shuts on the read, not on the reply.
+
+    "You get the notice whenever a turn goes tainted" was true right up until
+    the model died afterwards: the OllamaDown path returned before the notices
+    were emitted, so a credential was touched, a key was stripped, and the only
+    thing said about it was that Ollama was down.
+
+    A barge-in is deliberately not the same case -- a cancelled turn is
+    discarded, and apologising for work the user stopped caring about is noise.
+    """
+    from sunday.agent.llm import OllamaDown
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".env").write_text("DEEPSEEK_API_KEY=sk-abcdefghijklmnop", encoding="utf-8")
+    cfg.files.roots = [str(root)]
+
+    read_env = ToolCall("read_file", {"path": str(root / ".env")})
+
+    class DiesAfterTheTool(Scripted):
+        def stream(self, messages, *, think=False):
+            raise OllamaDown("Ollama call failed: connection reset")
+            yield  # pragma: no cover - unreachable, keeps this a generator
+
+    agent = DiesAfterTheTool([Reply(tool_calls=[read_env]), Reply(content="")])
+    seen: list[dict] = []
+    state = _runtime(cfg, agent).run_turn(
+        "read my env file", on_event=seen.append
+    )
+
+    assert state["committed"] is False
+    notices = [e["text"] for e in seen if e.get("type") == "notice"]
+    assert guardrail.NOTICE_BLOCKED in notices
+    assert guardrail.NOTICE_REDACTED_RESULT in notices
+    # And they are on the returned state too, for a client that reads it there.
+    assert state["notices"] == notices
+
+    # Ordering: every notice reaches a sink before `done` closes the turn.
+    kinds = [e.get("type") for e in seen]
+    assert kinds.index("notice") < kinds.index("done")
+
+
+def test_a_cancelled_turn_stays_quiet(cfg, tmp_path):
+    """The other half of the rule above, stated so it cannot drift back."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / ".env").write_text("KEY=1", encoding="utf-8")
+    cfg.files.roots = [str(root)]
+
+    runtime = _runtime(cfg, Scripted([Reply(content="")]))
+
+    class CancelsMidTurn(Scripted):
+        def chat(self, messages, *, tools=None, think=False, max_tokens=None):
+            runtime.cancel()
+            return Reply(content="")
+
+    runtime.agent = CancelsMidTurn()
+    seen: list[dict] = []
+    state = runtime.run_turn("hello", on_event=seen.append)
+
+    assert state["committed"] is False
+    assert state["notices"] == []
+    assert [e.get("type") for e in seen].count("done") == 1

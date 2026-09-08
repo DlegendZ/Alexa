@@ -25,13 +25,17 @@ def test_the_slices_leave_room_for_everything_else_in_the_window(cfg):
     """Stage 02's claim is that overflow is arithmetic you can check. Check it.
 
     The slices are not the only claimants: the system prompt, the bound tool
-    schemas and the memory framing block cost around 1080 tokens no slice pays
-    for, and the reply needs room too. Sizing the slices *to* the window
-    overruns num_ctx, and Ollama drops the oldest messages without saying so.
+    schemas, the memory framing block and the standing system lines cost around
+    2260 tokens no slice pays for, and the reply needs room too. Sizing the
+    slices *to* the window overruns num_ctx, and Ollama drops the oldest
+    messages without saying so.
     """
     sl = budget.slices(cfg)
     accounted = sl.total + cfg.models.overhead_tokens + cfg.models.reply_tokens
     assert accounted <= cfg.models.context_tokens
+    # At 32768 there is nothing to scale, so the slices are what config says.
+    assert sl.recent == cfg.memory.slice_recent
+    assert sl.tools == cfg.memory.slice_tools
     # And the ratios the config asked for survive the scaling.
     assert sl.recent > sl.tools > sl.summary
     assert sl.summary == sl.retrieved

@@ -942,5 +942,87 @@ session fills none of them and pays nothing; the cost arrives gradually and only
 long enough to have earned it. Verified after the change: a three-turn session assembled 91
 to 336 tokens of context against an allowance of 10240, at the same latency as before.
 
-The remaining 13216 tokens stay slack. Overhead has moved four times already, and a large
-tool result has to land somewhere that is not the memory slices.
+The remaining 13216 tokens stay slack. Overhead has moved three times already — 1200 to
+1750 to 2000 to 2400 — and a large tool result has to land somewhere that is not the
+memory slices.
+
+---
+
+*Entries 60–63 come from a second conformance audit, run file by file against the
+document rather than against the code's own idea of itself. Applied to the HTML.*
+
+## 60. "A fast path never fires on a compound message" was true of two paths out of three
+
+**Doc:** Stage 04, the rule block of that name, and note 52 which established it.
+**Code:** `fastpaths.match` tested `_CAPABILITIES` *before* `_COMPOUND`, so
+"what can you do and what is the weather in Jakarta" took the shortcut. The
+compound test now runs before any pattern is tried.
+**Why:** the same failure note 52 fixed, reached through the one door left open —
+and the capability list is the worst of the three results to answer half a question
+with. It is long, it is the last thing the model read, and a 2b reading it decides
+the turn was about itself. The weather half came back as a tour of the tool belt.
+
+The shape of this is note 55 again, exactly: a rule stated once and applied per
+call site, where one call site was written before the rule and never revisited.
+Note 55 was `write_file` still calling `mkdir(parents=True)` after copy and move
+had stopped. Both were found the same way — by reading the rule as a claim about
+*every* path and then checking every path, rather than checking the paths the
+rule's own commit had touched.
+
+The test that existed passed the whole time. It listed five compound messages and
+not one of them was a capability question, because it was written from the
+transcript that prompted note 52 rather than from the rule. **A test written from
+the incident checks the incident; a test written from the rule checks the rule.**
+
+## 61. A turn that broke kept its notices to itself
+
+**Doc:** Stage 05 — "you get the notice whenever a turn goes tainted, not only
+when a call was actually refused".
+**Code:** `run_turn`'s `OllamaDown` handler returned before the notices were
+emitted. They are emitted there now, through `Runtime._say`, before `done` and
+while a sink still exists. The `Cancelled` path deliberately still returns none.
+**Why:** the door shuts on the *read*; the model dies later. So a turn could touch
+a credential, strip a key, lose Ollama, and tell you only that Ollama was
+unreachable — every privacy event of that turn silently dropped. It is the same
+ordering bug as emitting notices after the sinks were cleared, which is why no
+client saw a redaction for a milestone, arriving through a path added afterwards.
+
+Cancellation is the deliberate exception, and it is worth stating so it does not
+drift back: a barge-in discards the turn, and an apology for work the user stopped
+caring about is noise rather than honesty.
+
+## 62. Four numbers in the source still described the 8k window
+
+**Doc:** Stage 02 as revised by note 51 — the window is 32768, the reservation is
+2400, nothing is scaled.
+**Code:** `budget.py`'s module docstring opened "The 8k window, split five ways";
+`budget.slices()` said the overhead was "around 1080 tokens"; `config.Models`
+said the system prompt cost 576 tokens where it costs 276, and closed with "at an
+8k window that leaves the five slices about 5000 tokens between them, and there
+is no room for another round of this" — the framing note 51 explicitly retired.
+A test docstring carried the 1080 as well.
+**Why it is worth an entry:** none of it changed behaviour, and all of it is the
+thing a person reads *instead of* the document. Note 51's lesson was that a number
+no test can check is a number nobody rechecks; this is its second half. A number
+that is only in prose is not rechecked either, and prose is where the next person
+looks first. The slices test now asserts the unscaled values, so at least the
+32768 claim has something holding it down.
+
+## 63. Three passages of the HTML had been overtaken by their own rules
+
+**Doc, against itself:** the hero chip still read `8k context`. The `write_file`
+row said "creates parent directories" three paragraphs above the rule block
+saying Sunday does not create folders — the exact violation note 55 fixed in the
+code, left standing in the sentence that describes the code. The folder rule
+closed with "**Still open.** The roots have no names", immediately below the table
+row that describes the names they have had since note 49. The sample trace listed
+eight tools on the belt when there have been ten since note 43. And Stage 03's
+summary of the system prompt's seven lines named a rule the prompt does not have
+and omitted one it does.
+**Why:** a specification that contradicts itself is worse than one that is merely
+behind, because a reader cannot tell which half is current — and both halves here
+were written deliberately, at different times, by someone who had checked. The
+fix for the class, rather than for these five: every entry in this file that
+*resolves* an open question has to strike the passage that raised it, in the same
+pass. Note 49 closed the roots question and added the table row; it did not delete
+the paragraph three lines down that said the question was open.

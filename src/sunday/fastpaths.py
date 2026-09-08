@@ -65,10 +65,11 @@ _CAPABILITIES = re.compile(
 #: the model in a system line that the fast path was partial did not fix it:
 #: it was tried, and the second half was still dropped.
 #:
-#: So a compound message does not get a fast path at all. The insurance exists
-#: for the single-clause case where a fumbled argument would be obvious; on a
-#: compound the model has to do the work, which is what it does correctly when
-#: nothing has answered ahead of it.
+#: So a compound message does not get a fast path at all -- not one of the
+#: three, which is why this is tested before any pattern is tried. The
+#: insurance exists for the single-clause case where a fumbled argument would
+#: be obvious; on a compound the model has to do the work, which is what it
+#: does correctly when nothing has answered ahead of it.
 _COMPOUND = re.compile(
     r"(?:\band\b|\bthen\b|\balso\b|\bafter that\b|;|\bdan\b|\blalu\b|\bterus\b)",
     re.IGNORECASE,
@@ -82,15 +83,21 @@ class FastPath:
 
 
 def match(task: str) -> FastPath | None:
-    # First, because "what can you do" contains no city and no asset but
-    # would otherwise fall through to the model, which invents an answer.
-    if _CAPABILITIES.search(task):
-        return FastPath("list_capabilities", {})
-
-    # Two instructions in one message: no shortcut. Answering half of it in
-    # code is what convinces the model the whole thing is done.
+    # Two instructions in one message: no shortcut, and this comes before
+    # every pattern rather than before two of them. Answering half of it in
+    # code is what convinces the model the whole thing is done, and the
+    # capability list is the worst of the three to answer half a question
+    # with -- it is long, it is nearest, and a 2b reading it decides the turn
+    # was about itself. "What can you do, and what is the weather in Jakarta"
+    # used to come back as a tour of the tool belt with no weather in it.
     if _COMPOUND.search(task):
         return None
+
+    # Then capabilities, because "what can you do" contains no city and no
+    # asset but would otherwise fall through to the model, which invents an
+    # answer.
+    if _CAPABILITIES.search(task):
+        return FastPath("list_capabilities", {})
 
     weather = _WEATHER.search(task)
     if weather:

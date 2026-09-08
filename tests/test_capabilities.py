@@ -162,6 +162,27 @@ def test_a_compound_message_gets_no_fast_path(cfg):
         assert fastpaths.match(asked) is None, asked
 
 
+def test_the_compound_rule_covers_the_capability_path_too(cfg):
+    """All three patterns, not two of them.
+
+    The capability list was matched before the compound test rather than
+    after, so "what can you do and what is the weather in Jakarta" got the
+    whole tool belt in the transcript and no weather. It is the worst of the
+    three to answer half a question with: long, nearest, and a 2b reading it
+    decides the turn was about itself.
+    """
+    for asked in (
+        "what can you do and what is the weather in Jakarta",
+        "list your tools then read gold.txt",
+        "apa saja kemampuan kamu dan berapa harga emas",
+    ):
+        assert fastpaths.match(asked) is None, asked
+
+    # And the single-clause case is untouched, in both languages.
+    assert fastpaths.match("what can you do").tool == "list_capabilities"
+    assert fastpaths.match("apa saja kemampuan kamu").tool == "list_capabilities"
+
+
 def test_a_single_clause_still_gets_its_fast_path(cfg):
     assert fastpaths.match("weather in Jakarta").tool == "get_weather"
     assert fastpaths.match("price of gold").tool == "get_asset_price"

@@ -966,18 +966,27 @@ class Runtime:
             # Ctrl-C is a barge-in by another name. Catching it here means the
             # turn still gets its log line, its `done` event and its teardown;
             # letting it escape leaves the sinks and the turn context set.
+            #
+            # No notices: a barge-in discards the turn, and an apology for a
+            # redaction inside a turn the user cut short is noise about work
+            # they stopped caring about.
             self._cancel.set()
             self._finish(log, cancelled=True, committed=False)
             return {**state, "committed": False, "notices": []}  # type: ignore[typeddict-unknown-key]
         except OllamaDown as exc:
+            # A turn that broke still owes you whatever it already did. The
+            # door shuts on the read, not on the reply, so "you get the notice
+            # whenever a turn goes tainted" has to survive the model dying
+            # afterwards -- otherwise a credential was touched, a key was
+            # stripped, and the only thing said about it is that Ollama is
+            # down.
             message = str(exc)
             self._emit(type="error", text=message)
+            notices = self._say(ctx)
             self._finish(log, error=message, committed=False)
-            return {**state, "final_response": message, "committed": False, "notices": []}  # type: ignore[typeddict-unknown-key]
+            return {**state, "final_response": message, "committed": False, "notices": notices}  # type: ignore[typeddict-unknown-key]
 
-        notices = ctx.events.notices
-        for notice in notices:
-            self._emit(type="notice", text=notice)
+        notices = self._say(ctx)
         log.set(
             tools=[r.tool for r in final.get("tool_results", [])],
             provenance=[r.provenance for r in final.get("tool_results", [])],
@@ -993,6 +1002,17 @@ class Runtime:
         final["notices"] = notices  # type: ignore[typeddict-unknown-key]
         self._finish(log, committed=final.get("committed", False))
         return final
+
+    def _say(self, ctx: TurnContext) -> list[str]:
+        """Emit the turn's notices, while a sink still exists to receive them.
+
+        Both callers matter and only one is obvious. Notices emitted after the
+        sinks are cleared reach nobody, which is why no client ever saw a
+        redaction for a whole milestone.
+        """
+        for notice in ctx.events.notices:
+            self._emit(type="notice", text=notice)
+        return list(ctx.events.notices)
 
     def _finish(self, log: telemetry.TurnLog, **fields: Any) -> None:
         """Emit `done`, write the log line, then drop the turn's sinks. The
