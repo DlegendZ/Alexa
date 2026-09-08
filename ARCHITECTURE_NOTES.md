@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–21 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–74 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1026,3 +1026,209 @@ fix for the class, rather than for these five: every entry in this file that
 *resolves* an open question has to strike the passage that raised it, in the same
 pass. Note 49 closed the roots question and added the table row; it did not delete
 the paragraph three lines down that said the question was open.
+
+## 64. The voice models are run directly, not through their packages
+
+**Doc:** Stage 01 and Desktop 02 name openWakeWord, Silero VAD and Moonshine as
+components; the document is silent on how they are loaded.
+**Code:** all three are ONNX graphs run on `onnxruntime`, which chromadb already
+brings. `sunday/audio/wake.py` is openWakeWord's three-graph pipeline —
+melspectrogram, embedding, wake model — written out. `vad.py` and `stt.py` are the
+same idea for the other two.
+**Why:** the packages cost more than the models. `openwakeword` brings scikit-learn
+and a TensorFlow-Lite runtime to do what is three sequential `session.run` calls;
+`silero-vad` brings torch and torchaudio for a 2 MB graph; the supported Moonshine
+distributions want either a git-subdirectory install or transformers. What the voice
+extra actually adds to the install is `sounddevice` and `tokenizers`.
+
+The trade is that the shapes are now this repo's problem, and two of them are the
+next three notes. That is the honest cost, and it was worth paying once.
+
+## 65. Silero v5 wants the 64 samples before the window, and does not say so
+
+**Doc:** silent — "Silero VAD, ~2 MB, decides where speech starts and stops".
+**Code:** `vad.Vad` keeps the last 64 samples of the previous window and prepends
+them, so the graph is fed 576 samples to score 512.
+**Why it is worth an entry:** leaving them out does not raise. The model loads, runs,
+returns a float, and reports **0.02 for clear speech** — so the first symptom is a
+VAD that never fires, which reads as a dead microphone or a wrong device, and the two
+obvious things to check are both fine. The window size is also not negotiable: 512
+samples at 16 kHz, not 320, not 480.
+
+## 66. The merged Moonshine decoder has two shapes that are not guessable
+
+**Doc:** silent.
+**Code:** `stt.Moonshine`. First pass: `use_cache_branch=False` and every past tensor
+zero-*length*, `(1, 8, 0, 52)`. Every pass after: the decoder past comes from the
+previous `present`, and the cross-attention K/V is **the first pass's**, held for the
+rest of the clip.
+**Why:** both were found by failing.
+
+A dummy past of length 1 rather than 0 runs the first token and then fails inside the
+`optimum::if` node with "right operand cannot broadcast on dim 0" against a matmul in
+`encoder_attn` — an error naming neither the input that is wrong nor the pass it is
+wrong on.
+
+And on the cache branch the model returns the cross-attention K/V *empty*, shape
+`(0, 8, 1, 52)`, because it cannot have changed. Feeding those back collapses the
+batch dimension to zero on step 2. The first pass computes them from
+`encoder_hidden_states`; keep them and stop asking.
+
+## 67. Moonshine returns nothing for a clip wrapped in silence
+
+**Doc:** Desktop 02 — "Moonshine transcribes the clip", with two guards on the clip's
+length and nothing about its shape.
+**Code:** `listener._trim` cuts the clip to the voiced span plus `TRIM_MARGIN_MS`
+(250) either side, using positions the VAD recorded. The pre-roll is fed through the
+VAD too, so those positions cover the whole clip rather than only the part after the
+wake word.
+**Why:** measured on this build, on one four-second utterance of clear speech.
+
+| padding either side | first-token logits | transcript |
+| --- | --- | --- |
+| 1 s | `Hey` 12.22, EOS 11.45 | "Hey Jarvis what is the weather in Jakarta" |
+| 2 s | EOS 11.90, `Hey` 10.47 | empty |
+| 4 s | EOS 9.86, `Hey` 9.60 | empty |
+
+Moonshine was trained on tightly-trimmed segments, so silence either side is evidence
+that there is nothing to transcribe, and greedy decoding takes end-of-sequence as its
+very first token. **Every clip this pipeline builds is padded by construction** — half
+a second of pre-roll in front, seven-tenths of a second of trailing silence behind,
+both required by the design. So the common case was the failing case: the microphone
+was fine, the VAD was fine, and the transcript was empty.
+
+Gain is not the variable. The same clip at 0.3x and at 0.1x transcribes correctly.
+
+## 68. Starting and stopping are two different clocks
+
+**Doc:** Desktop 02's five steps read as one clock — the wake word fires, the VAD marks
+speech, 700 ms of silence closes the clip.
+**Code:** `vad_silence_ms` may only run once the utterance has *begun*, and "begun" is
+`min_clip_ms` of speech heard after the wake word — not speech anywhere in the clip,
+and not one window of it. Until then the only clock running is `lead_in_ms`, which
+abandons the clip entirely.
+**Why:** this is the bug that made milestone 7 look finished and useless.
+
+Measured on a real recording: "hey jarvis" ran 2.88–3.68 s and the question ran
+5.06–7.81 s. **A 1.38 second gap** — twice the silence that ends a clip. The pre-roll
+holds the wake phrase, so counting it as "speech has started" started the stopwatch
+that ends the clip, and the clip closed *inside the pause*, holding nothing but the
+tail of the phrase. That was then correctly dropped as a cough, and from outside the
+whole thing was silence: the wake word visibly fired, and nothing ever happened again.
+
+The pre-roll flag alone was not enough, and the second failure is the more interesting
+one. A VAD window straddling the wake word carries the tail of the phrase into the
+live count, and **one 32 ms window was enough to restart the same bug**. So the gate
+is a duration, and it is `min_clip_ms` rather than a new number: below that floor is
+not enough speech to have begun talking, and it is not enough speech to have said
+anything. The same question, asked at each end of the clip.
+
+One consequence, deliberate: a cough after the wake word is now abandoned on the
+lead-in rather than closed and then discarded. Nothing reaches the transcriber either
+way, and the `_close` guard stays for the forced thirty-second close.
+
+## 69. The wake threshold was 0.5 because nobody had measured one
+
+**Doc:** Desktop 02 — "Threshold. Start at 0.5. Raise it if it fires at the
+television; lower it if you have to shout." The document is explicitly offering a
+starting point, and this is the measurement it asked for.
+**Code:** `[wake] threshold = 0.3`.
+**Why:** on this microphone, in one eight-second recording containing the phrase and a
+full question.
+
+| audio | peak score |
+| --- | --- |
+| a clearly spoken "hey jarvis" | **0.4901** |
+| everything else in the same recording, question included | 0.0002 |
+| an unrelated sentence, separately | 0.0000 |
+
+The phrase missed the old bar by **one hundredth**, while sitting a factor of 2500
+above anything that was not the phrase. So it fired perhaps one time in three, which
+is the worst available failure mode — it looks like a microphone problem, and every
+number you would check to rule that out is healthy. Anywhere from 0.05 to 0.45
+separates the two populations here; 0.3 leaves room on both sides.
+
+The lesson is note 51's in a new place: the bar sat inside the noise of one speaker's
+voice rather than inside the gap, and no test could have told you, because the gap is
+a property of your microphone and your room. So `python -m sunday.audio.check` prints
+**both** numbers — the phrase, and the loudest thing that was not the phrase — rather
+than only the one that failed.
+
+## 70. Two new `[audio]` keys: `preroll_ms` and `lead_in_ms`
+
+**Doc:** Desktop 02 states the 0.5 s pre-roll in prose and gives it no key, and does
+not consider a wake word that fires with nothing after it.
+**Code:** `[audio] preroll_ms = 500` and `[audio] lead_in_ms = 4000`.
+**Why:** the pre-roll was already a number in the document, just not a settable one.
+The lead-in is new and the design needs it: without it a wake word that fires at the
+television records silence to the thirty-second cap and hands Moonshine thirty seconds
+of room tone. Four seconds rather than three because of note 68's measurement — the
+pause before a question is 1.4 s from someone who knows what they are about to ask.
+
+`min_clip_ms` also changed meaning, and the config comment now says so: it is measured
+against the *speech* in a clip, never the clip's length. Every clip carries pre-roll
+and trailing silence, so a guard on the total could never have fired at all.
+
+## 71. `listen` is a new message on the socket, and `level` finally has a producer
+
+**Doc:** the protocol table carries `level` with "NOT BUILT, waits on 07–09", and has
+no push-to-talk message at all — though Desktop 05 specifies a global hotkey that does
+exactly that.
+**Code:** `{"type":"listen"}`, shell to sidecar. It opens the ear if voice mode was
+never entered, and otherwise starts recording without waiting for the phrase. `level`
+is emitted by the listener at 10 Hz.
+**Why:** the hotkey and the mic button both need a way to say "I am talking now", and
+`set_mode` is the wrong shape for it — a mode is a standing state, this is one event.
+
+The ear runs on its own thread and reaches the socket through
+`loop.call_soon_threadsafe`, which is the only correct way in and the reason `Sidecar`
+now keeps a reference to its loop. It is also injectable
+(`Sidecar(ear_factory=...)`), because the socket tests run on machines with no sound
+card and no models, and a test that silently skips there is a test that never runs
+anywhere.
+
+## 72. A dropped clip that says nothing is a microphone that looks dead
+
+**Doc:** silent. The guards are specified; what the person hears when one fires is not.
+**Code:** `Ear._handle` emits a `notice` carrying the listener's own reason — "heard
+nothing usable: only 288 ms of speech" — and a clip that transcribes to nothing says so
+with the number: "transcribed 1400 ms of speech as nothing".
+**Why:** this is `trace.query_left` again (note 57): the reason was computed and then
+thrown away one function short of anybody reading it. Four different faults — the wake
+word never fired, the clip was dropped as a cough, the clip was abandoned on the
+lead-in, the transcriber returned empty — all presented as the same blank terminal.
+Only two of the four are even unusual. The debugging session that produced notes 67
+and 68 spent its first round working out which of them was happening, and the listener
+had known all along.
+
+## 73. The terminal client grew a second input source, and the prompt had to move
+
+**Doc:** silent; the terminal client is the document's testing instrument rather than
+part of the design.
+**Code:** `sunday --voice`. Typed lines and spoken ones meet on one queue and the turn
+loop never learns which it took — the Stage 01 adapter seam, in twenty lines. `input()`
+now runs on its own thread, and the prompt is written by the loop that knows the app is
+idle.
+**Why the prompt moved:** `input("you> ")` prints its prompt once, on a thread that is
+then blocked for the whole turn, so everything the turn prints lands *after* it and the
+screen ends on a trace line with no prompt anywhere. It reads as hung when it is in
+fact waiting — and in voice mode there is no keypress to make it obvious that it is
+not.
+
+## 74. `python -m sunday.audio.check` exists because the suite cannot measure a room
+
+**Doc:** Desktop 03 says to measure the AEC delay once with a click test and write it
+into config; Desktop 02 says to tune the wake threshold. Neither has a tool.
+**Code:** `sunday.audio.check` records eight seconds, reports what each of the four
+pieces made of it with the number that decided it, saves the recording, and prints the
+config line to change. `sunday.audio.models` downloads the models.
+**Why:** every number in `[audio]` and `[wake]` is a guess until it is measured on the
+hardware it will run on, and note 69 is what happens when one is left at its guess. The
+failures they cause are also identical from outside — you say the phrase, something
+says "listening", nothing happens — so a tool that separates them is worth more than
+any amount of prose about which to try first.
+
+It saves the recording because the second round of every voice bug is a question the
+summary cannot answer: was the phrase even in there, is the room noisy, did it clip.
+Notes 67 and 69 were both settled from the file rather than from the numbers printed
+above it.
