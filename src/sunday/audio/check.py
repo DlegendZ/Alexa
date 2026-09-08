@@ -18,6 +18,7 @@ nothing -- it prints what to change.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 
 import numpy as np
@@ -30,6 +31,16 @@ SECONDS = 8
 #: Below this peak, the input is quiet enough that everything downstream is
 #: guesswork. Measured against ordinary speech at a normal distance.
 QUIET_PEAK = 0.05
+
+#: Below this there is no room tone either, and every room has some -- a quiet
+#: one here reads about 0.003. So this is not a quiet microphone, it is a muted
+#: one, and the two are worth telling apart: the fix is a switch rather than a
+#: volume knob, and everything measured past this point would be noise anyway.
+SILENT_PEAK = 0.0008
+
+#: The speaker was heard, but not well enough to measure a room from. Usually
+#: headphones, which is the case where none of this is needed.
+QUIET_ECHO_PEAK = 0.01
 
 
 def _bar(value: float, scale: float = 0.3, width: int = 28) -> str:
@@ -111,6 +122,9 @@ def measure_echo() -> int:
     mic = Microphone(cfg, on_error=lambda text: print(f"  ! {text}"))
     frames: list[np.ndarray] = []
     stream = None
+    # `write` blocks until the sound card has taken everything, so playing and
+    # recording cannot share a thread. Doing it anyway records only what
+    # arrives *after* the sweep has finished, which is silence.
     try:
         reader = mic.frames()
         next(reader)  # open the input stream before making any noise
@@ -119,9 +133,16 @@ def measure_echo() -> int:
             device=cfg.audio.output_device.strip() or None,
         )
         stream.start()
-        stream.write(played)
-        for _ in range(int(0.4 * rate / FRAME)):  # let the tail arrive
-            frames.append(next(reader))
+        player = threading.Thread(target=stream.write, args=(played,), daemon=True)
+        player.start()
+
+        wanted = played.size * rate // 24000 + int(0.4 * rate)
+        got = 0
+        while got < wanted:
+            frame = next(reader)
+            frames.append(frame)
+            got += frame.size
+        player.join(timeout=5)
     except StopIteration:
         print("the microphone produced nothing at all.")
         return 1
@@ -138,11 +159,21 @@ def measure_echo() -> int:
         return 1
 
     peak = float(np.abs(heard).max())
-    print(f"1. came back  {heard.size} samples, peak {peak:.4f}")
-    if peak < 0.01:
-        print("   the microphone did not hear the speaker at all. If that is")
-        print("   headphones, there is nothing here to measure and nothing to")
-        print("   cancel -- which is the good case.")
+    print(f"1. came back  {heard.size} samples, peak {peak:.5f}")
+    if peak < SILENT_PEAK:
+        # Below this there is no room tone either, and a room always has some.
+        # That is a muted input rather than a quiet one, and it is worth
+        # separating: the fix is a switch, not the volume knob.
+        print("   that is digital silence -- not a quiet room, which would still")
+        print("   read around 0.003. The microphone is muted, or something else")
+        print("   has it open. Nothing downstream of here can be measured until")
+        print("   `python -m sunday.audio.check` shows a level while you talk.")
+        return 1
+    if peak < QUIET_ECHO_PEAK:
+        print("   the microphone can hear, but it did not hear the speaker. If")
+        print("   that is headphones, there is nothing here to measure and")
+        print("   nothing to cancel -- which is the good case. On speakers,")
+        print("   turn the volume up and run it again.")
         return 0
 
     # Cross-correlate to find the round trip. The peak is where what was
