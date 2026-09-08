@@ -206,9 +206,9 @@ class Ear:
             self._say(state="error")
 
     def _load(self) -> None:
+        from sunday.audio import stt
         from sunday.audio.aec import Aec
         from sunday.audio.speaker import Speaker
-        from sunday.audio.stt import Moonshine
         from sunday.audio.vad import Vad
         from sunday.audio.wake import WakeWord
 
@@ -218,7 +218,7 @@ class Ear:
         self._listener = Listener(
             self.cfg, wake=wake, vad=Vad(sample_rate=self.cfg.audio.sample_rate)
         )
-        self._stt = Moonshine()
+        self._stt = stt.load(self.cfg)
         self._aec = Aec(
             frame=round(self.cfg.audio.sample_rate * 20 / 1000),
             delay_ms=self.cfg.audio.aec_delay_ms,

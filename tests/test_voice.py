@@ -370,3 +370,51 @@ def test_the_wake_word_does_not_fire_on_silence():
         if score is not None:
             best = max(best, score)
     assert best < 0.5
+
+
+# -- which transcriber ----------------------------------------------------
+
+
+def test_the_config_decides_which_transcriber_is_built(cfg):
+    """Two are kept because the measurement did not favour the default one,
+    and a switch you cannot flip is not a record of that."""
+    from sunday.audio import stt
+
+    cfg.models.stt = "moonshine-base"
+    assert stt.load.__module__ == "sunday.audio.stt"
+    assert models.transcriber(cfg) == models.MOONSHINE
+
+    cfg.models.stt = "parakeet-tdt-0.6b-v2"
+    assert models.transcriber(cfg) == models.PARAKEET
+
+
+def test_only_the_chosen_transcriber_is_downloaded(cfg):
+    """Fetching both is 900 MB to use one of them."""
+    cfg.models.stt = "parakeet-tdt-0.6b-v2"
+    keys = models.required(cfg)
+    assert set(models.PARAKEET) <= set(keys)
+    assert not set(models.MOONSHINE) & set(keys)
+
+    cfg.models.stt = "moonshine-base"
+    keys = models.required(cfg)
+    assert set(models.MOONSHINE) <= set(keys)
+    assert not set(models.PARAKEET) & set(keys)
+
+
+def test_the_parakeet_encoder_is_first_in_its_list():
+    """`onnx-asr` is handed the directory rather than the files, and the
+    encoder's key is how that directory is worked out."""
+    assert models.PARAKEET[0] == "parakeet/encoder-model.int8.onnx"
+    assert all(k.startswith("parakeet/") for k in models.PARAKEET)
+
+
+@needs_models
+def test_the_configured_transcriber_refuses_a_clip_with_no_word_in_it():
+    """Parakeet invents a filler word for a clip of 100 ms. At any length the
+    listener would actually send, both models return nothing for silence --
+    but the floor is what stops the short case ever arriving."""
+    from sunday.audio import stt
+
+    transcriber = stt.load(config.get())
+    assert transcriber.transcribe(np.zeros(stt.MIN_SAMPLES - 1, dtype=np.float32)) == ""
+    assert transcriber.transcribe(np.zeros(48000, dtype=np.float32)) == ""

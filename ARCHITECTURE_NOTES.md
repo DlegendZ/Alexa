@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–77 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–79 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1308,3 +1308,63 @@ mechanism whose whole job is to be invisible. The scaling stays, because it is w
 a smaller window degrade rather than break. But the shipped configuration must not be a
 configuration that needs it, or the file is a description of something that is not
 running.
+
+## 78. Parakeet TDT replaces Moonshine, against the benchmark rather than with it
+
+**Doc:** Stage 01 names Moonshine as the STT, at 0.50 GB, chosen because it is small
+and does not stream.
+**Code:** `[models] stt = "parakeet-tdt-0.6b-v2"` by default, `"moonshine-base"` still
+selectable, and `stt.load()` builds whichever is named. Only the chosen one is
+downloaded — fetching both is 900 MB to use one.
+**Why it is worth an entry:** this is the one decision in the file taken *against* the
+measurement rather than from it, and that should be visible.
+
+Four transcribers, eight labelled clips, clean and with noise added:
+
+| model | WER | ms/clip | at 15 dB | at 8 dB |
+| --- | --- | --- | --- | --- |
+| moonshine base | **0.0%** | **123** | **0.0%** | **0.0%** |
+| parakeet tdt 0.6b int8 | 2.6% | 704 | 2.6% | 2.6% |
+| whisper large-v3-turbo int8 | 0.0% | 5414 | 0.0% | 0.0% |
+| whisper small.en int8 | 2.6% | 1298 | 2.6% | 2.6% |
+
+Moonshine wins that outright, and it keeps winning on the clip the pipeline actually
+builds: 102 ms and `"What's the weather in Jakarta?"` against Parakeet's 238 ms and
+`"Surface what's the weather in Jakarta?"` — Parakeet renders the tail of the wake
+phrase that the pre-roll deliberately keeps, and Moonshine drops it. Parakeet's single
+error on the eight was joining a filename, `quarterlynotes.txt` for `quarterly
+notes.txt`, which matters for an assistant that opens files by name.
+
+**What the benchmark cannot see, which is the case for the change.** The eight clips are
+Windows SAPI speech: one synthetic voice, clean, US English, no accent and no room. A set
+the incumbent scores 0.0% on cannot discriminate — it can only fail a challenger. On the
+one recording of a real person in a real room, Parakeet was the only model of the four to
+get the wake phrase nearly right (`"Hey Jarface"` against both Whispers' `"HR face"`),
+and it is a 600M-parameter encoder against Moonshine base's 61M, at the top of the open
+ASR leaderboard where Moonshine does not appear.
+
+So the trade is about 130 ms a turn, and headroom on speech the test set does not
+contain. Both are kept because a switch you cannot flip is not a record of a decision,
+and if real use disagrees the line to change is one word in `config.toml`.
+
+**`onnx-asr` is the third library in this package with an excuse**, and it is Kokoro's
+excuse. What it supplies is not the model but the machinery: a mel front-end exported as
+its own graph, and a TDT decode loop that emits a token and a duration together and skips
+frames accordingly. That is a specific algorithm rather than glue. It brings numpy,
+onnxruntime and huggingface-hub, all already here — unlike NeMo, which is the supported
+way to run Parakeet and would bring torch.
+
+## 79. The spinning setting has to reach the sessions we do not build
+
+**Doc:** silent.
+**Code:** `audio/onnx.py` grew `options()` beside `session()`, and Kokoro and Parakeet
+are both constructed with it.
+**Why:** note 79's parent is the `input overflow` fix, and it was half applied. Turning
+off `session.intra_op.allow_spinning` fixed the two graphs this package builds itself and
+missed the two that libraries build — which are the *largest two*, the 325 MB
+synthesiser and the 652 MB encoder, and therefore exactly the ones capable of holding
+twenty cores hot long enough to starve the audio callback.
+
+The general shape: a setting that is a correctness requirement rather than a preference
+cannot live at the call sites, because the call sites you do not own will not have it.
+It lives in one function, and everything goes through that function.

@@ -24,18 +24,31 @@ from typing import Any
 _NO_SPIN = ("session.intra_op.allow_spinning", "0")
 
 
+def options(*, threads: int | None = 1) -> Any:
+    """The session options every model here is loaded with.
+
+    Separate from `session` because two of the four models are built by a
+    library rather than by us, and both of those take a `SessionOptions`. The
+    spinning setting has to reach them too, or the two largest graphs are
+    exactly the ones still holding the cores hot.
+    """
+    import onnxruntime as ort
+
+    opts = ort.SessionOptions()
+    opts.inter_op_num_threads = 1
+    if threads is not None:
+        opts.intra_op_num_threads = threads
+    opts.add_session_config_entry(*_NO_SPIN)
+    return opts
+
+
 def session(path: Path | str, *, threads: int | None = 1) -> Any:
     """One CPU session. `threads=None` means as many as the machine has."""
     import onnxruntime as ort
 
-    options = ort.SessionOptions()
-    options.inter_op_num_threads = 1
-    if threads is not None:
-        options.intra_op_num_threads = threads
-    options.add_session_config_entry(*_NO_SPIN)
     return ort.InferenceSession(
-        str(path), options, providers=["CPUExecutionProvider"]
+        str(path), options(threads=threads), providers=["CPUExecutionProvider"]
     )
 
 
-__all__ = ["session"]
+__all__ = ["options", "session"]

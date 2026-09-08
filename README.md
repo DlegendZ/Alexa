@@ -29,7 +29,7 @@ any directory, with no `PYTHONPATH` to remember:
 
 ### Voice, once more
 
-Speaking to it needs two extra packages and about 600 MB of models, which are
+Speaking to it needs a few extra packages and about 1 GB of models, which are
 not in the repo:
 
 ```powershell

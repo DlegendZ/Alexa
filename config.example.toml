@@ -12,6 +12,9 @@ thinking_budget = 2048
 # The airlock summariser. The only model that is not local, and it only ever
 # sees a cleared query plus text that was already public.
 summariser      = "deepseek-v4-flash"
+# Which transcriber. "moonshine-base" is 61M and ~123 ms a clip; parakeet is
+# 600M and ~704 ms, and the stronger model on every published benchmark.
+stt             = "parakeet-tdt-0.6b-v2"
 # Taken off the top before the memory slices are sized: the system prompt, the
 # tool schemas and the memory framing block, then room for the reply itself.
 overhead_tokens = 2400

@@ -30,6 +30,11 @@ _MOONSHINE = "https://huggingface.co/UsefulSensors/moonshine/resolve/main/onnx/m
 
 _SILERO = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/"
 
+#: Parakeet TDT 0.6B, exported to ONNX. The int8 encoder is 652 MB against the
+#: float export's 2.4 GB, and the difference did not show up in the word error
+#: rate, so int8 is what is fetched.
+_PARAKEET = "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/"
+
 #: Kokoro's ONNX export and its voice pack. 325 MB rather than the 1.2 GB the
 #: design budgeted for the full model, which leaves the VRAM plan with more
 #: room than it expected rather than less.
@@ -57,16 +62,34 @@ ASSETS: dict[str, Asset] = {
     "moonshine/encoder_model.onnx": Asset("moonshine/encoder_model.onnx", _MOONSHINE + "encoder_model.onnx", 80.8),
     "moonshine/decoder_model_merged.onnx": Asset("moonshine/decoder_model_merged.onnx", _MOONSHINE + "decoder_model_merged.onnx", 166.2),
     "moonshine/tokenizer.json": Asset("moonshine/tokenizer.json", _MOONSHINE + "tokenizer.json", 3.8),
+    "parakeet/encoder-model.int8.onnx": Asset("parakeet/encoder-model.int8.onnx", _PARAKEET + "encoder-model.int8.onnx", 652.2),
+    "parakeet/decoder_joint-model.int8.onnx": Asset("parakeet/decoder_joint-model.int8.onnx", _PARAKEET + "decoder_joint-model.int8.onnx", 9.0),
+    "parakeet/nemo128.onnx": Asset("parakeet/nemo128.onnx", _PARAKEET + "nemo128.onnx", 0.14),
+    "parakeet/vocab.txt": Asset("parakeet/vocab.txt", _PARAKEET + "vocab.txt", 0.01),
+    "parakeet/config.json": Asset("parakeet/config.json", _PARAKEET + "config.json", 0.01),
     "kokoro/kokoro-v1.0.onnx": Asset("kokoro/kokoro-v1.0.onnx", _KOKORO + "kokoro-v1.0.onnx", 325.5),
     "kokoro/voices-v1.0.bin": Asset("kokoro/voices-v1.0.bin", _KOKORO + "voices-v1.0.bin", 28.2),
 }
 
-#: What milestone 7 needs on disk before it can hear anything. The wake phrase
-#: is added by `required()`, because it is the one that depends on config.
+#: What hearing needs on disk, whichever transcriber is chosen. The wake phrase
+#: and the transcriber are added by `required()`, because both depend on config.
 VOICE_IN: tuple[str, ...] = (
     "wake/melspectrogram.onnx",
     "wake/embedding_model.onnx",
     "vad/silero_vad.onnx",
+)
+
+#: The two transcribers. `onnx-asr` is handed the *directory*, so the encoder's
+#: key is also how the loader is told where to look -- keep it first.
+PARAKEET: tuple[str, ...] = (
+    "parakeet/encoder-model.int8.onnx",
+    "parakeet/decoder_joint-model.int8.onnx",
+    "parakeet/nemo128.onnx",
+    "parakeet/vocab.txt",
+    "parakeet/config.json",
+)
+
+MOONSHINE: tuple[str, ...] = (
     "moonshine/encoder_model.onnx",
     "moonshine/decoder_model_merged.onnx",
     "moonshine/tokenizer.json",
@@ -100,9 +123,16 @@ VOICE_OUT: tuple[str, ...] = (
 )
 
 
+def transcriber(cfg: config.Config | None = None) -> tuple[str, ...]:
+    """The files the configured transcriber needs, and only those. Downloading
+    both is 900 MB to use one of them."""
+    cfg = cfg or config.get()
+    return MOONSHINE if cfg.models.stt == "moonshine-base" else PARAKEET
+
+
 def required(cfg: config.Config | None = None) -> list[str]:
     cfg = cfg or config.get()
-    keys = [*VOICE_IN, wake_key(cfg.wake.model)]
+    keys = [*VOICE_IN, wake_key(cfg.wake.model), *transcriber(cfg)]
     if cfg.tts.enabled:
         keys.extend(VOICE_OUT)
     return keys

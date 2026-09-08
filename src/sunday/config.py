@@ -62,6 +62,14 @@ class Models:
     context_tokens: int = 16384
     thinking_budget: int = 2048
     summariser: str = "deepseek-v4-flash"
+    #: Which transcriber. `parakeet-tdt-0.6b-v2` is a 600M-parameter
+    #: FastConformer with a token-and-duration transducer; `moonshine-base` is
+    #: 61M and measurably faster on short English commands -- 123 ms a clip
+    #: against 704, and it was the more accurate of the two on the only
+    #: labelled set available here. Parakeet is the stronger model on every
+    #: published benchmark and on the one real recording, so this is a bet on
+    #: speech the set does not contain, paid for in latency.
+    stt: str = "parakeet-tdt-0.6b-v2"
     #: What no memory slice pays for: the system prompt, the bound tool
     #: schemas, the memory framing block, and the standing system lines the
     #: runtime adds every turn -- which folders are open, and what asks before
