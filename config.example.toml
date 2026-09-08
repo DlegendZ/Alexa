@@ -38,9 +38,16 @@ model       = "hey_jarvis"
 threshold   = 0.3
 cooldown_ms = 1500
 
+[tts]
+enabled  = true
+voice    = "af_heart"   # 54 ship in one file; --voices lists them
+speed    = 1.0
+language = "en-us"
+
 [echo]
 speech_threshold_while_speaking = 0.8
 transcript_similarity_cutoff    = 0.6
+barge_in_ms                     = 96   # 3 VAD windows; under the 100 ms target
 
 [files]
 # Each root can be a bare path, or a table with the name you call it by.

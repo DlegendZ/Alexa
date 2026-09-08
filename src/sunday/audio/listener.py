@@ -73,7 +73,7 @@ class Clip:
 class VoiceEvent:
     """Something the listener wants said out loud to the rest of the app."""
 
-    kind: Literal["wake", "level", "clip", "dropped"]
+    kind: Literal["wake", "level", "clip", "dropped", "barge_in"]
     score: float = 0.0
     rms: float = 0.0
     clip: Clip | None = None
@@ -130,6 +130,10 @@ class Listener:
         #: and the question is longer than the silence that ends a clip.
         self._live_speech = 0
         self._preroll_samples = 0
+        #: Consecutive speech windows heard while Sunday is talking. Layer 2
+        #: wants a sustained burst, not a frame: residual echo is quiet and
+        #: choppy, a person interrupting is loud and continuous.
+        self._burst = 0
 
     # -- units ----------------------------------------------------------
 
@@ -158,7 +162,12 @@ class Listener:
 
         if self.phase == "sleeping":
             self._preroll.append(block)
-            self._listen_for_wake(block, events)
+            if self.speaking:
+                # Barge-in needs no wake word. You are already talking to it.
+                self._listen_for_barge_in(block, events)
+            else:
+                self._burst = 0
+                self._listen_for_wake(block, events)
         else:
             self._record(block, events)
         return events
@@ -188,6 +197,32 @@ class Listener:
                 self.open(from_wake=True)
                 return
 
+    def _listen_for_barge_in(self, block: np.ndarray, events: list[VoiceEvent]) -> None:
+        """Talking over it. The most latency-sensitive moment in the system.
+
+        This is the same VAD, at the raised threshold, and the burst length is
+        what separates a person from what is left of Sunday's own voice after
+        layer 1. Nothing has to wake up for it -- the VAD has been running the
+        whole time, which is why the target is under 100 ms at all.
+        """
+        if self._vad is None:
+            return
+        self._vad_buffer = np.concatenate([self._vad_buffer, block])
+        needed = max(1, round(self.cfg.echo.barge_in_ms / (vad_module.WINDOW * 1000 / self.rate)))
+        while self._vad_buffer.size >= vad_module.WINDOW:
+            window = self._vad_buffer[: vad_module.WINDOW]
+            self._vad_buffer = self._vad_buffer[vad_module.WINDOW :]
+            if self._vad.probability(window) >= self._threshold():
+                self._burst += 1
+            else:
+                self._burst = 0
+                continue
+            if self._burst >= needed:
+                events.append(VoiceEvent(kind="barge_in"))
+                self._burst = 0
+                self.open()
+                return
+
     def open(self, *, from_wake: bool = False) -> None:
         """Start recording without waiting for the phrase.
 
@@ -206,6 +241,7 @@ class Listener:
         self._last_speech = None
         self._live_speech = 0
         self._preroll_samples = 0
+        self._burst = 0
         self._vad_buffer = np.zeros(0, dtype=np.float32)
         self._cooldown_samples = self._samples(self.cfg.wake.cooldown_ms)
         if self._vad is not None:
@@ -337,6 +373,7 @@ class Listener:
         self._last_speech = None
         self._live_speech = 0
         self._preroll_samples = 0
+        self._burst = 0
         self._vad_buffer = np.zeros(0, dtype=np.float32)
         self._wake_buffer = np.zeros(0, dtype=np.float32)
         self._preroll.clear()

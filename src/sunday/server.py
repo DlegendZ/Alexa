@@ -212,6 +212,8 @@ class Sidecar:
             for pending in list(self._pending.values()):
                 pending.approved = False
                 pending.event.set()
+            if self._ear is not None:
+                self._ear.hush()
             self.runtime.cancel()
         elif kind == "shutdown":
             await self.stop()
@@ -247,6 +249,7 @@ class Sidecar:
             self.runtime.cfg,
             on_event=self._from_ear,
             on_transcript=self._heard,
+            on_barge_in=self._barged_in,
         )
         self._ear.set_muted(self.muted)
         self._ear.start()
@@ -273,6 +276,17 @@ class Sidecar:
             # The sidecar shut down while the ear was mid-frame. Nothing to
             # tell, and nobody left to tell it to.
             pass
+
+    def _barged_in(self) -> None:
+        """Someone talked over it. Playback and the TTS queue are already
+        dealt with inside the ear; what is left is the turn itself.
+
+        `Runtime.cancel` is safe to call when nothing is running -- it sets a
+        flag the next turn clears -- so this does not have to know whether the
+        reply it interrupted had finished.
+        """
+        self.runtime.cancel()
+        self._from_ear({"type": "notice", "text": "stopped, you were talking"})
 
     def _heard(self, text: str) -> None:
         """One transcript. Goes in exactly as if it had been typed."""
@@ -347,7 +361,7 @@ class Sidecar:
                         text,
                         modality=modality,
                         on_token=lambda t: push({"type": "token", "text": t}),
-                        on_sentence=lambda s: push({"type": "sentence", "text": s}),
+                        on_sentence=self._speak,
                         on_event=push,
                         on_confirm=confirm,
                     )
@@ -366,6 +380,27 @@ class Sidecar:
                 await self._broadcast(event)
             await task
             await self._broadcast({"type": "state", "value": "idle"})
+
+    def _speak(self, sentence: str) -> None:
+        """The splitter's second sink. It goes to the clients either way; when
+        there is an ear attached it also goes to the speaker, one sentence at a
+        time, while the model is still writing the next one."""
+        ear = self._ear
+        if ear is not None:
+            ear.say(sentence)
+        loop = self._loop
+        if loop is None:
+            return
+        try:
+            loop.call_soon_threadsafe(
+                lambda: self._relays.add(
+                    asyncio.create_task(
+                        self._broadcast({"type": "sentence", "text": sentence})
+                    )
+                )
+            )
+        except RuntimeError:
+            pass
 
     # -- sending --------------------------------------------------------
 

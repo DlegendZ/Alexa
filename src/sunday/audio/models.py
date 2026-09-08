@@ -30,6 +30,11 @@ _MOONSHINE = "https://huggingface.co/UsefulSensors/moonshine/resolve/main/onnx/m
 
 _SILERO = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/"
 
+#: Kokoro's ONNX export and its voice pack. 325 MB rather than the 1.2 GB the
+#: design budgeted for the full model, which leaves the VRAM plan with more
+#: room than it expected rather than less.
+_KOKORO = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
+
 
 @dataclass(frozen=True)
 class Asset:
@@ -52,6 +57,8 @@ ASSETS: dict[str, Asset] = {
     "moonshine/encoder_model.onnx": Asset("moonshine/encoder_model.onnx", _MOONSHINE + "encoder_model.onnx", 80.8),
     "moonshine/decoder_model_merged.onnx": Asset("moonshine/decoder_model_merged.onnx", _MOONSHINE + "decoder_model_merged.onnx", 166.2),
     "moonshine/tokenizer.json": Asset("moonshine/tokenizer.json", _MOONSHINE + "tokenizer.json", 3.8),
+    "kokoro/kokoro-v1.0.onnx": Asset("kokoro/kokoro-v1.0.onnx", _KOKORO + "kokoro-v1.0.onnx", 325.5),
+    "kokoro/voices-v1.0.bin": Asset("kokoro/voices-v1.0.bin", _KOKORO + "voices-v1.0.bin", 28.2),
 }
 
 #: What milestone 7 needs on disk before it can hear anything. The wake phrase
@@ -86,9 +93,19 @@ def wake_key(phrase: str) -> str:
     return f"wake/{phrase.strip().lower().replace(' ', '_')}.onnx"
 
 
+#: What milestone 8 adds: the synthesiser and its voices.
+VOICE_OUT: tuple[str, ...] = (
+    "kokoro/kokoro-v1.0.onnx",
+    "kokoro/voices-v1.0.bin",
+)
+
+
 def required(cfg: config.Config | None = None) -> list[str]:
     cfg = cfg or config.get()
-    return [*VOICE_IN, wake_key(cfg.wake.model)]
+    keys = [*VOICE_IN, wake_key(cfg.wake.model)]
+    if cfg.tts.enabled:
+        keys.extend(VOICE_OUT)
+    return keys
 
 
 def path_for(key: str) -> Path:

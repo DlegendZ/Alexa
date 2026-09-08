@@ -50,15 +50,18 @@ class FakeEar:
 
     made: list["FakeEar"] = []
 
-    def __init__(self, cfg, *, on_event=None, on_transcript=None):
+    def __init__(self, cfg, *, on_event=None, on_transcript=None, on_barge_in=None):
         self.cfg = cfg
         self.on_event = on_event
         self.on_transcript = on_transcript
+        self.on_barge_in = on_barge_in
         self.ready = True
         self.started = False
         self.stopped = False
         self.muted = False
         self.triggered = 0
+        self.said: list[str] = []
+        self.hushed = 0
         FakeEar.made.append(self)
 
     def start(self):
@@ -73,13 +76,22 @@ class FakeEar:
     def trigger(self):
         self.triggered += 1
 
+    def say(self, sentence):
+        self.said.append(sentence)
+
+    def hush(self):
+        self.hushed += 1
+
     # -- what the real ear does from its own thread ---------------------
 
-    def say(self, event):
+    def emit(self, event):
         self.on_event(event)
 
     def heard(self, text):
         self.on_transcript(text)
+
+    def barge_in(self):
+        self.on_barge_in()
 
 
 @pytest.fixture
@@ -471,7 +483,7 @@ async def test_the_ear_can_talk_to_the_socket_from_its_own_thread(sidecar):
     await _recv(ws)
     ear = FakeEar.made[0]
 
-    await asyncio.to_thread(ear.say, {"type": "level", "rms": 0.42})
+    await asyncio.to_thread(ear.emit, {"type": "level", "rms": 0.42})
     assert await _recv(ws) == {"type": "level", "rms": 0.42}
     await ws.close()
 
@@ -509,4 +521,70 @@ async def test_muting_reaches_the_capture_stream(sidecar):
     await ws.send(json.dumps({"type": "set_mute", "muted": True}))
     assert await _recv(ws) == {"type": "state", "value": "muted"}
     assert FakeEar.made[0].muted is True
+    await ws.close()
+
+
+# -- voice out and barge-in (milestones 8 and 9) --------------------------
+
+
+@pytest.mark.asyncio
+async def test_sentences_reach_the_speaker_as_well_as_the_clients(sidecar):
+    """The splitter's second sink now has two readers, and they must not
+    diverge -- what is shown and what is spoken are the same text."""
+    _, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await _recv(ws)
+    ear = FakeEar.made[0]
+
+    await ws.send(json.dumps({"type": "text_input", "text": "say something"}))
+    messages = await _drain(ws)
+
+    spoken = [m["text"] for m in messages if m["type"] == "sentence"]
+    assert spoken, [m["type"] for m in messages]
+    assert ear.said == spoken
+
+
+@pytest.mark.asyncio
+async def test_talking_over_it_stops_it_and_cancels_the_turn(sidecar):
+    """Barge-in. Playback and the queue are the ear's problem; the turn is
+    the sidecar's, and the person gets told which of the two happened."""
+    side, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await _recv(ws)
+    ear = FakeEar.made[0]
+
+    cancelled = []
+    side.runtime.cancel = lambda: cancelled.append(True)  # type: ignore[method-assign]
+
+    await asyncio.to_thread(ear.barge_in)
+    for _ in range(20):
+        message = await _recv(ws)
+        if message["type"] == "notice":
+            assert "you were talking" in message["text"]
+            break
+    else:  # pragma: no cover - only if the notice never arrives
+        raise AssertionError("no notice after barge-in")
+    assert cancelled == [True]
+
+
+@pytest.mark.asyncio
+async def test_the_stop_button_also_stops_the_voice(sidecar):
+    """`cancel` is the same event arriving from the other side of the room."""
+    _, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await _recv(ws)
+
+    await ws.send(json.dumps({"type": "cancel"}))
+    await ws.send(json.dumps({"type": "ping"}))
+    assert await _recv(ws) == {"type": "pong"}
+    assert FakeEar.made[0].hushed == 1
     await ws.close()

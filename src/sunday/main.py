@@ -88,7 +88,12 @@ def _print_event(event: dict) -> None:
         print(f"{RED}  · {event['text']}{RESET}", flush=True)
 
 
-def _listen(cfg: config.Config, inbox: "queue.Queue[Heard | None]") -> object | None:
+def _listen(
+    cfg: config.Config,
+    inbox: "queue.Queue[Heard | None]",
+    *,
+    on_barge_in=None,
+) -> object | None:
     """Open the microphone, if this run asked for it and can have it.
 
     Returns the ear so it can be stopped, or None with the reason printed --
@@ -118,10 +123,16 @@ def _listen(cfg: config.Config, inbox: "queue.Queue[Heard | None]") -> object | 
         elif kind == "error":
             print(f"{RED}  · {event['text']}{RESET}", flush=True)
 
-    ear = Ear(cfg, on_event=on_event, on_transcript=lambda t: inbox.put(("voice", t)))
+    ear = Ear(
+        cfg,
+        on_event=on_event,
+        on_transcript=lambda t: inbox.put(("voice", t)),
+        on_barge_in=on_barge_in,
+    )
     ear.start()
     phrase = cfg.wake.model.replace("_", " ") if cfg.wake.enabled else "the mic"
-    print(f"{GREY}Voice is on. Say \"{phrase}\" and then ask.{RESET}")
+    talks = "It talks back" if cfg.tts.enabled else "Voice out is off in config"
+    print(f'{GREY}Voice is on. Say "{phrase}" and then ask. {talks}.{RESET}')
     return ear
 
 
@@ -152,7 +163,11 @@ def main() -> int:
     print(f"{GREY}Type to talk. Ctrl-C or 'exit' to quit.{RESET}\n")
 
     inbox: "queue.Queue[Heard | None]" = queue.Queue()
-    ear = _listen(cfg, inbox) if "--voice" in sys.argv[1:] else None
+    ear = (
+        _listen(cfg, inbox, on_barge_in=runtime.cancel)
+        if "--voice" in sys.argv[1:]
+        else None
+    )
 
     def typing() -> None:
         while True:
@@ -200,6 +215,7 @@ def main() -> int:
             text,
             modality=modality,
             on_token=on_token,
+            on_sentence=ear.say if ear is not None else None,
             on_event=_print_event,
             on_confirm=_confirm,
         )

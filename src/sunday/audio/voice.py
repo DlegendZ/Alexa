@@ -1,21 +1,32 @@
-"""The ear: microphone to listener to Moonshine to one string.
+"""The ear and the mouth: microphone to text, and sentences back to sound.
 
-This is where the four pieces are actually wired together, and it is the last
-file in the package that knows anything about audio. What leaves here is text,
-and text goes into the graph exactly as if it had been typed.
+This is where the pieces are actually wired together, and it is the last file
+in the package that knows anything about audio. What leaves here is text, and
+text goes into the graph exactly as if it had been typed.
 
-It owns one thread. The models load on it rather than in the constructor, so
-starting the ear never blocks the socket -- a quarter of a gigabyte of ONNX
-takes a second or two to come up, and the sidecar has to stay answerable while
-it does. Until they are loaded, `ready` is false and the state says so.
+It owns one thread for listening and hands the speaker its own. The models load
+on the listening thread rather than in the constructor, so starting the ear
+never blocks the socket -- a third of a gigabyte of ONNX takes a second or two
+to come up, and the sidecar has to stay answerable while it does. Until they
+are loaded, `ready` is false and the state says so.
+
+The mouth lives here rather than beside it because the three layers of echo
+control all cross between them. Layer 1 needs the exact samples that went to
+the speaker, layer 2 needs to know when it is playing, and layer 3 needs to
+know what it said. Two objects that have to agree about all three at every
+moment are one object with a seam drawn through it.
 """
 
 from __future__ import annotations
 
 import threading
+from collections import deque
 from typing import Any, Callable
 
+import numpy as np
+
 from sunday import config
+from sunday.audio import echo as echo_check
 from sunday.audio import models
 from sunday.audio.capture import Microphone, NoAudio
 from sunday.audio.listener import Clip, Listener
@@ -33,10 +44,14 @@ class Ear:
         *,
         on_event: EventSink | None = None,
         on_transcript: TranscriptSink | None = None,
+        on_barge_in: Callable[[], None] | None = None,
     ) -> None:
         self.cfg = cfg or config.get()
         self._on_event = on_event
         self._on_transcript = on_transcript
+        #: Called when someone talks over Sunday. Playback and the queue are
+        #: already dealt with here; what this has to do is cancel the turn.
+        self._on_barge_in = on_barge_in
 
         self.ready = False
         self.error: str | None = None
@@ -46,9 +61,13 @@ class Ear:
         self._mic: Microphone | None = None
         self._listener: Listener | None = None
         self._stt: Any = None
-        #: What Kokoro is saying right now, for the transcript check. Set by
-        #: the speaker in milestone 8; read here and nowhere else.
-        self.spoken_now = ""
+        self._speaker: Any = None
+        self._aec: Any = None
+        #: The last few things Kokoro said, for the transcript check. A few
+        #: rather than one: transcription finishes after playback has moved on,
+        #: so the sentence that came back through the room is usually the one
+        #: before the one being spoken now.
+        self._spoken: deque[str] = deque(maxlen=3)
 
     # -- lifecycle ------------------------------------------------------
 
@@ -61,6 +80,9 @@ class Ear:
 
     def stop(self) -> None:
         self._stop.set()
+        if self._speaker is not None:
+            self._speaker.close()
+            self._speaker = None
         if self._mic is not None:
             self._mic.stop()
         thread, self._thread = self._thread, None
@@ -84,11 +106,36 @@ class Ear:
             self._thread = None
             self.start()
 
-    def set_speaking(self, speaking: bool, *, sentence: str = "") -> None:
-        """Raises the VAD bar while Kokoro plays -- see Echo control."""
-        self.spoken_now = sentence
+    # -- the mouth ------------------------------------------------------
+
+    def say(self, sentence: str) -> None:
+        """One sentence, spoken. Queued; this returns straight away."""
+        if self._speaker is not None and self.cfg.tts.enabled:
+            self._speaker.say(sentence)
+
+    def hush(self) -> None:
+        """Stop talking now. Barge-in, cancellation, or a turn that broke."""
+        if self._speaker is not None:
+            self._speaker.stop()
+
+    def _on_speaker_state(self, state: str, sentence: str) -> None:
+        """Runs on the speaker's thread. Layer 2 of echo control is this line:
+        while Kokoro plays, the bar for what counts as a person goes up."""
         if self._listener is not None:
-            self._listener.speaking = speaking
+            self._listener.speaking = state == "speaking"
+        if state == "speaking" and sentence:
+            self._spoken.append(sentence)
+            self._emit({"type": "state", "value": "speaking"})
+        elif state == "error":
+            self._emit({"type": "error", "text": sentence})
+        else:
+            if self._aec is not None:
+                self._aec.silence()
+
+    def _on_played(self, block: np.ndarray) -> None:
+        """Layer 1's reference, and it is bit-exact because we made it."""
+        if self._aec is not None:
+            self._aec.played(block)
 
     def trigger(self) -> None:
         """Push to talk: the global hotkey and the mic button both land here."""
@@ -122,6 +169,10 @@ class Ear:
         for frame in self._mic.frames():
             if self._stop.is_set():
                 break
+            # Layer 1 first, and unconditionally. When nothing is playing there
+            # is no reference to align and the frame comes back untouched.
+            if self._aec is not None:
+                frame = self._aec.process(frame)
             for event in self._listener.frame(frame):
                 self._handle(event)
 
@@ -133,6 +184,8 @@ class Ear:
             self._say(state="error")
 
     def _load(self) -> None:
+        from sunday.audio.aec import Aec
+        from sunday.audio.speaker import Speaker
         from sunday.audio.stt import Moonshine
         from sunday.audio.vad import Vad
         from sunday.audio.wake import WakeWord
@@ -140,9 +193,21 @@ class Ear:
         wake = None
         if self.cfg.wake.enabled:
             wake = WakeWord(self.cfg.wake.model, threshold=self.cfg.wake.threshold)
-        self._listener = Listener(self.cfg, wake=wake, vad=Vad(sample_rate=self.cfg.audio.sample_rate))
+        self._listener = Listener(
+            self.cfg, wake=wake, vad=Vad(sample_rate=self.cfg.audio.sample_rate)
+        )
         self._stt = Moonshine()
+        self._aec = Aec(
+            frame=round(self.cfg.audio.sample_rate * 20 / 1000),
+            delay_ms=self.cfg.audio.aec_delay_ms,
+            rate=self.cfg.audio.sample_rate,
+        )
         self._mic = Microphone(self.cfg, on_error=self._device_trouble)
+        if self.cfg.tts.enabled:
+            self._speaker = Speaker(
+                self.cfg, on_played=self._on_played, on_state=self._on_speaker_state
+            )
+            self._speaker.start()
 
     # -- events ---------------------------------------------------------
 
@@ -159,8 +224,18 @@ class Ear:
             # same bug as a trace line that is written and never emitted.
             self._emit({"type": "notice", "text": f"heard nothing usable: {event.why}"})
             self._emit({"type": "state", "value": "idle"})
+        elif event.kind == "barge_in":
+            self._barge_in()
         elif event.kind == "clip" and event.clip is not None:
             self._transcribe(event.clip)
+
+    def _barge_in(self) -> None:
+        """Talking over it. Playback stops, the queue is flushed, the turn is
+        cancelled, and the clip that is now recording becomes the next one."""
+        self.hush()
+        self._emit({"type": "state", "value": "listening"})
+        if self._on_barge_in is not None:
+            self._on_barge_in()
 
     def _transcribe(self, clip: Clip) -> None:
         self._say(state="transcribing")
@@ -181,6 +256,19 @@ class Ear:
             })
             self._say(state="idle")
             return
+
+        # Layer 3. Whatever survived the canceller and the raised bar still
+        # has to not be something Sunday said a moment ago.
+        for sentence in reversed(self._spoken):
+            if echo_check.is_echo(
+                text, sentence, cutoff=self.cfg.echo.transcript_similarity_cutoff
+            ):
+                self._emit({
+                    "type": "notice",
+                    "text": "ignored what sounded like my own voice coming back",
+                })
+                self._say(state="idle")
+                return
 
         self._emit({"type": "partial", "text": text, "final": True})
         if self._on_transcript is not None:

@@ -124,9 +124,28 @@ class Wake:
 
 
 @dataclass
+class Tts:
+    """Voice out. The model is Kokoro, which is not a choice -- these are."""
+
+    enabled: bool = True
+    #: 54 voices ship in one 28 MB file; `python -m sunday.audio.check --voices`
+    #: lists them. `af_heart` is the default because it is the clearest of the
+    #: American female set at speed 1.0, and clarity is what survives a room.
+    voice: str = "af_heart"
+    speed: float = 1.0
+    language: str = "en-us"
+
+
+@dataclass
 class Echo:
     speech_threshold_while_speaking: float = 0.8
     transcript_similarity_cutoff: float = 0.6
+    #: Layer 2 wants "a sustained burst rather than a single frame", and this
+    #: is how long a burst is. Three Silero windows at 16 kHz, which is 96 ms
+    #: -- chosen against the sub-100 ms target for first syllable to silence,
+    #: not rounded to something prettier. Residual echo is quiet and choppy and
+    #: rarely holds three windows; a person interrupting always does.
+    barge_in_ms: int = 96
 
 
 @dataclass
@@ -286,6 +305,7 @@ class Config:
     models: Models = field(default_factory=Models)
     audio: Audio = field(default_factory=Audio)
     wake: Wake = field(default_factory=Wake)
+    tts: Tts = field(default_factory=Tts)
     echo: Echo = field(default_factory=Echo)
     files: Files = field(default_factory=Files)
     memory: Memory = field(default_factory=Memory)
