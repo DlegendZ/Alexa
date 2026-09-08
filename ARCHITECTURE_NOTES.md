@@ -763,3 +763,44 @@ The streaming case is the fiddly one. A bullet is only a bullet at the start of 
 a token boundary falls wherever the model put it, often between the newline and the dash. So
 the stripper tracks whether it is at a line start and holds back at most seven characters,
 never past the end of a line, until it can tell.
+
+## 51. The 8k window was a guess, and it was costing the memory slices
+
+**Doc:** Stage 02 — "The 8k window, split five ways", and `context_tokens = 8192` in the
+config block.
+**Code:** 32768.
+**Why:** 8192 was chosen before anything was measured, and never revisited. The model's own
+limit is 262144. Measured on the 6 GB card this was built for:
+
+| num_ctx | VRAM | throughput |
+| --- | --- | --- |
+| 8192 | 3286 MiB | 63.5 tok/s |
+| 16384 | 3396 MiB | — |
+| 32768 | 3546 MiB | 63.1 tok/s |
+| 65536 | 3960 MiB | — |
+
+Four times the window for 260 MiB and no measurable speed. Reserved KV cache that is never
+filled is nearly free, and prompt processing scales with the tokens a turn actually uses —
+which stays around 3–5k either way — not with the size of the window they sit in.
+
+What 8192 was actually costing: `slices()` was scaling every allowance by 0.61 to fit the
+overhead and the reply underneath it. The recent-turns slice was 1884 tokens where the
+config asked for 3072, and the tool slice 1256 where it asked for 2048. The numbers in
+config.toml were being quietly overruled by arithmetic. At 32768 nothing is scaled: the five
+slices are what they say they are, which is 63% more memory per turn for the price of a
+config value.
+
+This also retires the framing in note 43 and note 47 that the tool schemas were crowding
+out memory. At 8192 an overhead of 2400 was 29% of everything; at 32768 it is 7%. Adding
+the calendar and mail tools is now an ordinary decision rather than a budget crisis.
+
+The slices themselves are deliberately left where they were. There is room to grow them, and
+that is a separate question with a real trade in it: more recent turns means slower prompt
+processing and a 2b whose attention is already thin spread thinner. The window being wrong
+is a fact; the slices being right is a judgement, and this note only fixes the fact.
+
+**How it was missed for so long:** every test asserted the slices fit *under* the configured
+window, which they always did — because `scaled_to` made them fit. Nothing asserted the
+window was the right size, because nothing could: that is a hardware measurement, not an
+invariant. The lesson is narrow and worth keeping. A number that no test can check is a
+number nobody rechecks.

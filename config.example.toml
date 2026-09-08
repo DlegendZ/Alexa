@@ -7,7 +7,7 @@
 [models]
 agent           = "qwen3.5:2b"
 ollama_url      = "http://127.0.0.1:11434"
-context_tokens  = 8192
+context_tokens  = 32768      # measured: 32k costs 260 MiB more VRAM and no speed
 thinking_budget = 1024
 # The airlock summariser. The only model that is not local, and it only ever
 # sees a cleared query plus text that was already public.

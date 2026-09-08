@@ -43,7 +43,16 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/ant
 class Models:
     agent: str = "qwen3.5:2b"
     ollama_url: str = "http://127.0.0.1:11434"
-    context_tokens: int = 8192
+    #: 32768, not because the model tops out there -- it goes to 262144 --
+    #: but because this is where the trade stops being free. Measured on the
+    #: 6 GB card this was built for: 8192 costs 3286 MiB and 32768 costs 3546,
+    #: at the same 63 tokens a second. Reserved KV that is never filled is
+    #: nearly free, and prompt processing scales with the tokens a turn
+    #: actually uses, not with the size of the window they sit in.
+    #:
+    #: 8192 was chosen before any of that was measured, and it cost more than
+    #: it looked: the slices were being scaled down by 0.61 to fit under it.
+    context_tokens: int = 32768
     thinking_budget: int = 1024
     summariser: str = "deepseek-v4-flash"
     #: What no memory slice pays for: the system prompt, the bound tool
