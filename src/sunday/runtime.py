@@ -789,6 +789,10 @@ class Runtime:
             self._trace(trace.intent_trimmed(cleared.intent_words_dropped))
 
         self._emit(type="query", text=cleared.query)
+        # The one line in the whole trace about what actually left the
+        # machine. It was written and never called, so the backstage
+        # narration was silent on the only step that crosses the airlock.
+        self._trace(trace.query_left(cleared.query))
         # What is left for the whole turn, not for this lookup: the cap is on
         # outbound requests, so a second lookup inherits what the first spent.
         remaining = self.cfg.external.max_hops - flags.hops

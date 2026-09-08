@@ -308,10 +308,10 @@ def test_a_hard_linked_alias_counts_as_the_same_file(sandbox):
     assert source.read_text(encoding="utf-8") == "precious"
 
 
-def test_a_trailing_slash_means_a_folder_even_before_it_exists(sandbox):
-    """The model writes `E:/Work/Sunday/archive/` when it means a folder.
-    Without this that becomes a *file* named `archive`, which then blocks the
-    folder from ever being created -- a mess nobody thinks to look for."""
+def test_a_trailing_slash_names_the_folder_not_a_file_called_archive(sandbox):
+    """The model writes `E:/Work/Sunday/archive/` when it means the folder.
+    Without the trailing-slash reading that is a *file* named `archive`, and
+    the move quietly puts the contents there instead of inside it."""
     (sandbox / "gold.txt").write_text("sell at 7777", encoding="utf-8")
     (sandbox / "archive").mkdir()
     out = files.move_file(str(sandbox / "gold.txt"), str(sandbox / "archive") + "/")

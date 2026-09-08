@@ -58,6 +58,28 @@ async def sidecar(cfg, tmp_path, monkeypatch):
     await asyncio.wait_for(task, timeout=5)
 
 
+#: How long a test waits for the *next* message before deciding the sidecar is
+#: stuck. Generous on purpose: it is a silence budget, not a turn budget, so a
+#: longer one costs nothing when the test passes and only matters when it was
+#: going to fail anyway. Ten seconds was tight enough that a run competing with
+#: a live Ollama probe timed out mid-turn, and reported it as `TimeoutError`
+#: with nothing to say about which message never came.
+SILENCE_S = 30
+
+
+async def _recv(ws, expecting="a message", seen=None):
+    """One message, or an assertion that says what was being waited for."""
+    try:
+        return json.loads(await asyncio.wait_for(ws.recv(), timeout=SILENCE_S))
+    except asyncio.TimeoutError:  # pragma: no cover - only on a starved box
+        got = [m.get("type") for m in (seen or [])]
+        raise AssertionError(
+            f"waited {SILENCE_S}s for {expecting} and nothing arrived. "
+            f"Messages so far: {got or 'none'}. The sidecar is stuck, or this "
+            f"machine is too busy to finish a turn in that time."
+        ) from None
+
+
 async def _connect(handshake, token="test-token"):
     ws = await websockets.connect(f"ws://127.0.0.1:{handshake['port']}")
     await ws.send(json.dumps({"type": "hello", "token": token}))
@@ -67,7 +89,7 @@ async def _connect(handshake, token="test-token"):
 async def _drain(ws, until="done", limit=200):
     out = []
     for _ in range(limit):
-        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        message = await _recv(ws, f"a {until!r} message", out)
         out.append(message)
         if message.get("type") == until:
             break
@@ -88,7 +110,7 @@ async def test_a_wrong_token_is_refused(sidecar):
     _, handshake = sidecar
     ws = await websockets.connect(f"ws://127.0.0.1:{handshake['port']}")
     await ws.send(json.dumps({"type": "hello", "token": "wrong"}))
-    message = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+    message = await _recv(ws)
     assert message == {"type": "error", "text": "bad token"}
     with pytest.raises(websockets.ConnectionClosed):
         await asyncio.wait_for(ws.recv(), timeout=5)
@@ -99,7 +121,7 @@ async def test_a_client_can_drive_a_whole_turn(sidecar):
     _, handshake = sidecar
     ws = await _connect(handshake)
 
-    ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+    ready = await _recv(ws)
     assert ready["type"] == "ready"
     assert json.loads(await ws.recv())["value"] == "idle"
 
@@ -124,7 +146,7 @@ async def test_ping_answers_pong(sidecar):
     ws = await _connect(handshake)
     await _drain(ws, until="state")
     await ws.send(json.dumps({"type": "ping"}))
-    assert json.loads(await asyncio.wait_for(ws.recv(), timeout=5)) == {"type": "pong"}
+    assert await _recv(ws) == {"type": "pong"}
     await ws.close()
 
 
@@ -150,7 +172,7 @@ async def test_an_unknown_message_is_an_error_not_a_crash(sidecar):
     ws = await _connect(handshake)
     await _drain(ws, until="state")
     await ws.send(json.dumps({"type": "nonsense"}))
-    message = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+    message = await _recv(ws)
     assert message["type"] == "error"
     await ws.send(json.dumps({"type": "ping"}))
     assert json.loads(await ws.recv())["type"] == "pong"
@@ -255,7 +277,7 @@ async def test_an_overwrite_can_actually_be_approved_over_the_socket(
 
     seen = []
     for _ in range(200):
-        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        message = await _recv(ws)
         seen.append(message)
         if message["type"] == "confirm":
             await ws.send(
@@ -288,14 +310,14 @@ async def test_cancel_sent_mid_turn_reaches_the_runtime(sidecar_with):
     await ws.send(json.dumps({"type": "text_input", "text": "say something long"}))
     # Wait for the reply to start, then interrupt it.
     while True:
-        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        message = await _recv(ws)
         if message["type"] == "token":
             break
     await ws.send(json.dumps({"type": "cancel"}))
 
     done = None
     for _ in range(200):
-        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        message = await _recv(ws)
         if message["type"] == "done":
             done = message
             break
@@ -313,14 +335,14 @@ async def test_a_ping_is_answered_while_a_turn_runs(sidecar_with):
 
     await ws.send(json.dumps({"type": "text_input", "text": "say something"}))
     while True:
-        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        message = await _recv(ws)
         if message["type"] == "token":
             break
 
     await ws.send(json.dumps({"type": "ping"}))
     order: list[str] = []
     for _ in range(200):
-        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        message = await _recv(ws)
         if message["type"] in {"pong", "done"}:
             order.append(message["type"])
         if message["type"] == "done":

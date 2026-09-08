@@ -48,6 +48,23 @@ def nearest_root(attempted: str) -> Path | None:
     return None
 
 
+def no_such_folder(parent) -> str:
+    """The refusal for a destination whose folder does not exist.
+
+    Shared by every tool that writes, because the rule is about Sunday and not
+    about one tool: asked to put a file in "the documents folder", the model
+    invented `E:/Work/Sunday/documents` three separate ways, and each time the
+    file ended up somewhere the next turn could not find it. A missing folder
+    is a question for the user, not a gap to fill.
+    """
+    listed = ", ".join(config.get().files.paths())
+    return (
+        f"error: there is no folder at {parent}, and Sunday does not create "
+        f"folders. The folders that exist for this are: {listed}. Use one of "
+        f"those exactly, or ask the user which they meant."
+    )
+
+
 def refused(attempted: str = "") -> str:
     """The refusal, with somewhere to go next.
 
@@ -213,12 +230,20 @@ def write_file(path: str, text: str) -> str:
     if target is None:
         return refused(path)
     if is_credential_path(target):
-        return "refused: will not write over a credential file"
+        return (
+            "refused: that is a credential file and Sunday will not write over "
+            "one, whatever it was asked. Tell the user plainly that the file "
+            "was left as it was, and do not try another path for it."
+        )
     if target.is_dir():
         return f"error: {path} is a directory"
+    if not target.parent.is_dir():
+        # `mkdir(parents=True)` lived here and made write_file the one tool
+        # that still built folders on a guess, while copy and move refused to.
+        # One rule, applied by whoever writes.
+        return no_such_folder(target.parent)
 
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
     except OSError as exc:
         return f"error: could not write {path} ({exc.strerror or exc})"
@@ -240,7 +265,11 @@ def delete_file(path: str) -> str:
     if target is None:
         return refused(path)
     if is_credential_path(target):
-        return "refused: will not delete a credential file"
+        return (
+            "refused: that is a credential file and Sunday will not delete "
+            "one. Tell the user plainly that it is still there, and that this "
+            "is a rule rather than a mistake."
+        )
     if target.is_dir():
         return (
             f"error: {path} is a folder, and Sunday only deletes single files. "
@@ -316,20 +345,13 @@ def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | st
     if dst is None:
         return refused(destination)
     if not dst.parent.is_dir():
-        # Never create a folder to make a move fit. Asked to move a file to
-        # "the documents folder", the model invented `E:/Work/Sunday/documents`
-        # three separate ways -- as a file, then as a folder, then as
-        # `documents/folder` -- and each time the original ended up somewhere
-        # the next turn could not find. A missing folder is a question for the
-        # user, not a gap to fill.
-        listed = ", ".join(config.get().files.paths())
-        return (
-            f"error: there is no folder at {dst.parent}, and Sunday does not "
-            f"create folders. The folders that exist for this are: {listed}. "
-            f"Use one of those exactly, or ask the user which they meant."
-        )
+        return no_such_folder(dst.parent)
     if is_credential_path(dst):
-        return f"refused: will not {verb} a file onto a credential path"
+        return (
+            f"refused: the destination is a credential file and Sunday will "
+            f"not {verb} anything onto one. Tell the user plainly that nothing "
+            f"was changed, and pick a different name if they want it there."
+        )
     if dst.is_dir():  # pragma: no cover - _landing only returns a dir's child
         return f"error: {destination} is a folder"
     if _same_file(src, dst):

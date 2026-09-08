@@ -52,10 +52,21 @@ def test_read_is_truncated_at_the_cap(sandbox):
     assert len(out) == 200 + len(files.TRUNCATED)
 
 
-def test_write_creates_parents_inside_the_root(sandbox):
+def test_write_refuses_a_folder_that_does_not_exist(sandbox):
+    """This test used to assert the opposite, and pinned the one place Sunday
+    still built folders on a guess. Copy and move already refused; write did
+    not, so the rule held for two tools out of three."""
     target = sandbox / "deep" / "new.txt"
     out = files.write_file(str(target), "hello")
-    assert out.startswith("wrote 5 characters")
+    assert out.startswith("error: there is no folder at")
+    assert "does not create folders" in out
+    assert not (sandbox / "deep").exists()
+
+
+def test_write_into_a_folder_that_exists_still_works(sandbox):
+    (sandbox / "deep").mkdir()
+    target = sandbox / "deep" / "new.txt"
+    assert files.write_file(str(target), "hello").startswith("wrote 5 characters")
     assert target.read_text(encoding="utf-8") == "hello"
 
 
@@ -109,7 +120,29 @@ def test_a_relative_path_still_cannot_leave_the_roots(sandbox, tmp_path):
     assert files.read_file("../secret.txt") == files.refused()
 
 
-def test_a_relative_path_that_exists_nowhere_can_still_be_created(sandbox):
+def test_a_relative_path_to_a_file_that_does_not_exist_yet_still_writes(sandbox):
+    """The relative-path reading has to work for a file being created, not
+    only for one already there -- resolve() has nothing on disk to match."""
+    (sandbox / "fresh").mkdir()
     out = files.write_file("fresh/new.txt", "hello")
     assert out.startswith("wrote 5 characters")
     assert (sandbox / "fresh" / "new.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_every_refusal_tells_the_model_what_to_say(sandbox):
+    """A refusal string is a script, not a status code. Two of them were bare
+    status -- "will not write over a credential file" -- and a bare refusal is
+    how `path is outside the configured roots` once got relayed to the user as
+    "C: isn't mounted"."""
+    (sandbox / ".env").write_text("KEY=1", encoding="utf-8")
+    (sandbox / "junk.txt").write_text("junk", encoding="utf-8")
+
+    refusals = [
+        files.write_file(str(sandbox / ".env"), "KEY=2"),
+        files.delete_file(str(sandbox / ".env")),
+        files.copy_file(str(sandbox / "junk.txt"), str(sandbox / ".env")),
+        files.read_file(str(sandbox / ".." / "outside.txt")),
+    ]
+    for out in refusals:
+        assert out.startswith("refused:"), out
+        assert "tell the user" in out.lower(), out

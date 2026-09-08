@@ -175,3 +175,26 @@ def test_a_write_argument_is_not_dumped_whole_into_the_margin():
     line = trace.tool_started("write_file", {"path": "x.txt", "text": "y" * 500}, "local")
     assert len(line.text) < 200
     assert "..." in line.text
+
+
+def test_the_query_that_left_the_machine_is_narrated(cfg, monkeypatch):
+    """The one line in the trace about what actually crossed the airlock. It
+    was written and never called, so the narration was silent on the only step
+    that leaves the machine."""
+    from sunday import web
+    from sunday.agent.llm import Reply, ToolCall
+    from sunday.runtime import EXTERNAL_TOOL
+
+    monkeypatch.setattr(web, "run", lambda q, budget=None: web.WebResult("public text", hops=1))
+
+    agent = Scripted(
+        [Reply(tool_calls=[ToolCall(EXTERNAL_TOOL, {"intent": "gold news"})])],
+        query="gold news",
+    )
+    events: list[dict] = []
+    Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "what is the gold news", on_event=events.append
+    )
+
+    said = [e["text"] for e in _traces(events, "tools")]
+    assert any("gold news" in t and "left this machine" in t for t in said), said

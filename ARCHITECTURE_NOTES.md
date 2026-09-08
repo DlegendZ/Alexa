@@ -856,3 +856,58 @@ and pushes it through both sinks so the text client, the speech client and memor
 string. The user sees a blank line where the answer goes, which reads as a crash rather than
 as a failure, and memory_write skips a turn that has no response — so there is not even a
 record of it having happened.
+
+## 55. `write_file` was the one tool still creating folders
+
+**Doc:** Stage 04, the rule block "Sunday does not create folders".
+**Code:** `files.no_such_folder` is now shared by `write_file`, `copy_file` and `move_file`,
+and `mkdir(parents=True)` is gone.
+**Why:** note 47 established the rule after the model invented `E:/Work/Sunday/documents`
+three separate ways, and the fix was applied to the transfer tools only. `write_file` went
+on calling `mkdir(parents=True, exist_ok=True)`, so the guarantee held for two tools out of
+three and the third would happily build a folder chain on a guess — the exact behaviour the
+rule exists to stop, reachable by the more common tool.
+
+Two tests had to change, and they were both asserting the old behaviour:
+`test_write_creates_parents_inside_the_root` existed specifically to pin folder creation.
+A test that encodes a violation is how a violation survives an audit, and this one had
+survived two.
+
+The rule now lives in one function rather than in each tool, because that is what stops the
+next tool from drifting.
+
+## 56. Two refusal strings were status codes, not scripts
+
+**Doc:** Stage 06, the rule block "A refusal string is a script, not a status code".
+**Code:** the credential refusals in `write_file`, `delete_file` and `_prepare` say what to
+tell the user.
+**Why:** `refused: will not write over a credential file` says what happened and nothing
+about what the person should hear. The lesson is already recorded — `refused: path is
+outside the configured roots` was relayed to a user as "C: isn't mounted" — and three
+strings had been written since without it. A test now walks every refusal in the sandbox and
+requires the words "tell the user" in each, so the next one cannot be written bare.
+
+## 57. The trace never said what left the machine
+
+**Doc:** Stage 10 — the backstage trace, "one line per step".
+**Code:** `runtime._ask_external` emits `trace.query_left` next to the `query` event.
+**Why:** `trace.query_left` was written, tested by eye once, and never called. Of every line
+in that module it is the one that matters most — the exact text that crossed the airlock —
+and the narration was silent on it while describing every local file read in detail. Found
+by diffing the functions the module defines against the ones the runtime emits, which is a
+check worth repeating: a trace line that is never called is indistinguishable from a step
+that never happens.
+
+## 58. A test that waits on the clock lies when the machine is busy
+
+**Doc:** nothing covered this.
+**Code:** `tests/test_server.py` waits through `_recv`, a 30-second *silence* budget that
+fails with the messages it did receive and what it was still waiting for.
+**Why:** `test_a_client_can_drive_a_whole_turn` failed twice in one session, both times in a
+run competing with a live Ollama probe, and reported `TimeoutError` with nothing else. The
+first failure cost an investigation that ended in "not reproduced in eleven runs"; the
+second only named itself because it happened to be captured in a file.
+
+The budget is on silence rather than on the turn, so raising it costs nothing when the test
+passes — it only waits longer in the case that was already going to fail. What it buys is a
+failure that says which message never arrived.
