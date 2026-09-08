@@ -156,8 +156,17 @@ class Echo:
     #:
     #: Measured by `python -m sunday.audio.check --echo`, which plays into your
     #: room, records the result, and prints the ratio echo alone produces.
-    #: The default is a few times a well-aligned canceller's residual; if it
-    #: interrupts itself, this is the number to raise.
+    #:
+    #: The margin is wider than it looks. Measured on this machine, speaking a
+    #: sentence through the speakers with the microphone open: what came back
+    #: was 0.0002 of what went out, because the capture device cancels its own
+    #: echo -- most laptop microphone arrays do. A person over the top of it
+    #: reaches about 0.7. So anywhere between those works, and 0.35 sits in the
+    #: middle rather than near either edge.
+    #:
+    #: On hardware that does *not* cancel for itself, the residual after layer
+    #: 1 is what this has to clear. Raise it if it interrupts itself; lower it
+    #: if talking over it stops working.
     barge_in_ratio: float = 0.35
     #: Layer 2 wants "a sustained burst rather than a single frame", and this
     #: is how long a burst is. Three Silero windows at 16 kHz, which is 96 ms

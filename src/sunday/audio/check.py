@@ -116,7 +116,22 @@ def measure_echo() -> int:
     tail = np.zeros(int(0.6 * 24000), dtype=np.float32)
     played = np.concatenate([lead, tone, tail])
 
-    print("Turn the volume to where you normally have it, and stay quiet.")
+    # Prove the microphone works before anything it fails to hear can be
+    # blamed on it. Silence has two causes here and they are opposite: a muted
+    # input, and a driver that cancels the speaker so well there is nothing
+    # left. Telling them apart afterwards is guesswork; asking first is not.
+    print("First, say anything at all for three seconds -- this is only to")
+    print("prove the microphone is live.\n")
+    alive = record(3)
+    voice_peak = float(np.abs(alive).max()) if alive.size else 0.0
+    print(f"  microphone peak {voice_peak:.4f}")
+    if voice_peak < QUIET_PEAK:
+        print("\n  nothing came through. The microphone is muted or something")
+        print("  else has it open -- fix that first, there is nothing to")
+        print("  measure until it can hear you.")
+        return 1
+
+    print("\nNow turn the volume to where you normally have it, and stay quiet.")
     print(f"Playing a sweep through {cfg.audio.output_device or 'the default output'}.\n")
 
     mic = Microphone(cfg, on_error=lambda text: print(f"  ! {text}"))
@@ -161,19 +176,22 @@ def measure_echo() -> int:
     peak = float(np.abs(heard).max())
     print(f"1. came back  {heard.size} samples, peak {peak:.5f}")
     if peak < SILENT_PEAK:
-        # Below this there is no room tone either, and a room always has some.
-        # That is a muted input rather than a quiet one, and it is worth
-        # separating: the fix is a switch, not the volume knob.
-        print("   that is digital silence -- not a quiet room, which would still")
-        print("   read around 0.003. The microphone is muted, or something else")
-        print("   has it open. Nothing downstream of here can be measured until")
-        print("   `python -m sunday.audio.check` shows a level while you talk.")
-        return 1
+        # The microphone answered a moment ago and hears nothing now. That is
+        # not a fault: it is a capture device doing its own echo cancellation,
+        # which most laptop microphone arrays do, and it removes the speaker
+        # before this ever sees it.
+        print(f"   and it heard you at {voice_peak:.4f} a moment ago, so it is working.")
+        print("   Your capture device cancels the speaker itself -- most laptop")
+        print("   microphone arrays do. There is no echo path left to measure,")
+        print("   and layer 1 has nothing to remove. Leave aec_delay_ms alone.")
+        print("\n   If it still interrupts itself, what it is hearing is the room")
+        print("   rather than its own voice, and [echo] barge_in_ratio is the")
+        print("   number to raise.")
+        return 0
     if peak < QUIET_ECHO_PEAK:
-        print("   the microphone can hear, but it did not hear the speaker. If")
-        print("   that is headphones, there is nothing here to measure and")
-        print("   nothing to cancel -- which is the good case. On speakers,")
-        print("   turn the volume up and run it again.")
+        print("   the microphone can hear, but it barely heard the speaker. On")
+        print("   headphones that is the good case and there is nothing to")
+        print("   cancel. On speakers, turn the volume up and run it again.")
         return 0
 
     # Cross-correlate to find the round trip. The peak is where what was
@@ -329,30 +347,43 @@ def main() -> int:
             f"   as a cough. Try [audio] vad_threshold = {suggestion} in config.toml."
         )
 
-    # What the pipeline would actually hand over: the speech, plus a margin,
-    # not the whole recording. Moonshine returns an empty string for a clip
-    # wrapped in silence, so transcribing the raw eight seconds answers a
-    # question nothing in the app ever asks.
-    from sunday.audio.listener import TRIM_MARGIN_MS
+    # Run the real listener over the recording, rather than transcribing the
+    # whole thing. What the app hands Moonshine is the clip *after* the wake
+    # word, trimmed to the speech -- and the difference is not cosmetic. On
+    # this machine the raw eight seconds came back as "HR face what's the
+    # weather in Jakarta" and the clip the app would send came back as
+    # "What's the weather in Jakarta?". Reporting the first reads as a
+    # transcriber that cannot spell, when it is a diagnostic asking a question
+    # nothing in the app ever asks.
+    from sunday.audio.listener import Listener
 
-    voiced = np.flatnonzero(scores >= cfg.audio.vad_threshold)
     stt = Moonshine()
-    if voiced.size:
-        margin = round(TRIM_MARGIN_MS * cfg.audio.sample_rate / 1000)
-        start = max(0, int(voiced[0]) * WINDOW - margin)
-        end = min(audio.size, (int(voiced[-1]) + 1) * WINDOW + margin)
-        clip = audio[start:end]
-    else:
-        clip = audio
+    listener = Listener(
+        cfg,
+        wake=WakeWord(cfg.wake.model, threshold=cfg.wake.threshold),
+        vad=Vad(sample_rate=cfg.audio.sample_rate),
+    )
+    clips = []
+    for start in range(0, audio.size - 320, 320):
+        for event in listener.frame(audio[start : start + 320]):
+            if event.kind == "clip" and event.clip is not None:
+                clips.append(event.clip)
+            elif event.kind == "dropped":
+                print(f"4. pipeline  dropped a clip: {event.why}")
 
-    started = time.perf_counter()
-    text = stt.transcribe(clip)
-    took = (time.perf_counter() - started) * 1000
-    print(f"4. moonshine {took:.0f} ms on {clip.size / cfg.audio.sample_rate:.1f}s -> {text!r}")
-    if not text:
-        print("   nothing came back. That is the transcriber, not the microphone.")
-        whole = stt.transcribe(audio)
-        print(f"   the untrimmed {audio.size / cfg.audio.sample_rate:.0f}s gives {whole!r}")
+    if not clips:
+        print("4. pipeline  no clip closed. Nothing would have been transcribed.")
+    for clip in clips:
+        started = time.perf_counter()
+        text = stt.transcribe(clip.audio)
+        took = (time.perf_counter() - started) * 1000
+        seconds = clip.audio.size / cfg.audio.sample_rate
+        print(f"4. pipeline  {took:.0f} ms on {seconds:.1f}s -> {text!r}")
+        if not text:
+            print("   nothing came back. That is the transcriber, not the microphone.")
+
+    whole = stt.transcribe(audio)
+    print(f"   (the raw {audio.size / cfg.audio.sample_rate:.0f}s, which the app never sends: {whole!r})")
 
     print(f"\nrecording kept at {_save(audio, cfg.audio.sample_rate)}")
     return 0
