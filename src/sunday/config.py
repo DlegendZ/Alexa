@@ -82,15 +82,44 @@ class Audio:
     aec_delay_ms: int = 60
     vad_threshold: float = 0.5
     vad_silence_ms: int = 700
+    #: Measured against the *speech* in a clip, not its length. A clip always
+    #: carries half a second of pre-roll and seven-tenths of trailing silence,
+    #: so a guard against the total could never fire.
     min_clip_ms: int = 300
     max_clip_ms: int = 30000
+    #: How much of the ring buffer is kept when the wake word fires. People
+    #: start the question before they finish the trigger.
+    preroll_ms: int = 500
+    #: How long to wait, after the wake word fires, for the question to
+    #: start. Nothing said in that time and the clip is abandoned -- the
+    #: television, usually. Without it the clip records silence until
+    #: max_clip_ms and hands Moonshine thirty seconds of room tone.
+    #:
+    #: Four seconds because the gap between "hey jarvis" and the question is
+    #: a real pause, not a hesitation: measured at 1.4 s here, and that is
+    #: someone who knows what they are about to ask. This is the clock that
+    #: runs during it -- `vad_silence_ms` is for stopping, not starting, and
+    #: while it was doing both, the clip closed inside the pause and dropped
+    #: the wake phrase as a cough.
+    lead_in_ms: int = 4000
 
 
 @dataclass
 class Wake:
     enabled: bool = True
     model: str = "hey_jarvis"
-    threshold: float = 0.5
+    #: 0.3, not the 0.5 this started at, and the difference is measured rather
+    #: than felt. On this microphone a clearly spoken "hey jarvis" peaks at
+    #: 0.490 -- under the old bar by a hundredth, so it fired perhaps one time
+    #: in three and looked like a broken microphone the rest of the time. In
+    #: the same recording everything that was *not* the phrase, the whole
+    #: question included, peaked at 0.0002.
+    #:
+    #: So the gap is a factor of 2500 and the old threshold sat inside the
+    #: noise of one speaker's voice rather than inside that gap. Anywhere from
+    #: 0.05 to 0.45 would separate them here; 0.3 leaves room on both sides.
+    #: `python -m sunday.audio.check` prints both numbers for your own voice.
+    threshold: float = 0.3
     cooldown_ms: int = 1500
 
 

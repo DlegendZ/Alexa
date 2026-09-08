@@ -47,6 +47,13 @@
   .orb[data-state="blocked"], .orb[data-state="error"] {
     background: radial-gradient(circle at 35% 35%, var(--stop), #5a1c1a 70%);
     box-shadow: 0 0 18px -2px var(--stop); }
+  /* Listening is bright and neutral -- nothing is leaving the machine yet.
+     Transcribing collapses inward and holds; it is usually under a second. */
+  .orb[data-state="listening"] {
+    background: radial-gradient(circle at 35% 35%, #e8ebf2, #7d838f 70%);
+    box-shadow: 0 0 20px -2px #cfd4de; }
+  .orb[data-state="transcribing"] {
+    background: radial-gradient(circle at 35% 35%, #9aa1ad, #23262d 60%); }
   .orb[data-state="muted"] { filter: saturate(.15); }
   .statelabel { color: var(--dim); }
 
@@ -92,6 +99,8 @@
   #backstage li[data-step="done"] { border-color: #3a3f49; color: #b9bfcc; }
   .traceoff { opacity: .5; }
   code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
+  .meter { flex: 1; height: 6px; border-radius: 3px; background: #1b1f27; overflow: hidden; }
+  .meterfill { height: 100%; width: 0%; background: #6fd3c7; transition: width 80ms linear; }
   @media (max-width: 800px) { body { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
@@ -103,6 +112,10 @@
     <div class="orbrow">
       <div class="orb" id="orb" data-state="idle"></div>
       <div class="statelabel" id="statelabel">not connected</div>
+      <!-- The level meter is the only proof the microphone is actually
+           open. A state that says "listening" over a flat bar is a device
+           that was never bound. -->
+      <div class="meter"><div class="meterfill" id="meter"></div></div>
     </div>
   </div>
 
@@ -114,6 +127,7 @@
   <form id="composer" class="panel">
     <input id="text" placeholder="Ask Sunday something…" autocomplete="off" disabled>
     <button id="send" disabled>Send</button>
+    <button id="listen" type="button" disabled title="Push to talk">Mic</button>
     <button id="stop" type="button" disabled>Stop</button>
   </form>
 </div>
@@ -130,6 +144,7 @@
   </div>
   <div class="buttons">
     <button id="connect" type="button">Connect</button>
+    <button id="voice" type="button" disabled>Voice on</button>
     <button id="mute" type="button" disabled>Mute</button>
   </div>
   <p class="note" style="margin-top:14px">
@@ -204,7 +219,7 @@ function connect() {
   socket.onopen = () => socket.send(JSON.stringify({ type: "hello", token }));
   socket.onclose = () => {
     setState("idle"); stateLabel.textContent = "disconnected";
-    for (const id of ["text", "send", "stop", "mute"]) $(id).disabled = true;
+    for (const id of ["text", "send", "stop", "mute", "voice", "listen"]) $(id).disabled = true;
   };
   socket.onerror = () => { setState("error"); };
   socket.onmessage = (event) => handle(JSON.parse(event.data));
@@ -213,12 +228,20 @@ function connect() {
 function handle(message) {
   switch (message.type) {
     case "ready":
-      for (const id of ["text", "send", "mute"]) $(id).disabled = false;
+      for (const id of ["text", "send", "mute", "voice", "listen"]) $(id).disabled = false;
       stateLabel.textContent = `connected · ${message.model}`;
       $("text").focus();
       break;
     case "state":
       setState(message.value);
+      if (message.value !== "listening") $("meter").style.width = "0%";
+      break;
+    case "level":
+      // RMS, not peak, so it sits low. Scaled so ordinary speech fills it.
+      $("meter").style.width = `${Math.min(100, message.rms * 400)}%`;
+      break;
+    case "mode":
+      $("voice").textContent = message.value === "voice" ? "Voice off" : "Voice on";
       break;
     case "partial":
       if (message.final) { addTurn("you", message.text); current = null; }
@@ -318,6 +341,11 @@ $("tracetoggle").onclick = () => {
   const hidden = list.classList.toggle("traceoff");
   list.style.display = hidden ? "none" : "grid";
   $("tracetoggle").textContent = hidden ? "show" : "hide";
+};
+$("listen").onclick = () => socket && socket.send(JSON.stringify({ type: "listen" }));
+$("voice").onclick = () => {
+  const on = $("voice").textContent === "Voice on";
+  socket.send(JSON.stringify({ type: "set_mode", mode: on ? "voice" : "text" }));
 };
 $("mute").onclick = () => {
   const muted = $("mute").textContent === "Mute";

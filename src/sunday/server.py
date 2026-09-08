@@ -18,7 +18,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 import websockets
 from websockets.asyncio.server import ServerConnection, serve
@@ -85,8 +85,13 @@ class Sidecar:
         host: str = "127.0.0.1",
         port: int = 0,
         token: str | None = None,
+        ear_factory: Callable[..., Any] | None = None,
     ) -> None:
         self.runtime = runtime or Runtime()
+        #: How the ear gets built. Injectable so the socket can be tested
+        #: without a microphone, a quarter of a gigabyte of ONNX, or a machine
+        #: that has either.
+        self._ear_factory = ear_factory
         self.host = host
         self.port = port
         self.token = token or secrets.token_urlsafe(24)
@@ -97,10 +102,18 @@ class Sidecar:
         self._clients: set[ServerConnection] = set()
         self._pending: dict[str, _Pending] = {}
         self._turns: set[asyncio.Task] = set()
+        self._relays: set[asyncio.Task] = set()
+        #: Built the first time voice mode is asked for, and kept afterwards.
+        #: Its models are a quarter of a gigabyte, so it is neither made at
+        #: startup -- a text-only session should not pay for them -- nor thrown
+        #: away when the mode goes back to text.
+        self._ear: Any = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # -- lifecycle ------------------------------------------------------
 
     async def serve(self) -> None:
+        self._loop = asyncio.get_running_loop()
         async with serve(self._handle, self.host, self.port) as server:
             bound = server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
             Handshake(port=bound, token=self.token).write()
@@ -110,6 +123,7 @@ class Sidecar:
                 await self._stop.wait()
             finally:
                 Handshake.clear()
+                self._close_ear()
                 self.runtime.shutdown()
 
     async def stop(self) -> None:
@@ -172,10 +186,18 @@ class Sidecar:
         elif kind == "set_mode":
             self.mode = "voice" if message.get("mode") == "voice" else "text"
             await self._broadcast({"type": "mode", "value": self.mode})
+            self._set_listening(self.mode == "voice")
+        elif kind == "listen":
+            # Push to talk. The wake word is the usual way in; this is the mic
+            # button and, later, the global hotkey.
+            if self._ear is None:
+                self._set_listening(True)
+            elif self._ear.ready:
+                self._ear.trigger()
         elif kind == "set_mute":
-            # Muting stops the capture stream once there is one to stop; until
-            # then it is recorded and reported, nothing more.
             self.muted = bool(message.get("muted"))
+            if self._ear is not None:
+                self._ear.set_muted(self.muted)
             await self._broadcast(
                 {"type": "state", "value": "muted" if self.muted else "idle"}
             )
@@ -197,6 +219,72 @@ class Sidecar:
             await self._send(
                 websocket, {"type": "error", "text": f"unknown message {kind!r}"}
             )
+
+    # -- the ear --------------------------------------------------------
+
+    def _set_listening(self, on: bool) -> None:
+        """Voice mode opens the microphone; text mode closes it again.
+
+        The models load on the ear's own thread, so this returns immediately
+        and the socket stays answerable while a quarter of a gigabyte of ONNX
+        comes up. What the client sees in the meantime is the state events the
+        ear sends for itself.
+        """
+        if not on:
+            self._close_ear()
+            return
+        if self._ear is not None:
+            self._ear.set_muted(self.muted)
+            return
+
+        factory = self._ear_factory
+        if factory is None:
+            from sunday.audio.voice import Ear
+
+            factory = Ear
+
+        self._ear = factory(
+            self.runtime.cfg,
+            on_event=self._from_ear,
+            on_transcript=self._heard,
+        )
+        self._ear.set_muted(self.muted)
+        self._ear.start()
+
+    def _close_ear(self) -> None:
+        ear, self._ear = self._ear, None
+        if ear is not None:
+            ear.stop()
+
+    def _from_ear(self, event: dict) -> None:
+        """Called on the ear's thread. Hand it to the loop and get out."""
+        loop = self._loop
+        if loop is None:
+            return
+
+        def relay() -> None:
+            task = asyncio.create_task(self._broadcast(event))
+            self._relays.add(task)
+            task.add_done_callback(self._relays.discard)
+
+        try:
+            loop.call_soon_threadsafe(relay)
+        except RuntimeError:
+            # The sidecar shut down while the ear was mid-frame. Nothing to
+            # tell, and nobody left to tell it to.
+            pass
+
+    def _heard(self, text: str) -> None:
+        """One transcript. Goes in exactly as if it had been typed."""
+        loop = self._loop
+        if loop is None:
+            return
+        try:
+            loop.call_soon_threadsafe(
+                lambda: self._start_turn(text, modality="voice")
+            )
+        except RuntimeError:
+            pass
 
     # -- turns ----------------------------------------------------------
 

@@ -24,13 +24,18 @@ output_device = ""
 aec_delay_ms  = 60     # measure once on your hardware
 vad_threshold = 0.5
 vad_silence_ms = 700
-min_clip_ms   = 300
+min_clip_ms   = 300    # of speech, not of clip: every clip carries pre-roll
 max_clip_ms   = 30000
+preroll_ms    = 500    # kept from before the wake word finished
+lead_in_ms    = 4000   # woke, heard nothing, go back to sleep
 
 [wake]
 enabled     = true
 model       = "hey_jarvis"
-threshold   = 0.5
+# Measured, not guessed: a clear "hey jarvis" scores ~0.49 on this mic and
+# everything that is not the phrase scores ~0.0002. Run
+# `python -m sunday.audio.check` to see both numbers for your own voice.
+threshold   = 0.3
 cooldown_ms = 1500
 
 [echo]

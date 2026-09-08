@@ -673,18 +673,25 @@ def test_no_budget_at_all_is_a_stated_gap(cfg):
 # -- 5. the sidecar docstring was a syntax warning ------------------------
 
 
-def test_the_entry_point_modules_compile_without_warnings():
+def test_no_module_compiles_with_a_syntax_warning():
     r"""`.venv\Scripts\...` in a plain docstring makes `\S` an invalid escape,
     and it printed at launch because sidecar.py is the entry point.
 
     This test's own docstring had the same bug on the first attempt, which is
     the neatest possible argument for pinning it.
+
+    It listed four modules for a milestone, which is the mistake this repo
+    keeps making: a test written from the incident checks the incident. The
+    rule is that *no* module may carry one -- every file here is free to
+    mention a Windows path -- so it walks the package instead. The audio
+    package landed with two of them.
     """
     import warnings
     from pathlib import Path
 
-    for name in ("sidecar", "server", "main", "runtime"):
-        source = Path("src/sunday") / f"{name}.py"
+    modules = sorted(Path("src/sunday").rglob("*.py"))
+    assert len(modules) > 20, "the walk found nothing; the path is wrong"
+    for source in modules:
         with warnings.catch_warnings():
             warnings.simplefilter("error", SyntaxWarning)
             compile(source.read_text(encoding="utf-8"), str(source), "exec")

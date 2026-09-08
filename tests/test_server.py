@@ -40,13 +40,56 @@ class NoMemory:
         return 0
 
 
+class FakeEar:
+    """The ear, without a microphone or a quarter of a gigabyte of ONNX.
+
+    The socket has to be tested against something, and it cannot be the real
+    one: these tests run on machines with no sound card and no models, and a
+    test that silently skips there is a test that never runs anywhere.
+    """
+
+    made: list["FakeEar"] = []
+
+    def __init__(self, cfg, *, on_event=None, on_transcript=None):
+        self.cfg = cfg
+        self.on_event = on_event
+        self.on_transcript = on_transcript
+        self.ready = True
+        self.started = False
+        self.stopped = False
+        self.muted = False
+        self.triggered = 0
+        FakeEar.made.append(self)
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+    def set_muted(self, muted):
+        self.muted = muted
+
+    def trigger(self):
+        self.triggered += 1
+
+    # -- what the real ear does from its own thread ---------------------
+
+    def say(self, event):
+        self.on_event(event)
+
+    def heard(self, text):
+        self.on_transcript(text)
+
+
 @pytest.fixture
 async def sidecar(cfg, tmp_path, monkeypatch):
     from sunday import config as config_module
 
     monkeypatch.setattr(config_module, "HANDSHAKE_PATH", tmp_path / "handshake.json")
+    FakeEar.made.clear()
     runtime = Runtime(cfg, agent=Talker(), memory=NoMemory())  # type: ignore[arg-type]
-    side = Sidecar(runtime, port=0, token="test-token")
+    side = Sidecar(runtime, port=0, token="test-token", ear_factory=FakeEar)
 
     task = asyncio.create_task(side.serve())
     for _ in range(200):
@@ -372,3 +415,98 @@ async def test_the_backstage_trace_crosses_the_socket(sidecar):
     assert {"memory_read", "agent", "compose_reply", "done"} <= steps
     # And the client's end-of-turn marker is still the last thing it sees.
     assert messages[-1]["type"] == "done"
+
+
+# -- voice in (milestone 7) -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_voice_mode_opens_the_ear_and_text_mode_closes_it(sidecar):
+    side, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    assert await _recv(ws) == {"type": "mode", "value": "voice"}
+    assert len(FakeEar.made) == 1
+    assert FakeEar.made[0].started is True
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "text"}))
+    assert await _recv(ws) == {"type": "mode", "value": "text"}
+    assert FakeEar.made[0].stopped is True
+    assert side._ear is None
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_a_transcript_starts_a_turn_as_if_it_had_been_typed(sidecar):
+    """The whole seam of Stage 01: speech never enters the graph, a string
+    does, and the modality is the only thing that knows the difference."""
+    _, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await _recv(ws)
+    ear = FakeEar.made[0]
+
+    ear.heard("what is the gold price")
+    messages = await _drain(ws)
+
+    kinds = [m["type"] for m in messages]
+    assert "token" in kinds and kinds[-1] == "done"
+    partials = [m for m in messages if m["type"] == "partial"]
+    assert partials and partials[0]["text"] == "what is the gold price"
+
+
+@pytest.mark.asyncio
+async def test_the_ear_can_talk_to_the_socket_from_its_own_thread(sidecar):
+    """`level` is the one line in the protocol that had no producer. It has
+    one now, and it arrives from a thread that is not the loop's."""
+    _, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await _recv(ws)
+    ear = FakeEar.made[0]
+
+    await asyncio.to_thread(ear.say, {"type": "level", "rms": 0.42})
+    assert await _recv(ws) == {"type": "level", "rms": 0.42}
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_push_to_talk_needs_no_wake_word(sidecar):
+    _, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    # The first `listen` on a text-mode session opens the ear rather than
+    # doing nothing: pressing the mic button is asking to be heard.
+    await ws.send(json.dumps({"type": "listen"}))
+    await ws.send(json.dumps({"type": "ping"}))
+    assert await _recv(ws) == {"type": "pong"}
+    assert len(FakeEar.made) == 1
+
+    await ws.send(json.dumps({"type": "listen"}))
+    await ws.send(json.dumps({"type": "ping"}))
+    assert await _recv(ws) == {"type": "pong"}
+    assert FakeEar.made[0].triggered == 1
+    await ws.close()
+
+
+@pytest.mark.asyncio
+async def test_muting_reaches_the_capture_stream(sidecar):
+    """Mute is a real toggle, not a modifier: muted means the stream is
+    stopped, not that its frames are ignored politely."""
+    _, handshake = sidecar
+    ws = await _connect(handshake)
+    await _drain(ws, until="state")
+
+    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await _recv(ws)
+    await ws.send(json.dumps({"type": "set_mute", "muted": True}))
+    assert await _recv(ws) == {"type": "state", "value": "muted"}
+    assert FakeEar.made[0].muted is True
+    await ws.close()

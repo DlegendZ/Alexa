@@ -7,7 +7,9 @@ not a replacement for this one.
 
 from __future__ import annotations
 
+import queue
 import sys
+import threading
 
 from sunday import config
 from sunday.agent.llm import OllamaDown
@@ -49,6 +51,26 @@ def _confirm(request: ConfirmRequest) -> bool:
     return answer in {"y", "yes"}
 
 
+#: Where typed lines and spoken ones meet. The turn loop pulls from one place
+#: and never learns which of the two it came from -- which is the point of the
+#: adapter seam, made visible in twenty lines.
+Heard = tuple[str, str]  # (modality, text)
+
+PROMPT = "you> "
+
+
+def _prompt() -> None:
+    """Put the prompt back.
+
+    `input()` prints its prompt once, on a thread that is then blocked for the
+    rest of the turn, so everything the turn prints lands after it and the
+    screen ends on a trace line. It reads as hung when it is in fact waiting.
+    The prompt is written by whoever knows the app is idle instead, which is
+    this loop.
+    """
+    print(PROMPT, end="", flush=True)
+
+
 def _print_event(event: dict) -> None:
     kind = event.get("type")
     if kind == "trace":
@@ -64,6 +86,43 @@ def _print_event(event: dict) -> None:
         print(f"{GREY}  · {event['text']}{RESET}", flush=True)
     elif kind == "error":
         print(f"{RED}  · {event['text']}{RESET}", flush=True)
+
+
+def _listen(cfg: config.Config, inbox: "queue.Queue[Heard | None]") -> object | None:
+    """Open the microphone, if this run asked for it and can have it.
+
+    Returns the ear so it can be stopped, or None with the reason printed --
+    a terminal that cannot hear is still a terminal that works.
+    """
+    from sunday.audio import models
+    from sunday.audio.voice import Ear
+
+    outstanding = models.missing(models.required(cfg))
+    if outstanding:
+        print(
+            f"{AMBER}  · voice needs {len(outstanding)} model(s) downloaded first: "
+            rf".venv\Scripts\python.exe -m sunday.audio.models{RESET}"
+        )
+        return None
+
+    def on_event(event: dict) -> None:
+        kind = event.get("type")
+        if kind == "state" and event.get("value") == "listening":
+            # A newline first: the cursor is sitting after the prompt, and a
+            # spoken turn is the one case where nobody pressed Enter.
+            print(f"\n{TEAL}  · listening{RESET}", flush=True)
+        elif kind == "partial":
+            print(f"{TEAL}you (spoken)> {event['text']}{RESET}", flush=True)
+        elif kind == "notice":
+            print(f"{GREY}  · {event['text']}{RESET}", flush=True)
+        elif kind == "error":
+            print(f"{RED}  · {event['text']}{RESET}", flush=True)
+
+    ear = Ear(cfg, on_event=on_event, on_transcript=lambda t: inbox.put(("voice", t)))
+    ear.start()
+    phrase = cfg.wake.model.replace("_", " ") if cfg.wake.enabled else "the mic"
+    print(f"{GREY}Voice is on. Say \"{phrase}\" and then ask.{RESET}")
+    return ear
 
 
 def main() -> int:
@@ -92,6 +151,30 @@ def main() -> int:
         )
     print(f"{GREY}Type to talk. Ctrl-C or 'exit' to quit.{RESET}\n")
 
+    inbox: "queue.Queue[Heard | None]" = queue.Queue()
+    ear = _listen(cfg, inbox) if "--voice" in sys.argv[1:] else None
+
+    def typing() -> None:
+        while True:
+            try:
+                # PowerShell puts a UTF-8 BOM on the first line it pipes to a
+                # native exe, so a scripted `"exit" | sunday` would otherwise
+                # be answered as a question instead of quitting.
+                text = input().lstrip("﻿").strip()
+            except (EOFError, KeyboardInterrupt):
+                inbox.put(None)
+                return
+            if not text:
+                continue
+            if text.lower() in {"exit", "quit"}:
+                inbox.put(None)
+                return
+            inbox.put(("text", text))
+
+    keyboard = threading.Thread(target=typing, name="sunday-stdin", daemon=True)
+    keyboard.start()
+    _prompt()
+
     first_token = [True]
 
     def on_token(piece: str) -> None:
@@ -102,36 +185,37 @@ def main() -> int:
 
     while True:
         try:
-            # PowerShell puts a UTF-8 BOM on the first line it pipes to a
-            # native exe, so a scripted `"exit" | sunday` would otherwise be
-            # answered as a question instead of quitting.
-            text = input("you> ").lstrip("﻿").strip()
-        except (EOFError, KeyboardInterrupt):
+            heard = inbox.get()
+        except KeyboardInterrupt:
             print()
             break
-        if not text:
-            continue
-        if text.lower() in {"exit", "quit"}:
+        if heard is None:
             break
+        modality, text = heard
 
         first_token[0] = True
         # Ctrl-C during a turn is handled inside run_turn, which cancels, logs
         # and tears down. It comes back as an uncommitted state, not a raise.
         state = runtime.run_turn(
             text,
+            modality=modality,
             on_token=on_token,
             on_event=_print_event,
             on_confirm=_confirm,
         )
         if not state.get("committed") and not state.get("final_response"):
             print(f"\n{GREY}  · cancelled{RESET}\n")
+            _prompt()
             continue
 
         if first_token[0] and state.get("final_response"):
             print(f"sunday> {state['final_response']}", end="")
         print("\n")
+        _prompt()
 
     # Quitting is a session boundary like going idle: flush the summary.
+    if ear is not None:
+        ear.stop()
     runtime.shutdown()
     return 0
 
