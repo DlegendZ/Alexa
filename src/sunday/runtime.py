@@ -82,6 +82,15 @@ CAP_SPENT = (
     "refused: the tool-call cap for this turn was reached before this call ran. "
     "Answer with what you already have and say which part is unchecked."
 )
+REPEATED = (
+    "refused: this exact call was already made this turn and returned the same "
+    "thing. Repeating it cannot change the answer. Either call something "
+    "different, change the arguments, or tell the user what you could not do."
+)
+#: The reply's own excuse when a turn produced no words at all.
+EMPTY_REPLY = (
+    "Sorry, I could not finish that. Ask me again and I will try a different way."
+)
 NO_ROOM = (
     "refused: this result was too large for what is left of the context window. "
     "Tell the user you could not read it in full and suggest a narrower request."
@@ -337,6 +346,14 @@ class Runtime:
         cap = self.cfg.limits.tool_calls
         tools_budget = budget.slices(self.cfg).tools
         flags = Flags()
+        #: (tool, arguments) of calls that came back failed. A 2b asked to do
+        #: something it cannot will offer the same call indefinitely, and the
+        #: tool-call cap is a poor way to find that out -- it spends the whole
+        #: budget first. A repeat of a *failed* call is refused without running;
+        #: a third ends the loop. Repeats of calls that worked are left alone,
+        #: because they are wasteful rather than pathological, and because two
+        #: of this codebase's guarantees are tested by issuing one twice.
+        attempted: dict[tuple, int] = {}
         told_about_the_door = False
         told_about_failure = False
         offered_second_chance = False
@@ -380,6 +397,11 @@ class Runtime:
             ctx.messages.append(agent_loop.tool_message(result))
             ctx.log.set(fast_path=shortcut.tool)
             self._trace(trace.fast_path(shortcut.tool, dict(shortcut.args)))
+            # A fast path answers the part it matched and nothing else. Without
+            # this the model reads a result already in the transcript as the
+            # turn being finished, and the other half of a mixed question is
+            # dropped in silence. Scaffolding, so it never reaches the reply.
+            ctx.scaffold(prompts.FAST_PATH_PARTIAL)
 
         rounds = 0
         while True:
@@ -425,9 +447,31 @@ class Runtime:
                     ctx.messages.append(agent_loop.tool_message(skipped))
                     continue
 
+                # Only a repeat of a call that already *failed* is stopped. A
+                # repeated success is wasteful and harmless; a repeated failure
+                # is the loop -- the same move_file went out five times, each
+                # refused for the same reason, until the cap ended the turn.
+                signature = (call.name, repr(sorted(call.args.items())))
+                failures = attempted.get(signature, 0)
+                if failures:
+                    tool_calls += 1
+                    attempted[signature] = failures + 1
+                    repeat = Result(call.name, call.args, REPEATED, "public", ok=False)
+                    results.append(repeat)
+                    ctx.messages.append(agent_loop.tool_message(repeat))
+                    self._trace(trace.repeated(call.name, failures + 1))
+                    if failures >= 2:
+                        unresolved = (
+                            f"{call.name} was asked for three times with the "
+                            f"same arguments and failed each time, so I stopped"
+                        )
+                    continue
+
                 tool_calls += 1
                 working: SundayState = {**state, "tool_results": results}
                 result = self._dispatch(call.name, call.args, working, flags)
+                if not result.ok:
+                    attempted[signature] = 1
                 results.append(self._fit(result, results, tools_budget))
                 ctx.messages.append(agent_loop.tool_message(results[-1]))
             if unresolved:
@@ -793,6 +837,15 @@ class Runtime:
         final = stream.fork(
             pieces(), on_token=self._token, on_sentence=self._sentence
         ).strip()
+        if not final:
+            # A turn that spends its budget on repeated calls can come back
+            # with nothing to say, and a blank reply reads as a crash. Say the
+            # true thing instead, and say it through the sinks so the text
+            # client, the speech client and memory all get it.
+            final = EMPTY_REPLY
+            self._trace(trace.empty_reply())
+            self._token(final)
+            self._sentence(final)
         return {"final_response": final, "thinking": think, "committed": True}
 
     def memory_write(self, state: SundayState) -> dict:

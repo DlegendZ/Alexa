@@ -35,7 +35,7 @@ _PRICE = re.compile(
 
 #: Trailing words a person adds that are not part of a city name.
 _TAIL = re.compile(
-    r"\s*(?:right\s+now|now|today|tonight|tomorrow|please|then|and\b.*)$",
+    r"\s*\b(?:right\s+now|now|today|tonight|tomorrow|please|then|and\b.*)$",
     re.IGNORECASE,
 )
 
@@ -57,6 +57,24 @@ _CAPABILITIES = re.compile(
 )
 
 
+#: A message carrying more than one instruction. A fast path answers exactly
+#: the clause it matched, and the model, seeing a tool result already sitting
+#: in the transcript, reads the turn as finished -- so "what is the price of
+#: gold and what is the weather in Jakarta" came back about the weather alone,
+#: with "no specific price was returned for this request" bolted on. Telling
+#: the model in a system line that the fast path was partial did not fix it:
+#: it was tried, and the second half was still dropped.
+#:
+#: So a compound message does not get a fast path at all. The insurance exists
+#: for the single-clause case where a fumbled argument would be obvious; on a
+#: compound the model has to do the work, which is what it does correctly when
+#: nothing has answered ahead of it.
+_COMPOUND = re.compile(
+    r"(?:\band\b|\bthen\b|\balso\b|\bafter that\b|;|\bdan\b|\blalu\b|\bterus\b)",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True)
 class FastPath:
     tool: str
@@ -68,6 +86,11 @@ def match(task: str) -> FastPath | None:
     # would otherwise fall through to the model, which invents an answer.
     if _CAPABILITIES.search(task):
         return FastPath("list_capabilities", {})
+
+    # Two instructions in one message: no shortcut. Answering half of it in
+    # code is what convinces the model the whole thing is done.
+    if _COMPOUND.search(task):
+        return None
 
     weather = _WEATHER.search(task)
     if weather:

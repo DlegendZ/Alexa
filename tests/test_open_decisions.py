@@ -163,3 +163,144 @@ def test_what_is_shown_spoken_and_filed_is_the_same_text():
     assert "".join(tokens) == text
     assert " ".join(spoken) == text.strip()
     assert "`" not in text and "*" not in text
+
+
+# -- several jobs in one message --------------------------------------------
+
+
+def test_three_jobs_in_one_message_run_across_rounds(cfg, tmp_path):
+    """The loop is not one call per turn. Each round may ask for more, and the
+    turn ends when the model stops asking -- not when the first tool returns."""
+    from sunday.agent.llm import Reply, ToolCall
+    from sunday.runtime import Runtime
+    from tests.test_review_fixes import NoMemory, Scripted
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [{"label": "work", "path": str(root)}]
+
+    agent = Scripted(
+        [
+            Reply(tool_calls=[ToolCall("write_file", {"path": str(root / "a.txt"), "text": "one"})]),
+            Reply(tool_calls=[ToolCall("copy_file", {"source": str(root / "a.txt"), "destination": str(root / "b.txt")})]),
+            Reply(tool_calls=[ToolCall("list_dir", {"path": "work"})]),
+            Reply(content="Done."),
+        ]
+    )
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "write a, copy it to b, then list the folder"
+    )
+
+    assert [r.tool for r in state["tool_results"]] == [
+        "write_file",
+        "copy_file",
+        "list_dir",
+    ]
+    assert state["tool_calls"] == 3
+    assert (root / "b.txt").read_text(encoding="utf-8") == "one"
+    assert "a.txt" in state["tool_results"][2].content
+
+
+def test_two_jobs_in_one_round_both_run(cfg, tmp_path):
+    """A single reply may declare several calls, and each one is answered."""
+    from sunday.agent.llm import Reply, ToolCall
+    from sunday.runtime import Runtime
+    from tests.test_review_fixes import NoMemory, Scripted
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    (root / "a.txt").write_text("one", encoding="utf-8")
+    (root / "b.txt").write_text("two", encoding="utf-8")
+
+    agent = Scripted(
+        [
+            Reply(
+                tool_calls=[
+                    ToolCall("read_file", {"path": str(root / "a.txt")}),
+                    ToolCall("read_file", {"path": str(root / "b.txt")}),
+                ]
+            ),
+            Reply(content="Both read."),
+        ]
+    )
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn("read both")  # type: ignore[arg-type]
+
+    assert [r.content for r in state["tool_results"]] == ["one", "two"]
+
+
+def test_a_repeated_failing_call_is_refused_without_running(cfg, tmp_path):
+    """Asked to move a file to a folder that did not exist, the model sent the
+    identical call on rounds 1, 2, 3, 5 and 7 -- spending the whole cap on one
+    call that could never work. RETRY_HINT says "do not send the same call
+    again unchanged" in as many words, and it sent it again unchanged. A prompt
+    cannot enforce a loop bound."""
+    from sunday.agent.llm import Reply, ToolCall
+    from sunday.runtime import REPEATED, Runtime
+    from tests.test_review_fixes import NoMemory, Scripted
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+
+    missing = ToolCall("read_file", {"path": str(root / "gone.txt")})
+    agent = Scripted(
+        [
+            Reply(tool_calls=[missing]),
+            Reply(tool_calls=[missing]),
+            Reply(tool_calls=[missing]),
+            Reply(content="I could not read it."),
+        ]
+    )
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn("read it")  # type: ignore[arg-type]
+
+    contents = [r.content for r in state["tool_results"]]
+    assert contents[0].startswith("error: no such file")  # the real attempt ran
+    assert contents[1] == REPEATED  # the repeat did not
+    assert state["unresolved"]  # the third ends the turn rather than looping
+
+
+def test_a_repeated_call_that_worked_is_left_alone(cfg, tmp_path):
+    """Wasteful, not pathological -- and two of this codebase's guarantees are
+    tested by issuing the same successful call twice."""
+    from sunday.agent.llm import Reply, ToolCall
+    from sunday.runtime import REPEATED, Runtime
+    from tests.test_review_fixes import NoMemory, Scripted
+
+    root = tmp_path / "root"
+    root.mkdir()
+    cfg.files.roots = [str(root)]
+    (root / "a.txt").write_text("hello", encoding="utf-8")
+
+    call = ToolCall("read_file", {"path": str(root / "a.txt")})
+    agent = Scripted([Reply(tool_calls=[call, call]), Reply(content="ok")])
+    state = Runtime(cfg, agent=agent, memory=NoMemory()).run_turn("read it twice")  # type: ignore[arg-type]
+
+    assert [r.content for r in state["tool_results"]] == ["hello", "hello"]
+    assert REPEATED not in [r.content for r in state["tool_results"]]
+
+
+def test_a_turn_with_nothing_to_say_says_so(cfg):
+    """Spending the budget on repeats left the model with no words at all, and
+    a blank reply reads as a crash."""
+    from sunday.agent.llm import Reply
+    from sunday.runtime import EMPTY_REPLY, Runtime
+    from tests.test_review_fixes import NoMemory
+
+    class Mute:
+        def chat(self, messages, **kwargs):
+            return Reply(content="")
+
+        def stream(self, messages, *, think=False):
+            return iter(())
+
+        def preflight(self):
+            return None
+
+    spoken: list[str] = []
+    state = Runtime(cfg, agent=Mute(), memory=NoMemory()).run_turn(  # type: ignore[arg-type]
+        "do the thing", on_sentence=spoken.append
+    )
+
+    assert state["final_response"] == EMPTY_REPLY
+    assert spoken == [EMPTY_REPLY]  # the speech sink hears it too, not silence

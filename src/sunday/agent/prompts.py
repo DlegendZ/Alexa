@@ -28,6 +28,18 @@ That list is complete. When the user names one -- "the work folder", "in documen
 
 NO_ROOTS_SYSTEM = """No folders are configured, so every file path will be refused. If the user asks you to read or write a file, tell them there are no folders set under [files] roots in config.toml."""
 
+#: Said once, after a fast path has run, because a fast path answers only the
+#: part of the question it matched.
+#:
+#: "What is the price of gold and what is the weather in Jakarta" fired the
+#: weather pattern, and the model -- seeing a tool result already sitting there
+#: -- decided the turn was done and answered about the weather alone. It then
+#: told the user "no specific price was returned for this request", which is
+#: true and useless: nothing had asked for one. The fast path is insurance
+#: against a fumbled argument, and it was quietly costing whole halves of
+#: mixed questions.
+FAST_PATH_PARTIAL = """A tool was run for you before you were asked anything, because part of the user's message matched a known pattern. It answers that part and only that part. Read their message again: if it asked for anything else, call the tools for the rest of it now. If it did not, do not call anything."""
+
 #: One extra tool round, offered when the first produced no call at all.
 #:
 #: The 2b's two ways of not doing the job both look like a finished answer.

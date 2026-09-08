@@ -145,3 +145,32 @@ def test_the_retry_hint_is_said_once_not_once_per_failure(cfg, tmp_path):
 
     last = [m.get("content") for m in agent.seen[-1] if isinstance(m, dict)]
     assert last.count(prompts.RETRY_HINT) == 1
+
+
+def test_a_compound_message_gets_no_fast_path(cfg):
+    """A fast path answers the clause it matched and nothing else, and the
+    model reads a result already in the transcript as the turn being done. So
+    "the price of gold and the weather in Jakarta" came back about the weather
+    alone. Saying so in a system line was tried first and did not hold."""
+    for asked in (
+        "what is the price of gold and what is the weather in Jakarta",
+        "read gold.txt and tell me the weather in Jakarta",
+        "get the gold price then write it to a file",
+        "cek cuaca Jakarta dan harga emas",
+        "weather in Jakarta; price of gold",
+    ):
+        assert fastpaths.match(asked) is None, asked
+
+
+def test_a_single_clause_still_gets_its_fast_path(cfg):
+    assert fastpaths.match("weather in Jakarta").tool == "get_weather"
+    assert fastpaths.match("price of gold").tool == "get_asset_price"
+    assert fastpaths.match("weather in Jakarta now").args == {"city": "Jakarta"}
+
+
+def test_a_city_whose_name_contains_a_stop_word_survives(cfg):
+    """The same left-edge bug the guardrail already learned once: without a
+    word boundary the "and" branch cut inside the word and "weather in
+    Thailand" asked for the weather in Thail."""
+    assert fastpaths.match("weather in Thailand").args == {"city": "Thailand"}
+    assert fastpaths.match("weather in Poland").args == {"city": "Poland"}

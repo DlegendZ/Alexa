@@ -804,3 +804,55 @@ window, which they always did — because `scaled_to` made them fit. Nothing ass
 window was the right size, because nothing could: that is a hardware measurement, not an
 invariant. The lesson is narrow and worth keeping. A number that no test can check is a
 number nobody rechecks.
+
+## 52. A fast path on a compound message answers half and convinces the model it is done
+
+**Doc:** Stage 04 — "the result is handed to the agent as an ordinary tool result, so the
+turn carries on normally: the model can still call more tools, and a mixed question loses
+nothing." That last clause was false.
+**Code:** `fastpaths.match` returns `None` when the message contains a second instruction.
+**Why:** "what is the price of gold and what is the weather in Jakarta" fired the weather
+pattern in code, and the model — seeing a tool result already sitting in the transcript —
+read the turn as finished and answered about the weather alone. It then added "no specific
+price was returned for this request", which is true and useless: nothing had asked for one.
+Half the question, dropped in silence, every time.
+
+Telling the model was tried first: a system line saying the fast path covers one clause and
+the rest still needs doing. It did not hold — the second half was still dropped. So the fast
+path does not fire on a compound at all. It exists as insurance for the single-clause case
+where a fumbled argument would be obvious, and on a compound the model does the work, which
+it does correctly once nothing has answered ahead of it. The same question now comes back
+with both calls in one round and both answers in the reply.
+
+**And the same left-edge bug as note 34, in a different file.** `_TAIL` strips trailing
+words a person adds to a city name, and its `and` branch had no word boundary — so "weather
+in Thailand" asked for the weather in **Thail**. `sk-` matching inside "ta|sk-oriented" was
+supposed to have taught this once already. Any pattern that cuts a string needs to say where
+a word begins.
+
+## 53. A repeated failing call is refused without running
+
+**Doc:** Stage 06 — the tool-call cap is described as the bound on a runaway loop.
+**Code:** the loop records the `(tool, arguments)` of every call that came back failed.
+A repeat is refused without dispatching; a third sets `unresolved` and ends the loop.
+**Why:** asked to copy a file to a folder that did not exist, the model sent the identical
+`move_file` on rounds 1, 2, 3, 5 and 7 — spending the entire cap on one call that could not
+work, and ending the turn with an empty reply. `RETRY_HINT` says "do not send the same call
+again unchanged" in as many words, and it sent it again unchanged. **A prompt cannot enforce
+a loop bound.** The cap did eventually stop it, which is the cap doing its job badly: it is
+a backstop against runaway cost, not a way to notice the model is stuck.
+
+Only *failed* calls are guarded. A repeated success is wasteful rather than pathological,
+and two of this codebase's own guarantees — the hop cap and the no-room refusal — are tested
+by issuing the same successful call twice. Guarding those broke both tests, which is how the
+distinction was found.
+
+## 54. A turn with nothing to say now says so
+
+**Doc:** nothing covered this.
+**Code:** `compose_reply` falls back to a plain sentence when the model streams no tokens,
+and pushes it through both sinks so the text client, the speech client and memory agree.
+**Why:** the turn that spent its whole budget on repeated calls came back with an empty
+string. The user sees a blank line where the answer goes, which reads as a crash rather than
+as a failure, and memory_write skips a turn that has no response — so there is not even a
+record of it having happened.

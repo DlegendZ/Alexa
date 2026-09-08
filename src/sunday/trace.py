@@ -256,6 +256,25 @@ def tool_finished(
     )
 
 
+def repeated(name: str, attempt: int) -> Line:
+    return _line(
+        "tools",
+        f"{name} was already called with these exact arguments (attempt "
+        f"{attempt}). Refused without running -- the answer cannot change, and "
+        f"the point is to stop the loop rather than redo the work.",
+        tool=name,
+        attempt=attempt,
+    )
+
+
+def empty_reply() -> Line:
+    return _line(
+        "compose_reply",
+        "the model produced no words at all, so the turn says so plainly "
+        "rather than handing back a blank line.",
+    )
+
+
 def cap_spent(cap: int) -> Line:
     return _line(
         "tools",
