@@ -38,9 +38,12 @@ speech_threshold_while_speaking = 0.8
 transcript_similarity_cutoff    = 0.6
 
 [files]
+# Each root can be a bare path, or a table with the name you call it by.
+# The name is what lets "move it to the work folder" resolve to a real path
+# instead of the model guessing at one.
 roots = [
-  "C:/Users/User/Documents/Sunday",
-  "E:/Work/Sunday",
+  { label = "documents", path = "C:/Users/User/Documents/Sunday" },
+  { label = "work",      path = "E:/Work/Sunday" },
 ]
 max_read_bytes = 200000
 

@@ -693,3 +693,73 @@ folder, not a file, and taken as a filename it silently swallows the file.
 **Still open.** The roots have no names. The user says "the documents folder" and means
 `C:/Users/User/Documents/Sunday`; nothing in the configuration says so, and the model is left
 matching words against paths. A label per root in `config.toml` would end this properly.
+
+## 48. The intent hint is vetted, so the airlock's guarantee is structural again
+
+**Doc:** Stage 05 — "the query writer cannot mention your sell target because your sell
+target was never in the room". Listed in the context log as the one place the guarantee was
+weaker than it sounded.
+**Code:** `airlock.vet_intent` keeps only the words of the hint that already appear in the
+material the prompt is about to contain — the user's line and the `public` results. The
+count of dropped words comes back on `Cleared` and is traced.
+**Why:** the composer's context was airtight and the *hint* was not. The hint is written by
+the agent, and the agent has seen the private half, so "the query writer cannot leak" was
+true while "the thing that writes the hint cannot leak" was only a hope.
+
+The fix keeps what a hint is for and removes what it could do wrong. Selecting and
+reordering words that were already going to cross is the whole job: `gold price forecast`
+out of "what is the gold price forecast for June". Introducing a word that was nowhere in
+the cleared material is the only behaviour that could leak, and it is the only behaviour
+this takes away. A hint of `gold price against my sell target of 4600` arrives as
+`gold price`.
+
+Two details that decide whether it works:
+
+- **A number is one token.** `4,600` split on the comma is two three-digit fragments, each
+  harmless-looking on its own. The word pattern keeps inner punctuation.
+- **The filler list is tiny and closed.** Twenty-odd words that cannot identify anything
+  (`the`, `current`, `price`, `today`), so the vetted hint still reads as English rather
+  than as keyword salad. Every addition to that list is a hole, so it does not grow.
+
+The dropped count is reported rather than swallowed: a silent filter is how you end up
+believing a guarantee you no longer have.
+
+## 49. The roots have names now
+
+**Doc:** Stage 04 — the sandbox listed paths. Note 47 left this open in as many words.
+**Code:** `[files] roots` takes either a bare path or `{ label, path }`; `config.Files.
+entries()` normalises both. `files.resolve` accepts a label as a path, alone or as the head
+of one, and the system line lists `label: path`.
+**Why:** "the documents folder" meant `C:/Users/User/Documents/Sunday` to the user and
+nothing at all to the model, which was left matching English against paths — and invented a
+folder called `documents` three separate ways rather than admit it could not tell. Nothing
+in the configuration had ever said what these folders were called.
+
+A bare string still works and takes the folder's own name, so no existing config breaks. On
+this machine that exposed the reason labels were needed: both roots are called `Sunday`.
+
+`work`, `work/notes.txt`, `the work folder` and `WORK` all resolve, and whatever a label
+resolves to is still checked for containment like every other path — a label cannot smuggle
+anything, it can only name something that was already allowed.
+
+## 50. Markdown is stripped from the stream, not asked for politely
+
+**Doc:** Stage 03 — "no markdown, ever", stated in the system prompt.
+**Code:** `stream.Despeckler` filters the token stream inside `stream.fork`, so the text
+sink, the sentence sink and the stored reply are the same characters.
+**Why:** the prompt forbids it and the model obeys most of the time. Most of the time is
+not good enough for a channel that gets read aloud, where a backtick is pronounced and a
+dash at the start of a line is a spoken word. Even after the list hint of note 42, single
+backticks kept arriving: "The file `gold.txt` has been renamed to `plan.txt`."
+
+It sits in `fork` rather than in either sink because cleaning one and not the others is how
+a transcript ends up disagreeing with what the person heard.
+
+Deliberately narrow: asterisks and backticks anywhere, a list marker at the start of a line,
+and nothing else. Underscores are left alone — half the filenames on this machine have one —
+and no part of it parses markdown.
+
+The streaming case is the fiddly one. A bullet is only a bullet at the start of a line, and
+a token boundary falls wherever the model put it, often between the newline and the dash. So
+the stripper tracks whether it is at a line start and holds back at most seven characters,
+never past the end of a line, until it can tell.

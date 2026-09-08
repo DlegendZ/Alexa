@@ -49,7 +49,9 @@ def list_capabilities() -> str:
         lines.append(f"{tool.name} ({where}) {first[0].lower() + first[1:]}.")
 
     if cfg.files.roots:
-        listed = " and ".join(cfg.files.roots)
+        listed = " and ".join(
+            f"{root.label} ({root.path})" for root in cfg.files.entries()
+        )
         lines.append(
             f"The folders it can read, write and delete inside are {listed}. "
             f"Any other path is refused before the disk is touched, and the "

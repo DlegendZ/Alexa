@@ -247,10 +247,11 @@ class Runtime:
 
     def _roots_line(self) -> str:
         """Which folders are open, in the model's own message list."""
-        roots = list(self.cfg.files.roots)
+        roots = self.cfg.files.entries()
         if not roots:
             return prompts.NO_ROOTS_SYSTEM
-        listed = "\n".join(f"- {root}" for root in roots)
+        # The label first, because that is the word the user will actually say.
+        listed = "\n".join(f"- {r.label}: {r.path}" for r in roots)
         return prompts.ROOTS_SYSTEM.format(roots=listed)
 
     def _bound_tools(self, flags: Flags) -> list[tool_registry.Tool]:
@@ -354,7 +355,11 @@ class Runtime:
         # guess reads to the user as "Sunday cannot see my Documents folder".
         # Say it every turn, next to the tools it applies to.
         ctx.messages.append({"role": "system", "content": self._roots_line()})
-        self._trace(trace.roots_bound(list(self.cfg.files.roots)))
+        self._trace(
+            trace.roots_bound(
+                [f"{r.label} ({r.path})" for r in self.cfg.files.entries()]
+            )
+        )
         bound = self._bound_tools(flags)
         self._trace(
             trace.tools_bound(
@@ -736,6 +741,8 @@ class Runtime:
         if cleared.redactions:
             flags.redactions += cleared.redactions
             self.ctx.events.notice(guardrail.NOTICE_REDACTED)
+        if cleared.intent_words_dropped:
+            self._trace(trace.intent_trimmed(cleared.intent_words_dropped))
 
         self._emit(type="query", text=cleared.query)
         # What is left for the whole turn, not for this lookup: the cap is on

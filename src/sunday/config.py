@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from dotenv import load_dotenv
 
@@ -91,9 +91,51 @@ class Echo:
 
 
 @dataclass
+class Root:
+    """One folder Sunday may open, and what the user calls it.
+
+    The label is the whole point. Without one the user says "the documents
+    folder" and the model is left matching English against `C:/Users/User/
+    Documents/Sunday` -- which it did, by inventing a folder called
+    `documents` three different ways. A name is the fact that was missing.
+    """
+
+    label: str
+    path: str
+
+
+@dataclass
 class Files:
-    roots: list[str] = field(default_factory=list)
+    #: Either a bare path string or a {label, path} table. A bare string still
+    #: works and takes the folder's own name as its label, so nothing that was
+    #: configured before has to change.
+    roots: list = field(default_factory=list)
     max_read_bytes: int = 200_000
+
+    def entries(self) -> list[Root]:
+        """The roots as (label, path), whichever way they were written."""
+        out: list[Root] = []
+        for raw in self.roots:
+            if isinstance(raw, dict):
+                path = str(raw.get("path", "")).strip()
+                if not path:
+                    continue
+                label = str(raw.get("label", "")).strip() or _default_label(path)
+            else:
+                path = str(raw).strip()
+                if not path:
+                    continue
+                label = _default_label(path)
+            out.append(Root(label=label.lower(), path=path))
+        return out
+
+    def paths(self) -> list[str]:
+        return [root.path for root in self.entries()]
+
+
+def _default_label(path: str) -> str:
+    """The folder's own name, which is what a person would call it anyway."""
+    return PurePath(path.replace("\\", "/")).name or path
 
 
 @dataclass

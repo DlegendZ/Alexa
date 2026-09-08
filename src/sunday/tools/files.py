@@ -68,7 +68,7 @@ def refused(attempted: str = "") -> str:
             f"is what the user meant, call the tool again with that exact path "
             f"(or a file inside it) and change nothing else."
         )
-    listed = ", ".join(config.get().files.roots)
+    listed = ", ".join(config.get().files.paths())
     if not listed:
         return REFUSED
     return (
@@ -82,12 +82,48 @@ TRUNCATED = "\n[truncated]"
 
 def roots() -> list[Path]:
     out: list[Path] = []
-    for raw in config.get().files.roots:
+    for entry in config.get().files.entries():
         try:
-            out.append(Path(raw).resolve())
+            out.append(Path(entry.path).resolve())
         except OSError:  # pragma: no cover - unreachable roots are skipped
             continue
     return out
+
+
+def labelled_roots() -> list[tuple[str, Path]]:
+    """Each root with the name the user calls it by."""
+    out: list[tuple[str, Path]] = []
+    for entry in config.get().files.entries():
+        try:
+            out.append((entry.label, Path(entry.path).resolve()))
+        except OSError:  # pragma: no cover
+            continue
+    return out
+
+
+def _by_label(raw: str) -> Path | None:
+    """`work`, `work/notes.txt`, `the work folder` -> that root.
+
+    The model is given the labels in its system line, so this is the path it
+    will actually pass once it stops guessing. Matching is on the first
+    segment only: a label cannot smuggle anything, because whatever it
+    resolves to is still checked for containment like every other path.
+    """
+    text = raw.strip().strip('"').replace("\\", "/").strip("/")
+    if not text:
+        return None
+    words = text.split("/")
+    head = words[0].strip().lower()
+    # "the work folder" and "work folder" both mean the root called work.
+    for filler in ("the ", "my "):
+        if head.startswith(filler):
+            head = head[len(filler):]
+    head = head.removesuffix(" folder").removesuffix(" directory").strip()
+
+    for label, path in labelled_roots():
+        if head == label:
+            return path.joinpath(*words[1:]) if len(words) > 1 else path
+    return None
 
 
 def _under(path: Path, root: Path) -> bool:
@@ -116,6 +152,12 @@ def resolve(raw: str) -> Path | None:
     if not raw or not raw.strip():
         return None
     text = raw.strip()
+
+    # A label beats everything: it is unambiguous, and it is what the model is
+    # told to use. Still resolved and still checked for containment below.
+    named = _by_label(text)
+    if named is not None:
+        text = str(named)
 
     candidates: list[Path] = []
     try:
@@ -280,7 +322,7 @@ def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | st
         # `documents/folder` -- and each time the original ended up somewhere
         # the next turn could not find. A missing folder is a question for the
         # user, not a gap to fill.
-        listed = ", ".join(config.get().files.roots)
+        listed = ", ".join(config.get().files.paths())
         return (
             f"error: there is no folder at {dst.parent}, and Sunday does not "
             f"create folders. The folders that exist for this are: {listed}. "

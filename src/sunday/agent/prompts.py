@@ -22,9 +22,9 @@ SYSTEM = """You are Sunday, a personal assistant running locally on the user's o
 #: the user as "Sunday cannot see my Documents folder" when the truth is that
 #: it was never told the folder was there. The refusal string explains *that*
 #: a path was outside the roots; this explains which paths are not.
-ROOTS_SYSTEM = """You may read, write, move and delete inside these folders, and nowhere else:
+ROOTS_SYSTEM = """You may read, write, move and delete inside these folders, and nowhere else. Each one is listed as the name the user calls it, then its path:
 {roots}
-That list is complete. A loose name -- "the documents folder", "the work folder" -- means whichever of those paths contains that word; use the path exactly as written and never invent a folder that is not listed."""
+That list is complete. When the user names one -- "the work folder", "in documents" -- that is the folder they mean, and you may pass the name on its own as a path. Never invent a folder that is not listed."""
 
 NO_ROOTS_SYSTEM = """No folders are configured, so every file path will be refused. If the user asks you to read or write a file, tell them there are no folders set under [files] roots in config.toml."""
 

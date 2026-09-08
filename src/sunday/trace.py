@@ -290,6 +290,16 @@ def blocked(name: str, why: str) -> Line:
     return _line("tools", f"{name} refused: {why}", tool=name, why=why)
 
 
+def intent_trimmed(count: int) -> Line:
+    return _line(
+        "tools",
+        f"{count} word(s) of the agent's hint were not in the cleared material, "
+        f"so they did not go into the query. The hint may reorder what was "
+        f"already crossing; it may not add to it.",
+        dropped=count,
+    )
+
+
 def query_left(query: str) -> Line:
     return _line(
         "tools",
