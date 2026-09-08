@@ -73,7 +73,7 @@ class Clip:
 class VoiceEvent:
     """Something the listener wants said out loud to the rest of the app."""
 
-    kind: Literal["wake", "level", "clip", "dropped", "barge_in"]
+    kind: Literal["wake", "level", "clip", "dropped", "barge_in", "follow_up"]
     score: float = 0.0
     rms: float = 0.0
     clip: Clip | None = None
@@ -130,10 +130,13 @@ class Listener:
         #: and the question is longer than the silence that ends a clip.
         self._live_speech = 0
         self._preroll_samples = 0
-        #: Consecutive speech windows heard while Sunday is talking. Layer 2
-        #: wants a sustained burst, not a frame: residual echo is quiet and
-        #: choppy, a person interrupting is loud and continuous.
+        #: Consecutive speech windows heard while Sunday is talking, or while
+        #: the follow-up window is open. Both want a sustained burst rather
+        #: than a frame: residual echo is quiet and choppy, and so is a room.
         self._burst = 0
+        #: What is left of the window after a reply during which you may just
+        #: talk. Counted down in samples like everything else here.
+        self._follow_up = 0
 
     # -- units ----------------------------------------------------------
 
@@ -164,7 +167,10 @@ class Listener:
             self._preroll.append(block)
             if self.speaking:
                 # Barge-in needs no wake word. You are already talking to it.
-                self._listen_for_barge_in(block, events)
+                self._open_on_speech(block, events, kind="barge_in")
+            elif self._follow_up > 0:
+                self._follow_up = max(0, self._follow_up - block.size)
+                self._open_on_speech(block, events, kind="follow_up")
             else:
                 self._burst = 0
                 self._listen_for_wake(block, events)
@@ -197,13 +203,26 @@ class Listener:
                 self.open(from_wake=True)
                 return
 
-    def _listen_for_barge_in(self, block: np.ndarray, events: list[VoiceEvent]) -> None:
-        """Talking over it. The most latency-sensitive moment in the system.
+    def expect_follow_up(self) -> None:
+        """Leave the door open for a while. Called when a reply finishes.
 
-        This is the same VAD, at the raised threshold, and the burst length is
-        what separates a person from what is left of Sunday's own voice after
-        layer 1. Nothing has to wake up for it -- the VAD has been running the
-        whole time, which is why the target is under 100 ms at all.
+        Saying the wake phrase before every single question turns a
+        conversation into a sequence of summonings. So for `follow_up_ms`
+        after a reply, speech alone opens a clip -- the same test barge-in
+        uses, which is the same question either way: is that a person talking
+        to me, or is that a room.
+        """
+        self._follow_up = self._samples(self.cfg.wake.follow_up_ms)
+
+    def _open_on_speech(
+        self, block: np.ndarray, events: list[VoiceEvent], *, kind: str
+    ) -> None:
+        """Open a clip on sustained speech, with no wake word in the way.
+
+        Barge-in is the latency-sensitive use: nothing has to wake up for it,
+        because the VAD has been running the whole time, which is why the
+        target is under 100 ms at all. The follow-up window is the same
+        machinery at the ordinary threshold.
         """
         if self._vad is None:
             return
@@ -218,8 +237,9 @@ class Listener:
                 self._burst = 0
                 continue
             if self._burst >= needed:
-                events.append(VoiceEvent(kind="barge_in"))
+                events.append(VoiceEvent(kind=kind))  # type: ignore[arg-type]
                 self._burst = 0
+                self._follow_up = 0
                 self.open()
                 return
 
@@ -374,6 +394,7 @@ class Listener:
         self._live_speech = 0
         self._preroll_samples = 0
         self._burst = 0
+        self._follow_up = 0
         self._vad_buffer = np.zeros(0, dtype=np.float32)
         self._wake_buffer = np.zeros(0, dtype=np.float32)
         self._preroll.clear()

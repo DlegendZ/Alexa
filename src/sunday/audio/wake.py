@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from sunday.audio import models
+from sunday.audio import models, onnx
 
 #: The step the models were trained on: 80 ms at 16 kHz.
 CHUNK = 1280
@@ -61,25 +61,14 @@ class WakeWord:
     """
 
     def __init__(self, phrase: str = "hey_jarvis", *, threshold: float = 0.5) -> None:
-        import onnxruntime as ort
-
         self.phrase = phrase
         self.threshold = threshold
 
-        options = ort.SessionOptions()
-        # One thread each. Three tiny graphs run every 80 ms forever; letting
-        # ORT spin up a pool for them costs more in scheduling than it saves.
-        options.inter_op_num_threads = 1
-        options.intra_op_num_threads = 1
-
-        def session(key: str):
-            return ort.InferenceSession(
-                str(models.model_path(key)), options, providers=["CPUExecutionProvider"]
-            )
-
-        self._mel = session("wake/melspectrogram.onnx")
-        self._embed = session("wake/embedding_model.onnx")
-        self._model = session(models.wake_key(phrase))
+        # One thread each. Three tiny graphs run every 80 ms forever, and
+        # starting a pool for them costs more than it saves.
+        self._mel = onnx.session(models.model_path("wake/melspectrogram.onnx"))
+        self._embed = onnx.session(models.model_path("wake/embedding_model.onnx"))
+        self._model = onnx.session(models.model_path(models.wake_key(phrase)))
 
         self._raw = np.zeros(0, dtype=np.float32)
         self._mels = np.zeros((0, 32), dtype=np.float32)

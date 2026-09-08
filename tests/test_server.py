@@ -62,6 +62,7 @@ class FakeEar:
         self.triggered = 0
         self.said: list[str] = []
         self.hushed = 0
+        self.follow_ups = 0
         FakeEar.made.append(self)
 
     def start(self):
@@ -81,6 +82,9 @@ class FakeEar:
 
     def hush(self):
         self.hushed += 1
+
+    def follow_up(self):
+        self.follow_ups += 1
 
     # -- what the real ear does from its own thread ---------------------
 

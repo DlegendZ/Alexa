@@ -63,6 +63,9 @@ class Ear:
         self._stt: Any = None
         self._speaker: Any = None
         self._aec: Any = None
+        #: Set when a turn ends while Sunday is still speaking. The follow-up
+        #: window starts when the reply does, not when the model stops writing.
+        self._pending_follow_up = False
         #: The last few things Kokoro said, for the transcript check. A few
         #: rather than one: transcription finishes after playback has moved on,
         #: so the sentence that came back through the room is usually the one
@@ -115,6 +118,7 @@ class Ear:
 
     def hush(self) -> None:
         """Stop talking now. Barge-in, cancellation, or a turn that broke."""
+        self._pending_follow_up = False
         if self._speaker is not None:
             self._speaker.stop()
 
@@ -131,6 +135,9 @@ class Ear:
         else:
             if self._aec is not None:
                 self._aec.silence()
+            if self._pending_follow_up and self._listener is not None:
+                self._pending_follow_up = False
+                self._listener.expect_follow_up()
 
     def _on_played(self, block: np.ndarray) -> None:
         """Layer 1's reference, and it is bit-exact because we made it."""
@@ -146,6 +153,20 @@ class Ear:
     def abandon(self) -> None:
         if self._listener is not None:
             self._listener.abandon()
+
+    def follow_up(self) -> None:
+        """The turn is over. Leave the door open for the next question.
+
+        If Sunday is still talking, this waits: the window has to start when
+        the reply ends, not when the model stopped writing it, or most of it
+        is spent listening to the speaker.
+        """
+        if self._listener is None:
+            return
+        if self._speaker is not None and self._speaker.speaking:
+            self._pending_follow_up = True
+            return
+        self._listener.expect_follow_up()
 
     # -- the thread -----------------------------------------------------
 
@@ -224,6 +245,8 @@ class Ear:
             # same bug as a trace line that is written and never emitted.
             self._emit({"type": "notice", "text": f"heard nothing usable: {event.why}"})
             self._emit({"type": "state", "value": "idle"})
+        elif event.kind == "follow_up":
+            self._emit({"type": "state", "value": "listening"})
         elif event.kind == "barge_in":
             self._barge_in()
         elif event.kind == "clip" and event.clip is not None:

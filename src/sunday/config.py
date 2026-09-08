@@ -121,6 +121,14 @@ class Wake:
     #: `python -m sunday.audio.check` prints both numbers for your own voice.
     threshold: float = 0.3
     cooldown_ms: int = 1500
+    #: How long the door stays open after a reply, so a conversation is a
+    #: conversation rather than a sequence of summonings. Say the phrase once
+    #: and the follow-up questions need only be spoken.
+    #:
+    #: Eight seconds is long enough to think of the next thing and short enough
+    #: that a room does not spend its evening being listened to. Zero turns it
+    #: off and every turn needs the phrase again.
+    follow_up_ms: int = 8000
 
 
 @dataclass

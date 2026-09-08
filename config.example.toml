@@ -37,6 +37,9 @@ model       = "hey_jarvis"
 # `python -m sunday.audio.check` to see both numbers for your own voice.
 threshold   = 0.3
 cooldown_ms = 1500
+# After a reply, speech alone opens the next question for this long, so a
+# conversation is a conversation rather than a sequence of summonings. 0 = off.
+follow_up_ms = 8000
 
 [tts]
 enabled  = true

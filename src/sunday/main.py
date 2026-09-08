@@ -227,6 +227,10 @@ def main() -> int:
         if first_token[0] and state.get("final_response"):
             print(f"sunday> {state['final_response']}", end="")
         print("\n")
+        # The door stays open for a moment, so the next question needs no wake
+        # word. The ear waits for the reply to finish being spoken first.
+        if ear is not None:
+            ear.follow_up()
         _prompt()
 
     # Quitting is a session boundary like going idle: flush the summary.

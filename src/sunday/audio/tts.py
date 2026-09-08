@@ -27,10 +27,11 @@ from typing import Any
 import numpy as np
 
 from sunday import config
-from sunday.audio import models
+from sunday.audio import models, onnx
 
 #: Kokoro's own output rate. Not configurable -- it is what the model produces.
 RATE = 24000
+
 
 
 class Speech:
@@ -40,8 +41,11 @@ class Speech:
         from kokoro_onnx import Kokoro
 
         self.cfg = cfg or config.get()
-        self._kokoro: Any = Kokoro(
-            str(models.model_path("kokoro/kokoro-v1.0.onnx")),
+
+        # The one model allowed the whole machine, because it is the one whose
+        # latency you hear. It may not hold the cores hot, though -- see onnx.
+        self._kokoro: Any = Kokoro.from_session(
+            onnx.session(models.model_path("kokoro/kokoro-v1.0.onnx"), threads=None),
             str(models.model_path("kokoro/voices-v1.0.bin")),
         )
         self.voice = self.cfg.tts.voice

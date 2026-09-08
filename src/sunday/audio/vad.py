@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from sunday.audio import models
+from sunday.audio import models, onnx
 
 #: The only window size the model accepts at 16 kHz.
 WINDOW = 512
@@ -33,16 +33,7 @@ class Vad:
     """One probability per 512 samples, and the state that ties them together."""
 
     def __init__(self, *, sample_rate: int = 16000) -> None:
-        import onnxruntime as ort
-
-        options = ort.SessionOptions()
-        options.inter_op_num_threads = 1
-        options.intra_op_num_threads = 1
-        self._session = ort.InferenceSession(
-            str(models.model_path("vad/silero_vad.onnx")),
-            options,
-            providers=["CPUExecutionProvider"],
-        )
+        self._session = onnx.session(models.model_path("vad/silero_vad.onnx"))
         self._sr = np.array(sample_rate, dtype=np.int64)
         self._state = np.zeros((2, 1, 128), dtype=np.float32)
         self._context = np.zeros(_CONTEXT, dtype=np.float32)

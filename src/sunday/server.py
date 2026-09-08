@@ -330,6 +330,22 @@ class Sidecar:
             def push(event: dict) -> None:
                 loop.call_soon_threadsafe(queue.put_nowait, event)
 
+            def speak(sentence: str) -> None:
+                """The splitter's second sink, which now has two readers.
+
+                The speaker is told straight away, on this thread, because a
+                trip through the loop is latency you can hear. The clients are
+                told through the same queue as everything else -- a second
+                path would race the first, and `done` travels on the queue.
+                Clients stop listening at `done`, so a sentence that overtook
+                it is a sentence nobody sees. That is the ordering mistake this
+                codebase has now made three times.
+                """
+                ear = self._ear
+                if ear is not None:
+                    ear.say(sentence)
+                push({"type": "sentence", "text": sentence})
+
             def confirm(request: ConfirmRequest) -> bool:
                 """Runs on the worker thread. Asks every attached client and
                 blocks until one answers or the timeout decides no.
@@ -361,7 +377,7 @@ class Sidecar:
                         text,
                         modality=modality,
                         on_token=lambda t: push({"type": "token", "text": t}),
-                        on_sentence=self._speak,
+                        on_sentence=speak,
                         on_event=push,
                         on_confirm=confirm,
                     )
@@ -379,28 +395,12 @@ class Sidecar:
                     break
                 await self._broadcast(event)
             await task
+            # The door stays open for a moment, so the next question needs no
+            # wake word. The ear waits for the reply to finish being spoken
+            # before it starts counting.
+            if self._ear is not None:
+                self._ear.follow_up()
             await self._broadcast({"type": "state", "value": "idle"})
-
-    def _speak(self, sentence: str) -> None:
-        """The splitter's second sink. It goes to the clients either way; when
-        there is an ear attached it also goes to the speaker, one sentence at a
-        time, while the model is still writing the next one."""
-        ear = self._ear
-        if ear is not None:
-            ear.say(sentence)
-        loop = self._loop
-        if loop is None:
-            return
-        try:
-            loop.call_soon_threadsafe(
-                lambda: self._relays.add(
-                    asyncio.create_task(
-                        self._broadcast({"type": "sentence", "text": sentence})
-                    )
-                )
-            )
-        except RuntimeError:
-            pass
 
     # -- sending --------------------------------------------------------
 

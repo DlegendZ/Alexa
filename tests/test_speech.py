@@ -296,3 +296,50 @@ def test_the_filler_words_carry_no_evidence():
     short sentences that alone clears the cutoff."""
     assert not echo.is_echo("is it the one", "The weather is clear and it is warm.")
     assert echo.words("The gold is in it") == {"gold"}
+
+
+# -- the follow-up window -------------------------------------------------
+
+
+def test_the_second_question_needs_no_wake_word(cfg):
+    """Saying the phrase before every question turns a conversation into a
+    sequence of summonings. After a reply the door stays open for a while, and
+    speech alone opens the next clip."""
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    drive(listener, 40, QUIET)
+    assert listener.phase == "sleeping"  # no phrase, no wake
+
+    listener.expect_follow_up()
+    events = drive(listener, 20, LOUD)
+    assert "follow_up" in kinds(events)
+    assert listener.phase == "recording"
+
+
+def test_the_window_closes_and_the_phrase_is_needed_again(cfg):
+    cfg.wake.follow_up_ms = 200
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.expect_follow_up()
+
+    # Quiet for longer than the window, then talk.
+    drive(listener, 20, QUIET)
+    events = drive(listener, 20, LOUD)
+    assert "follow_up" not in kinds(events)
+    assert listener.phase == "sleeping"
+
+
+def test_a_quiet_room_does_not_open_the_window_by_itself(cfg):
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.expect_follow_up()
+    assert kinds(drive(listener, 100, QUIET)) == []
+    assert listener.phase == "sleeping"
+
+
+def test_the_window_starts_when_the_reply_ends_not_when_it_was_written(cfg):
+    """Most of an eight-second window spent listening to the speaker is not an
+    eight-second window."""
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.speaking = True
+    listener.expect_follow_up()
+    # While speaking, the same sustained speech is barge-in, not follow-up.
+    events = drive(listener, 20, LOUD)
+    assert kinds(events) == ["barge_in"]

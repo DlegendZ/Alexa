@@ -30,6 +30,11 @@ from sunday.audio.listener import FRAME_MS
 #: How long the reader waits between rebinding attempts after a device error.
 RETRY_S = 1.0
 
+#: How many dropped frames are worth mentioning. Two seconds of audio: below
+#: that it is the sound card settling as playback starts, and saying so
+#: interrupts a reply to report that nothing happened.
+DROPPED_BEFORE_SAYING = 100
+
 #: Frames the queue will hold before it starts dropping the oldest. Two
 #: seconds. If the listener is that far behind, the audio is stale anyway and
 #: keeping it only makes the backlog worse.
@@ -79,6 +84,11 @@ class Microphone:
         self._frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=QUEUE_FRAMES)
         self._stop = threading.Event()
         self._stream: Any = None
+        #: Frames PortAudio had to throw away because it could not hand them
+        #: over in time. A few at the start of playback are ordinary; a steady
+        #: stream of them means something is holding the CPU.
+        self._dropped = 0
+        self._reported = 0
 
     # -- the stream -----------------------------------------------------
 
@@ -92,8 +102,11 @@ class Microphone:
         def callback(indata, _frames, _time, status) -> None:
             # PortAudio's callback thread. One copy, one put, nothing else --
             # anything slower here shows up as dropped audio, not as lag.
-            if status and self._on_error is not None:
-                self._on_error(str(status))
+            # Counting rather than reporting is part of that: `input overflow`
+            # arrives in bursts of dozens, and a callback that logs each one
+            # causes the next.
+            if status:
+                self._dropped += 1
             block = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
             try:
                 self._frames.put_nowait(block)
@@ -156,8 +169,27 @@ class Microphone:
                 if self._stream is not None and not self._alive():
                     self._rebind("the capture stream stopped")
                 continue
+            self._report_drops()
             if block.size:
                 yield block
+
+    def _report_drops(self) -> None:
+        """Say something only when it is worth saying.
+
+        A handful of dropped frames while a reply starts playing is the sound
+        card settling, and printing it interrupts the reply to report that
+        nothing happened. Past the threshold it is a real symptom -- something
+        is holding the CPU -- and then it is worth one line, once.
+        """
+        dropped = self._dropped
+        if dropped - self._reported < DROPPED_BEFORE_SAYING:
+            return
+        self._reported = dropped
+        if self._on_error is not None:
+            self._on_error(
+                f"the microphone dropped {dropped} frame(s); something is "
+                f"holding the CPU"
+            )
 
     def _alive(self) -> bool:
         try:

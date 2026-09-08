@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from sunday.audio import models
+from sunday.audio import models, onnx
 
 #: Decoder start, and end of sequence, from Moonshine's generation config.
 _BOS = 1
@@ -43,22 +43,16 @@ class Moonshine:
     """Loaded once and kept resident. Nothing here sleeps."""
 
     def __init__(self) -> None:
-        import onnxruntime as ort
         from tokenizers import Tokenizer
 
-        options = ort.SessionOptions()
-        options.inter_op_num_threads = 1
-        options.intra_op_num_threads = 4
-
-        self._encoder = ort.InferenceSession(
-            str(models.model_path("moonshine/encoder_model.onnx")),
-            options,
-            providers=["CPUExecutionProvider"],
+        # Four threads: enough that a thirty-second clip is not a wait, few
+        # enough that transcribing does not stop the microphone hearing the
+        # next thing you say.
+        self._encoder = onnx.session(
+            models.model_path("moonshine/encoder_model.onnx"), threads=4
         )
-        self._decoder = ort.InferenceSession(
-            str(models.model_path("moonshine/decoder_model_merged.onnx")),
-            options,
-            providers=["CPUExecutionProvider"],
+        self._decoder = onnx.session(
+            models.model_path("moonshine/decoder_model_merged.onnx"), threads=4
         )
         self._tokenizer = Tokenizer.from_file(str(models.model_path("moonshine/tokenizer.json")))
 
