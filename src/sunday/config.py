@@ -53,7 +53,7 @@ class Models:
     #: 8192 was chosen before any of that was measured, and it cost more than
     #: it looked: the slices were being scaled down by 0.61 to fit under it.
     context_tokens: int = 32768
-    thinking_budget: int = 1024
+    thinking_budget: int = 2048
     summariser: str = "deepseek-v4-flash"
     #: What no memory slice pays for: the system prompt, the bound tool
     #: schemas, the memory framing block, and the standing system lines the
@@ -152,10 +152,21 @@ class Memory:
     distance_cutoff: float = 0.45
     top_k: int = 5
     idle_minutes: int = 10
-    slice_summary: int = 1024
-    slice_recent: int = 3072
-    slice_retrieved: int = 1024
-    slice_tools: int = 2048
+    #: Doubled once the window went to 32768, keeping the ratios. Not tripled,
+    #: and the reason is measured rather than felt: prompt processing runs at
+    #: about 0.15 ms per token above 3k on this card, so a turn that actually
+    #: fills its slices pays for them before it says a word. 8192 of slices is
+    #: ~1.6 s of prompt eval at worst, 16384 is ~2.9 s, and 24576 would be over
+    #: four seconds on every turn of a long session -- which is the wrong trade
+    #: for something meant to be spoken to.
+    #:
+    #: These are allowances, not usage: a short session fills none of them, so
+    #: the cost arrives gradually and only in the sessions long enough to have
+    #: earned it.
+    slice_summary: int = 2048
+    slice_recent: int = 6144
+    slice_retrieved: int = 2048
+    slice_tools: int = 4096
 
 
 @dataclass

@@ -911,3 +911,36 @@ second only named itself because it happened to be captured in a file.
 The budget is on silence rather than on the turn, so raising it costs nothing when the test
 passes — it only waits longer in the case that was already going to fail. What it buys is a
 failure that says which message never arrived.
+
+## 59. The slices doubled, and the reason it was not tripled is measured
+
+**Doc:** Stage 02 — the five allowances, and note 51 which widened the window and
+deliberately left them alone.
+**Code:** `slice_summary` 1024→2048, `slice_recent` 3072→6144, `slice_retrieved` 1024→2048,
+`slice_tools` 2048→4096, `thinking_budget` 1024→2048. The ratios are unchanged.
+**Why:** note 51 widened the window to 32768 and said in as many words that how much of it
+memory should take was a separate question with a real trade in it. This is that question,
+answered with numbers instead of instinct.
+
+Prompt processing on this card runs at roughly **0.15 ms per token** above 3k, measured:
+
+| prompt tokens | prompt eval |
+| --- | --- |
+| 1349 | 331 ms |
+| 3329 | 661 ms |
+| 6629 | 1031 ms |
+| 13229 | 2002 ms |
+
+A turn pays that before it produces a word. So 8192 of slices was about 1.6 s at worst,
+16384 is about 2.9 s, and 24576 — the largest that would still fit — would be over four
+seconds on every turn of a long session. For something meant to be spoken to, that is the
+wrong trade, and the difference between "fits" and "should" is exactly the thing 8192 got
+wrong for a whole build.
+
+What makes any of it affordable is that slices are **allowances, not usage**. A short
+session fills none of them and pays nothing; the cost arrives gradually and only in sessions
+long enough to have earned it. Verified after the change: a three-turn session assembled 91
+to 336 tokens of context against an allowance of 10240, at the same latency as before.
+
+The remaining 13216 tokens stay slack. Overhead has moved four times already, and a large
+tool result has to land somewhere that is not the memory slices.

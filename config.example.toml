@@ -8,7 +8,7 @@
 agent           = "qwen3.5:2b"
 ollama_url      = "http://127.0.0.1:11434"
 context_tokens  = 32768      # measured: 32k costs 260 MiB more VRAM and no speed
-thinking_budget = 1024
+thinking_budget = 2048
 # The airlock summariser. The only model that is not local, and it only ever
 # sees a cleared query plus text that was already public.
 summariser      = "deepseek-v4-flash"
@@ -51,10 +51,12 @@ max_read_bytes = 200000
 distance_cutoff = 0.45   # tune with real turns
 top_k           = 5
 idle_minutes    = 10
-slice_summary   = 1024
-slice_recent    = 3072
-slice_retrieved = 1024
-slice_tools     = 2048
+# Doubled with the window. Measured: ~0.15 ms of prompt eval per token above
+# 3k, so slices that actually fill are paid for before the first word.
+slice_summary   = 2048
+slice_recent    = 6144
+slice_retrieved = 2048
+slice_tools     = 4096
 
 [external]
 enabled           = true
