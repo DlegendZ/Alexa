@@ -194,6 +194,7 @@ class Ear:
             # is no reference to align and the frame comes back untouched.
             if self._aec is not None:
                 frame = self._aec.process(frame)
+                self._listener.reference_rms = self._aec.reference_rms
             for event in self._listener.frame(frame):
                 self._handle(event)
 

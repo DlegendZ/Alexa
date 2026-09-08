@@ -106,6 +106,11 @@ class Aec:
         self._previous = np.zeros(frame, dtype=np.float32)
         #: Running estimate of reference power, for the normalisation.
         self._power = np.zeros(self._fft // 2 + 1)
+        #: How loud the thing being played was, for the frame just processed.
+        #: Read by the barge-in gate: what is left after cancellation has to be
+        #: loud enough, relative to what went out, to be a person rather than
+        #: the room. Zero when nothing is playing, which is the ordinary state.
+        self.reference_rms = 0.0
 
     # -- the two sides ---------------------------------------------------
 
@@ -119,6 +124,7 @@ class Aec:
         the room has not changed, only the signal going into it."""
         self._reference = np.zeros(0, dtype=np.float32)
         self._previous = np.zeros(self.frame, dtype=np.float32)
+        self.reference_rms = 0.0
 
     def process(self, mic: np.ndarray) -> np.ndarray:
         """One capture frame, with the echo estimate subtracted."""
@@ -128,7 +134,9 @@ class Aec:
 
         reference = self._take()
         if reference is None:
+            self.reference_rms = 0.0
             return frame
+        self.reference_rms = float(np.sqrt(np.mean(np.square(reference))))
 
         block = np.concatenate([self._previous, reference])
         self._previous = reference

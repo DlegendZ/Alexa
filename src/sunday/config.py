@@ -148,6 +148,17 @@ class Tts:
 class Echo:
     speech_threshold_while_speaking: float = 0.8
     transcript_similarity_cutoff: float = 0.6
+    #: What is left after cancellation has to be this loud, relative to what
+    #: was played, before it counts as a person. The VAD alone is not enough:
+    #: Silero scores Sunday's own voice coming back through the room at 1.0,
+    #: because it *is* speech -- just not yours. Raising the VAD threshold
+    #: cannot separate them either, for the same reason.
+    #:
+    #: Measured by `python -m sunday.audio.check --echo`, which plays into your
+    #: room, records the result, and prints the ratio echo alone produces.
+    #: The default is a few times a well-aligned canceller's residual; if it
+    #: interrupts itself, this is the number to raise.
+    barge_in_ratio: float = 0.35
     #: Layer 2 wants "a sustained burst rather than a single frame", and this
     #: is how long a burst is. Three Silero windows at 16 kHz, which is 96 ms
     #: -- chosen against the sub-100 ms target for first syllable to silence,

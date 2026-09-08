@@ -1,6 +1,7 @@
-r"""Measure the microphone, because the test suite cannot.
+r"""Measure the microphone and the room, because the test suite cannot.
 
-    .venv\Scripts\python.exe -m sunday.audio.check
+    .venv\Scripts\python.exe -m sunday.audio.check          # the listening half
+    .venv\Scripts\python.exe -m sunday.audio.check --echo   # the speaking half
 
 Every number in `[audio]` and `[wake]` is a guess until it is measured on the
 hardware it will run on, and the failures they cause all look the same from
@@ -80,6 +81,120 @@ def record(seconds: int = SECONDS) -> np.ndarray:
     return np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
 
 
+def sweep(seconds: float = 0.8, rate: int = 24000) -> np.ndarray:
+    """A rising sweep. Broadband, so the cross-correlation has a sharp peak,
+    and short, so the reflection of its start is not still arriving at its end."""
+    t = np.arange(int(seconds * rate)) / rate
+    chirp = np.sin(2 * np.pi * (200 * t + (5000 - 200) / (2 * seconds) * t * t))
+    fade = np.minimum(1.0, np.minimum(t, seconds - t) * 40)
+    return (chirp * fade * 0.4).astype(np.float32)
+
+
+def measure_echo() -> int:
+    """Play into the room, listen to what comes back, and report the two
+    numbers the echo canceller cannot derive for itself."""
+    from sunday.audio.aec import FRAME, Aec, erle, to_capture_rate
+    from sunday.audio.capture import Microphone, _sounddevice
+
+    cfg = config.get()
+    rate = cfg.audio.sample_rate
+    sd = _sounddevice()
+
+    tone = sweep()
+    lead = np.zeros(int(0.4 * 24000), dtype=np.float32)
+    tail = np.zeros(int(0.6 * 24000), dtype=np.float32)
+    played = np.concatenate([lead, tone, tail])
+
+    print("Turn the volume to where you normally have it, and stay quiet.")
+    print(f"Playing a sweep through {cfg.audio.output_device or 'the default output'}.\n")
+
+    mic = Microphone(cfg, on_error=lambda text: print(f"  ! {text}"))
+    frames: list[np.ndarray] = []
+    stream = None
+    try:
+        reader = mic.frames()
+        next(reader)  # open the input stream before making any noise
+        stream = sd.OutputStream(
+            samplerate=24000, channels=1, dtype="float32", blocksize=480,
+            device=cfg.audio.output_device.strip() or None,
+        )
+        stream.start()
+        stream.write(played)
+        for _ in range(int(0.4 * rate / FRAME)):  # let the tail arrive
+            frames.append(next(reader))
+    except StopIteration:
+        print("the microphone produced nothing at all.")
+        return 1
+    finally:
+        mic.stop()
+        if stream is not None:
+            stream.stop()
+            stream.close()
+
+    heard = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
+    reference = to_capture_rate(played)
+    if heard.size < reference.size // 2:
+        print(f"only {heard.size} samples came back; not enough to measure.")
+        return 1
+
+    peak = float(np.abs(heard).max())
+    print(f"1. came back  {heard.size} samples, peak {peak:.4f}")
+    if peak < 0.01:
+        print("   the microphone did not hear the speaker at all. If that is")
+        print("   headphones, there is nothing here to measure and nothing to")
+        print("   cancel -- which is the good case.")
+        return 0
+
+    # Cross-correlate to find the round trip. The peak is where what was
+    # played lines up with what came back.
+    window = min(heard.size, reference.size)
+    correlation = np.correlate(
+        heard[:window] - heard[:window].mean(),
+        reference[:window] - reference[:window].mean(),
+        mode="full",
+    )
+    lag = int(np.argmax(correlation)) - (window - 1)
+    delay_ms = max(0, round(lag * 1000 / rate))
+    strength = float(correlation.max() / (np.linalg.norm(heard[:window]) * np.linalg.norm(reference[:window]) + 1e-9))
+    print(f"2. round trip {delay_ms} ms (correlation {strength:.3f}), config says {cfg.audio.aec_delay_ms}")
+    if strength < 0.05:
+        print("   too weak to trust. Raise the volume and run it again.")
+        return 1
+
+    # Now run it back through the canceller at the measured delay, and see
+    # what is left. That residual is what the barge-in gate has to sit above.
+    aec = Aec(frame=FRAME, delay_ms=delay_ms, rate=rate)
+    residuals, references = [], []
+    for i in range(0, heard.size - FRAME, FRAME):
+        aec.played(reference[i : i + FRAME], rate=rate)
+        out = aec.process(heard[i : i + FRAME])
+        if aec.reference_rms > 0.01:
+            residuals.append(float(np.sqrt(np.mean(np.square(out)))))
+            references.append(aec.reference_rms)
+
+    if not residuals:
+        print("3. cancelled  nothing lined up; the delay is outside what it can hold.")
+        return 1
+
+    ratios = np.array(residuals) / np.array(references)
+    cancelled = np.array(residuals)
+    raw = np.array([
+        float(np.sqrt(np.mean(np.square(heard[i : i + FRAME]))))
+        for i in range(0, len(residuals) * FRAME, FRAME)
+    ])
+    print(f"3. cancelled  {erle(raw, cancelled):.1f} dB of echo removed")
+    worst = float(np.percentile(ratios, 95))
+    print(f"4. residual   {worst:.3f} of what was played, at the 95th percentile")
+
+    suggested = max(0.1, round(worst * 3, 2))
+    print("\nMeasured on this machine, for config.toml:")
+    print(f"  [audio] aec_delay_ms   = {delay_ms}")
+    print(f"  [echo]  barge_in_ratio = {suggested}")
+    print("\nThe ratio is what stops it interrupting itself: a person has to be")
+    print("that much louder than what is playing before it counts as one.")
+    return 0
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -91,12 +206,25 @@ def main() -> int:
     from sunday.audio import models
 
     outstanding = models.missing(models.required(cfg))
+    if outstanding and "--echo" in sys.argv:
+        outstanding = [k for k in outstanding if not k.startswith("kokoro/")]
     if outstanding:
         print(f"{len(outstanding)} model(s) not downloaded yet:")
         for key in outstanding:
             print(f"  {key}")
         print(r"  run: .venv\Scripts\python.exe -m sunday.audio.models")
         return 1
+
+    if "--echo" in sys.argv:
+        return measure_echo()
+
+    if "--voices" in sys.argv:
+        from sunday.audio.tts import Speech
+
+        for name in Speech(cfg).voices():
+            print(f"  {name}")
+        print(f'\nconfig: [tts] voice = "{cfg.tts.voice}"')
+        return 0
 
     from sunday.audio.capture import devices
     from sunday.audio.stt import Moonshine

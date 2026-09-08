@@ -137,6 +137,11 @@ class Listener:
         #: What is left of the window after a reply during which you may just
         #: talk. Counted down in samples like everything else here.
         self._follow_up = 0
+        #: How loud what is being played was, this frame, at the microphone's
+        #: rate. Set by whoever owns the canceller; zero when nothing is out
+        #: there. It is the only thing that can separate Sunday's voice from
+        #: yours -- both are speech, and the VAD says 1.0 to either.
+        self.reference_rms = 0.0
 
     # -- units ----------------------------------------------------------
 
@@ -227,11 +232,21 @@ class Listener:
         if self._vad is None:
             return
         self._vad_buffer = np.concatenate([self._vad_buffer, block])
-        needed = max(1, round(self.cfg.echo.barge_in_ms / (vad_module.WINDOW * 1000 / self.rate)))
+        needed = max(
+            1, round(self.cfg.echo.barge_in_ms / (vad_module.WINDOW * 1000 / self.rate))
+        )
+        floor = self.reference_rms * self.cfg.echo.barge_in_ratio
         while self._vad_buffer.size >= vad_module.WINDOW:
             window = self._vad_buffer[: vad_module.WINDOW]
             self._vad_buffer = self._vad_buffer[vad_module.WINDOW :]
-            if self._vad.probability(window) >= self._threshold():
+            speech = self._vad.probability(window) >= self._threshold()
+            # Loud enough, against what is being played, to be a person. The
+            # VAD cannot answer this: Sunday's own voice returning through the
+            # room *is* speech, and Silero scores it 1.0. Raising the VAD
+            # threshold does not help for the same reason. What separates them
+            # is that a person is loud where the residual echo is not.
+            loud = float(np.sqrt(np.mean(np.square(window)))) >= floor
+            if speech and loud:
                 self._burst += 1
             else:
                 self._burst = 0

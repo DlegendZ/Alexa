@@ -343,3 +343,53 @@ def test_the_window_starts_when_the_reply_ends_not_when_it_was_written(cfg):
     # While speaking, the same sustained speech is barge-in, not follow-up.
     events = drive(listener, 20, LOUD)
     assert kinds(events) == ["barge_in"]
+
+
+# -- the gate that stops it interrupting itself ---------------------------
+
+
+def test_its_own_voice_does_not_count_as_an_interruption(cfg):
+    """The bug this exists for: it heard itself and cut itself off.
+
+    The VAD cannot help here and no threshold on it can. Sunday's voice
+    returning through the room *is* speech, and Silero scores it 1.0 -- so
+    layer 2's raised bar separates loud speech from quiet speech, and both
+    sides of this are loud speech. What separates them is that the residual
+    left after cancellation is small against what was played, and a person is
+    not.
+    """
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad(floor=0.01))
+    listener.speaking = True
+    # Playing at 0.4; a well-cancelled echo leaves a few percent of that.
+    listener.reference_rms = 0.4
+    events = drive(listener, 40, 0.03)
+    assert kinds(events) == []
+    assert listener.phase == "sleeping"
+
+
+def test_a_person_over_the_top_of_it_still_gets_through(cfg):
+    """The other half. A gate that never opens is not a fix."""
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad(floor=0.01))
+    listener.speaking = True
+    listener.reference_rms = 0.4
+    events = drive(listener, 20, 0.25)
+    assert "barge_in" in kinds(events)
+
+
+def test_the_gate_is_relative_not_absolute(cfg):
+    """Quiet playback means a quiet interruption still counts. An absolute
+    floor would make barge-in depend on the volume knob."""
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad(floor=0.001))
+    listener.speaking = True
+    listener.reference_rms = 0.02  # playing quietly
+    events = drive(listener, 20, 0.02)
+    assert "barge_in" in kinds(events)
+
+
+def test_nothing_playing_means_nothing_to_be_louder_than(cfg):
+    """The follow-up window runs with the speaker silent, so the gate must be
+    open by default rather than closed."""
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.expect_follow_up()
+    assert listener.reference_rms == 0.0
+    assert "follow_up" in kinds(drive(listener, 20, LOUD))

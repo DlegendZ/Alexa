@@ -51,6 +51,9 @@ language = "en-us"
 speech_threshold_while_speaking = 0.8
 transcript_similarity_cutoff    = 0.6
 barge_in_ms                     = 96   # 3 VAD windows; under the 100 ms target
+# How loud the residual must be, against what was played, to be a person.
+# Measure with: python -m sunday.audio.check --echo
+barge_in_ratio                  = 0.35
 
 [files]
 # Each root can be a bare path, or a table with the name you call it by.
