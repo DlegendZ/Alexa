@@ -216,6 +216,17 @@ class Echo:
     #: 1 is what this has to clear. Raise it if it interrupts itself; lower it
     #: if talking over it stops working.
     barge_in_ratio: float = 0.35
+    #: How long Sunday counts as still speaking after the last block has gone
+    #: to the sound card.
+    #:
+    #: `write` returns when the card has *accepted* the audio, not when it has
+    #: played it, so there is a buffer still to come and then a room still
+    #: ringing. Everything that protects against hearing itself keys off the
+    #: speaking flag -- the raised VAD bar, the barge-in floor, and the
+    #: transcript check, which only examines clips recorded while speaking. Drop
+    #: the flag at the last `write` and all three switch off while the sound is
+    #: still in the air, and the follow-up window opens into it.
+    tail_ms: int = 400
     #: Layer 2 wants "a sustained burst rather than a single frame", and this
     #: is how long a burst is. Three Silero windows at 16 kHz, which is 96 ms
     #: -- chosen against the sub-100 ms target for first syllable to silence,

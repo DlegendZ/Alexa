@@ -222,6 +222,7 @@ def test_barge_in_needs_a_burst_not_a_frame(cfg):
     continuous. One window of either is not a decision."""
     listener = Listener(cfg, wake=FakeWake(), vad=LevelVad())
     listener.speaking = True
+    listener.reference_rms = 0.01  # something is playing, and quietly
 
     # One frame of speech is 320 samples: not even a whole VAD window.
     assert "barge_in" not in kinds(drive(listener, 1, LOUD))
@@ -341,6 +342,7 @@ def test_the_window_starts_when_the_reply_ends_not_when_it_was_written(cfg):
     eight-second window."""
     listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
     listener.speaking = True
+    listener.reference_rms = 0.01
     listener.expect_follow_up()
     # While speaking, the same sustained speech is barge-in, not follow-up.
     events = drive(listener, 20, LOUD)
@@ -479,3 +481,89 @@ def test_the_window_lasts_as_long_as_it_says(cfg):
     drive(listener, frames_past, QUIET)
     assert "follow_up" not in kinds(drive(listener, 20, LOUD))
     assert listener.phase == "sleeping"
+
+
+# -- the two holes a live session found ------------------------------------
+
+
+def test_it_still_counts_as_speaking_while_the_sound_is_in_the_air(cfg):
+    """`write` returns when the sound card has *accepted* a block, not when it
+    has played it -- so at the last write there is a buffer still to come and
+    then a room still ringing.
+
+    Every defence against hearing itself keys off this flag: the raised VAD
+    bar, the barge-in floor, and the transcript check, which only looks at
+    clips recorded while it was set. Dropping it at the last write turned all
+    three off while Alexa's voice was still audible, and opened the thirty
+    second follow-up window into it.
+    """
+    cfg.echo.tail_ms = 400
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+
+    listener.speaking = True
+    assert listener.speaking is True
+
+    listener.speaking = False
+    assert listener.speaking is True, "the tail has not been given a chance yet"
+
+    # Ten frames is 200 ms: half the tail, so still speaking.
+    drive(listener, 10, QUIET)
+    assert listener.speaking is True
+
+    drive(listener, 12, QUIET)  # past 400 ms
+    assert listener.speaking is False
+
+
+def test_the_tail_keeps_the_transcript_check_alive(cfg):
+    """Which is the point of it. A clip that catches the end of a reply has to
+    be marked, or layer 3 is not allowed to look at exactly the audio most
+    likely to be an echo."""
+    cfg.echo.tail_ms = 400
+    listener = Listener(cfg, wake=FakeWake(), vad=LevelVad())
+    drive(listener, 40, QUIET)
+    assert listener.phase == "recording"
+
+    listener.speaking = True
+    listener.speaking = False  # the last block has gone to the card
+    drive(listener, 5, LOUD)  # the room, still ringing, inside the tail
+    events = drive(listener, 60, QUIET)
+
+    clip = [e for e in events if e.kind == "clip"]
+    if clip:
+        assert clip[0].clip.while_speaking is True
+
+
+def test_not_knowing_how_loud_it_is_closes_the_gate(cfg):
+    """The reference lags the first block of a reply by the configured delay.
+    That lag was a hole with no floor in it at all -- at the start of every
+    sentence, which is where the room is loudest."""
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.speaking = True
+    listener.reference_rms = 0.0  # playing, but not yet aligned
+
+    assert kinds(drive(listener, 40, LOUD)) == []
+    assert listener.phase == "sleeping"
+
+    listener.reference_rms = 0.01
+    assert "barge_in" in kinds(drive(listener, 20, LOUD))
+
+
+def test_talking_while_it_is_thinking_is_an_interruption(cfg):
+    """The gap between your question and the first word of the answer is
+    seconds long, and it is the likeliest moment to change your mind. Nothing
+    is playing then, so loud speech can only be a person -- but with no wake
+    word and no reply to talk over, there was nothing to notice it."""
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    assert kinds(drive(listener, 20, LOUD)) == []  # no wake word: nothing
+
+    listener.busy = True
+    events = drive(listener, 20, LOUD)
+    assert "barge_in" in kinds(events)
+    assert listener.phase == "recording"
+
+
+def test_a_turn_that_is_not_running_is_not_interruptible(cfg):
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.busy = True
+    listener.busy = False
+    assert kinds(drive(listener, 40, LOUD)) == []

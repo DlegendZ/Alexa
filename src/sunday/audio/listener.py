@@ -102,9 +102,15 @@ class Listener:
         self._vad = vad
 
         self.phase: Phase = "sleeping"
-        #: Raised while Kokoro is playing, so residual echo does not read as a
-        #: person. Inert until there is something to play -- see Echo control.
-        self.speaking = False
+        self._speaking = False
+        #: What is left of the tail after playback stopped -- see `speaking`.
+        self._tail = 0
+        #: A turn is in flight: the transcript has gone to the graph and no
+        #: reply has finished. Talking during it is an interruption exactly as
+        #: talking over the reply is, and needs no wake word either. Nothing is
+        #: playing, so there is no echo to tell apart -- this is the one part
+        #: of a turn where loud speech can only be a person.
+        self.busy = False
         #: Muted means the capture stream is stopped upstream; this is the
         #: belt to that pair of braces.
         self.muted = False
@@ -152,6 +158,30 @@ class Listener:
         #: yours -- both are speech, and the VAD says 1.0 to either.
         self.reference_rms = 0.0
 
+    @property
+    def speaking(self) -> bool:
+        """True while Kokoro is playing, and for `tail_ms` after it stops.
+
+        The tail is not padding. `write` returns when the sound card has
+        accepted a block, not when it has played it, so at the last write there
+        is still a buffer to come and then a room ringing. Every defence
+        against hearing itself keys off this flag: the raised VAD bar, the
+        barge-in floor, and the transcript check, which only looks at clips
+        recorded while it was set. Dropping it at the last write turns all
+        three off while the sound is still in the air -- and opens the
+        follow-up window into it.
+        """
+        return self._speaking or self._tail > 0
+
+    @speaking.setter
+    def speaking(self, value: bool) -> None:
+        if value:
+            self._speaking = True
+            self._tail = 0
+        elif self._speaking:
+            self._speaking = False
+            self._tail = self._samples(self.cfg.echo.tail_ms)
+
     # -- units ----------------------------------------------------------
 
     def _ms_to_frames(self, ms: int) -> int:
@@ -174,13 +204,19 @@ class Listener:
         events: list[VoiceEvent] = []
         self._emit_level(block, events)
 
+        if self._tail > 0:
+            self._tail = max(0, self._tail - block.size)
         if self._cooldown_samples > 0:
             self._cooldown_samples = max(0, self._cooldown_samples - block.size)
 
         if self.phase == "sleeping":
             self._preroll.append(block)
-            if self.speaking:
-                # Barge-in needs no wake word. You are already talking to it.
+            if self.speaking or self.busy:
+                # Barge-in needs no wake word. You are already talking to it,
+                # and a turn you are interrupting may be thinking rather than
+                # speaking -- the gap between your question and the first word
+                # of the answer is seconds long and is the likeliest moment to
+                # change your mind.
                 self._open_on_speech(block, events, kind="barge_in")
             elif self._follow_up > 0:
                 self._follow_up = max(0, self._follow_up - block.size)
@@ -249,6 +285,15 @@ class Listener:
             window = self._vad_buffer[: vad_module.WINDOW]
             self._vad_buffer = self._vad_buffer[vad_module.WINDOW :]
             speech = self._vad.probability(window) >= self._threshold()
+            # While it is speaking, the level of what is playing is the only
+            # thing that separates a person from an echo -- so not knowing it
+            # closes the gate rather than opening it. The reference lags the
+            # first block of a reply by the configured delay, and that lag used
+            # to be a hole with no floor in it at all, at the start of every
+            # sentence.
+            if self.speaking and self.reference_rms <= 0.0:
+                self._burst = 0
+                continue
             # Loud enough, against what is being played, to be a person. The
             # VAD cannot answer this: Sunday's own voice returning through the
             # room *is* speech, and Silero scores it 1.0. Raising the VAD

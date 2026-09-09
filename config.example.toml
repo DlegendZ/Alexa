@@ -63,6 +63,10 @@ language = "en-us"
 speech_threshold_while_speaking = 0.8
 transcript_similarity_cutoff    = 0.6
 barge_in_ms                     = 96   # 3 VAD windows; under the 100 ms target
+# Still counts as speaking for this long after the last block reaches the
+# sound card: there is a buffer to play and then a room still ringing, and
+# every defence against hearing itself keys off that flag.
+tail_ms                         = 400
 # How loud the residual must be, against what was played, to be a person.
 # Measure with: python -m sunday.audio.check --echo
 barge_in_ratio                  = 0.35

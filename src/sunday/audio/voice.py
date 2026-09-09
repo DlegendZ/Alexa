@@ -119,6 +119,8 @@ class Ear:
     def hush(self) -> None:
         """Stop talking now. Barge-in, cancellation, or a turn that broke."""
         self._pending_follow_up = False
+        if self._listener is not None:
+            self._listener.busy = False
         if self._speaker is not None:
             self._speaker.stop()
 
@@ -163,6 +165,7 @@ class Ear:
         """
         if self._listener is None:
             return
+        self._listener.busy = False
         if self._speaker is not None and self._speaker.speaking:
             self._pending_follow_up = True
             return
@@ -254,8 +257,9 @@ class Ear:
             self._transcribe(event.clip)
 
     def _barge_in(self) -> None:
-        """Talking over it. Playback stops, the queue is flushed, the turn is
-        cancelled, and the clip that is now recording becomes the next one."""
+        """Talking over it -- or over it thinking. Playback stops, the queue is
+        flushed, the turn is cancelled, and the clip now recording is the next
+        one."""
         self.hush()
         self._emit({"type": "state", "value": "listening"})
         if self._on_barge_in is not None:
@@ -314,6 +318,11 @@ class Ear:
     def _deliver(self, text: str) -> None:
         """Hand the transcript over. From here it is a string like any other."""
         self._emit({"type": "partial", "text": text, "final": True})
+        if self._listener is not None:
+            # The turn starts here and is not over until a reply has been
+            # spoken. Talking during it is an interruption, and the thinking
+            # part is where you are most likely to want to.
+            self._listener.busy = True
         if self._on_transcript is not None:
             self._on_transcript(text)
         else:

@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–86 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–89 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1576,3 +1576,65 @@ The test that came with it is about the rule rather than the number: drive silen
 just inside the configured window and just past it, and check the door is open for one
 and shut for the other. Changing a duration is only safe if the duration means what it
 says.
+
+## 87. A reply is not over when the last block reaches the sound card
+
+**Doc:** Desktop 03 — layer 2 raises the VAD bar "while Kokoro is playing".
+**Code, as written:** the speaker reported idle when the last block came back from
+`stream.write`, and everything keyed off that instant.
+**Code, now:** `Listener.speaking` stays true for `[echo] tail_ms` (400) after playback
+stops.
+**Why:** `write` returns when the sound card has *accepted* a block, not when it has
+played it. At the last write there is still a buffer to come out of the speaker, and then
+a room still ringing.
+
+Three defences key off that one flag, and all three switched off together while the voice
+was still audible:
+
+- the raised VAD threshold, so residual echo was measured against the ordinary bar;
+- the barge-in floor, because `Aec.silence()` had zeroed the reference at the same moment,
+  and a floor of zero is no floor;
+- the transcript check, which by note 80 only examines clips recorded *while speaking* —
+  so the audio most likely to be an echo was the audio it was forbidden to look at.
+
+And the follow-up window opened into exactly that. Note 86 had just widened it from eight
+seconds to thirty, which made a narrow hole into a wide one: for thirty seconds after
+every reply, the tail of its own voice could open a clip that no layer was allowed to
+reject. **Widening one thing turned a latent bug into the reported one** — worth
+recording, because the widening was correct and so was every layer. What was wrong was
+where one of them stopped.
+
+## 88. Not knowing how loud it is has to close the gate, not open it
+
+**Doc:** silent.
+**Code:** while `speaking`, a window counts toward the barge-in burst only if
+`reference_rms` is above zero *and* the window clears `barge_in_ratio` of it.
+**Why:** the reference lags the first block of a reply by `aec_delay_ms`, so
+`reference_rms` is zero for the opening of every sentence. The gate compares against a
+fraction of it, and a fraction of zero is zero — so the gate stood wide open at the start
+of each sentence, which is precisely where the room is loudest and the canceller has not
+converged.
+
+The general form, and it is the same shape as note 81: a threshold derived from a
+measurement must distinguish *the measurement is zero* from *there is no measurement*.
+The first is information. The second is not, and defaulting it to zero silently converts
+"I do not know" into "no floor required".
+
+## 89. Interrupting it while it is thinking
+
+**Doc:** Stage 01 — barge-in is described entirely in terms of talking over the reply:
+"VAD runs continuously while Kokoro is speaking."
+**Code:** `Listener.busy`, set when the transcript is handed to the graph and cleared when
+the turn ends. Sustained speech during it is a barge-in exactly as during a reply.
+**Why:** the gap between your question and the first word of the answer is seconds long —
+memory, then tools, then generation — and it is the likeliest moment to change your mind.
+Nothing was watching it. There was no wake word to say, because the wake path is only
+consulted when idle, and no reply to talk over, because none had started. Talking then
+did nothing at all.
+
+It is also the easiest part of a turn to get right: nothing is playing, so there is no
+echo to tell from a person, and loud sustained speech can only be one thing.
+
+The three states now read as one rule rather than three cases. **Speaking, thinking, and
+the tail after speaking are all "a turn is happening", and talking during any of them
+interrupts it.** Only a genuinely idle listener needs the wake word.
