@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–84 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–85 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1524,3 +1524,33 @@ had figures in it.
 
 Three, and not more, because the referent of "that" is the last thing said and never four
 turns back — and because every line here is a line that can reach the composer.
+
+## 85. The three wake models do not agree on their input names
+
+**Doc:** Desktop 02 — "Ships with `hey_jarvis`, `alexa`, `hey_mycroft` pretrained", as
+though they were interchangeable files behind one interface.
+**Code, as written:** `self._model.run(None, {"x.1": context})`.
+**Code, now:** every input name is read off the graph at load time.
+**Why:** they are not interchangeable. Measured on the three shipped models:
+
+| phrase | input | output |
+| --- | --- | --- |
+| `hey_jarvis` | `x.1` | `53` |
+| `alexa` | `onnx::Flatten_0` | `13` |
+| `hey_mycroft` | `onnx::Flatten_0` | `39` |
+
+They were exported at different times by different toolchains, and nothing in the release
+says so. A name written into this file works for whichever phrase it was written against
+and raises `Required inputs (['onnx::Flatten_0']) are missing from input feed (['x.1'])`
+for the others — on the audio thread, the first time somebody says the word, after
+everything has loaded and reported itself ready.
+
+**The test that existed could not have caught it**, and that is the part worth keeping.
+`test_the_wake_word_does_not_fire_on_silence` loads `hey_jarvis` by name, because that
+was the default when it was written. The config can name any of three; the test checked
+one. It is parameterised over all three now — the same lesson as the compound-message
+fast path and the folder rule, arriving through the one interface nobody thought had a
+variant.
+
+The rule, stated so it generalises: **when config chooses between files, the test iterates
+the choices.** A default is not a sample.

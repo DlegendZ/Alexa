@@ -418,3 +418,31 @@ def test_the_configured_transcriber_refuses_a_clip_with_no_word_in_it():
     transcriber = stt.load(config.get())
     assert transcriber.transcribe(np.zeros(stt.MIN_SAMPLES - 1, dtype=np.float32)) == ""
     assert transcriber.transcribe(np.zeros(48000, dtype=np.float32)) == ""
+
+
+@needs_models
+@pytest.mark.parametrize("phrase", ["hey_jarvis", "alexa", "hey_mycroft"])
+def test_every_pretrained_phrase_loads_and_scores(phrase):
+    """The three shipped models were exported at different times and do not
+    agree on their input names: `hey_jarvis` calls its input `x.1`, the other
+    two call theirs `onnx::Flatten_0`. A name written into the source works for
+    whichever phrase it was written against and raises for the others -- on the
+    audio thread, the first time somebody says the word.
+
+    Written from the rule rather than from the incident: every phrase the
+    config may name, not the one that broke.
+    """
+    from sunday.audio import models as model_registry
+    from sunday.audio.wake import CHUNK, WakeWord
+
+    if model_registry.missing([model_registry.wake_key(phrase)]):
+        pytest.skip(f"{phrase} not downloaded")
+
+    detector = WakeWord(phrase, threshold=0.5)
+    scored = False
+    for _ in range(40):
+        score = detector.feed(np.zeros(CHUNK, dtype=np.float32))
+        if score is not None:
+            scored = True
+            assert 0.0 <= score <= 1.0
+    assert scored, "the window never filled"

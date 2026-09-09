@@ -70,6 +70,17 @@ class WakeWord:
         self._embed = onnx.session(models.model_path("wake/embedding_model.onnx"))
         self._model = onnx.session(models.model_path(models.wake_key(phrase)))
 
+        # Every input name is read from the graph rather than written down.
+        # The three pretrained phrases were exported at different times and do
+        # not agree: `hey_jarvis` calls its input `x.1`, while `alexa` and
+        # `hey_mycroft` call theirs `onnx::Flatten_0`. A name written into this
+        # file works for whichever phrase it was written against and raises
+        # `Required inputs are missing from input feed` for the others -- on
+        # the audio thread, the first time somebody says the word.
+        self._mel_input = self._mel.get_inputs()[0].name
+        self._embed_input = self._embed.get_inputs()[0].name
+        self._model_input = self._model.get_inputs()[0].name
+
         self._raw = np.zeros(0, dtype=np.float32)
         self._mels = np.zeros((0, 32), dtype=np.float32)
         self._embeddings = np.zeros((0, 96), dtype=np.float32)
@@ -94,7 +105,7 @@ class WakeWord:
         self._raw = np.concatenate([self._raw, block])[-16000 * 4 :]
 
         window = self._raw[-(len(block) + _MEL_LOOKBACK) :]
-        mel = self._mel.run(None, {"input": window[None, :]})[0]
+        mel = self._mel.run(None, {self._mel_input: window[None, :]})[0]
         mel = np.squeeze(mel) / _MEL_SCALE + _MEL_SHIFT
         fresh = max(len(block) // 160, 1)
         self._mels = np.vstack([self._mels, mel[-fresh:]])[-200:]
@@ -103,14 +114,14 @@ class WakeWord:
             return None
 
         patch = self._mels[-_MEL_WINDOW:][None, :, :, None]
-        embedding = self._embed.run(None, {"input_1": patch})[0].reshape(1, 96)
+        embedding = self._embed.run(None, {self._embed_input: patch})[0].reshape(1, 96)
         self._embeddings = np.vstack([self._embeddings, embedding])[-32:]
 
         if self._embeddings.shape[0] < _EMBEDDINGS:
             return None
 
         context = self._embeddings[-_EMBEDDINGS:][None, :, :]
-        score = self._model.run(None, {"x.1": context})[0]
+        score = self._model.run(None, {self._model_input: context})[0]
         return float(score[0][0])
 
     def heard(self, samples: np.ndarray) -> Detection | None:
