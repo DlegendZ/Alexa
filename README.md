@@ -137,6 +137,23 @@ cd app; npm run dev
 Then open `http://localhost:5173/?port=PORT&token=TOKEN` with the two values from
 `handshake.json`.
 
+### A real build
+
+```powershell
+cd app; npm run tauri build
+```
+
+Produces `app\src-tauri	argetelease\sunday.exe` -- about 3.6 MB, double-clickable,
+no terminal and no dev server. It finds the sidecar by walking up to `.venv`, so it runs
+from inside the repo.
+
+It also produces an NSIS installer at `targeteleaseundle
+sis\`. That installer is
+**not yet distributable**: it bundles the window but not the Python sidecar, which is still
+supposed to ship as a PyInstaller one-folder build beside the exe. Installed somewhere
+without this repo, the shell starts and then reports that it cannot find
+`sunday-sidecar.exe`.
+
 ### A note on shells
 
 These commands are written for **PowerShell**, which is what Windows gives you
