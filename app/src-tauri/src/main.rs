@@ -366,7 +366,26 @@ fn main() {
                 }
             });
 
-            if read_settings().start_minimised {
+            let wanted = read_settings();
+
+            // `[ui] autostart` is a wish; the Run registry key is the fact.
+            // Syncing them here means the config file is the one place it is
+            // decided, rather than a checkbox somebody has to find -- and
+            // turning it off in config turns it off on the machine.
+            let manager = app.autolaunch();
+            let registered = manager.is_enabled().unwrap_or(false);
+            if wanted.autostart != registered {
+                let outcome = if wanted.autostart {
+                    manager.enable()
+                } else {
+                    manager.disable()
+                };
+                if let Err(why) = outcome {
+                    eprintln!("could not change autostart: {why}");
+                }
+            }
+
+            if wanted.start_minimised {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                 }

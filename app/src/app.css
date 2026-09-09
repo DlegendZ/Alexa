@@ -1,16 +1,42 @@
-/* The palette is the document's, and it is load-bearing rather than
- * decorative: amber is work done here, teal is anything leaving, red is a
- * refusal. Nothing else is ever teal. */
+/* The palette.
+ *
+ * Warm rather than cold, which is the whole difference between this and the
+ * first draft: the old one was #0e0f12, a blue-black that makes everything on
+ * top of it look like a diagnostic. These greys have red in them, so amber
+ * belongs against them instead of shouting.
+ *
+ * Three of these colours are load-bearing and not decoration. Amber is work
+ * happening on this machine, teal is something leaving it, red is a refusal.
+ * Nothing else in the program is ever teal. They have been warmed to sit in
+ * this palette, and the meanings are untouched.
+ */
 :root {
-  --bg: #0e0f12;
-  --panel: #16181d;
-  --line: #24272e;
-  --text: #e7e9ee;
-  --dim: #878d9a;
-  --local: #d99b3d;
-  --external: #3dbfb0;
-  --stop: #d9534f;
-  --memory: #6f8fd9;
+  --bg: #262624;
+  --surface: #30302e;
+  --raised: #3a3a37;
+  --line: #403f3b;
+  --line-soft: #35342f;
+
+  --text: #f5f4ef;
+  --dim: #a8a49b;
+  --faint: #7c786f;
+
+  --local: #d97757; /* on your machine */
+  --local-soft: #4a3226;
+  --external: #6cab9c; /* leaves your machine */
+  --external-soft: #2a3f3a;
+  --stop: #cc7b72;
+  --stop-soft: #472f2c;
+  --memory: #8fa4c9; /* the half you cannot otherwise watch happen */
+
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, monospace;
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+
   color-scheme: dark;
 }
 
@@ -27,12 +53,13 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.55 ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  font: 15px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
 
-/* The title bar is the shell's, so the window is dragged by the header. The
- * inputs inside it opt back out, or you cannot click them. */
+/* Compact mode is frameless, so the header is what you drag it by. The full
+   window keeps the title bar Windows draws and does not duplicate it. */
 .drag {
   -webkit-app-region: drag;
   user-select: none;
@@ -48,33 +75,64 @@ input,
 select {
   font: inherit;
   color: var(--text);
-  background: #1b1e24;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
   padding: 8px 12px;
 }
 
 button {
   cursor: pointer;
+  color: var(--dim);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 button:hover:not(:disabled) {
-  border-color: #3a3f49;
+  background: var(--raised);
+  color: var(--text);
 }
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 button:focus-visible,
 input:focus-visible {
   outline: 2px solid var(--local);
-  outline-offset: 1px;
+  outline-offset: 2px;
+}
+
+/* The one button that is an action rather than a toggle. */
+button.primary {
+  background: var(--local);
+  color: #1d1408;
+  font-weight: 600;
+  border-color: transparent;
+}
+button.primary:hover:not(:disabled) {
+  background: #e0855f;
+  color: #1d1408;
 }
 
 /* Every state still changes colour when motion is off. What stops is the
- * moving, not the telling. */
+   moving, not the telling. */
 @media (prefers-reduced-motion: reduce) {
   * {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--raised);
+  border-radius: 6px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4944;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

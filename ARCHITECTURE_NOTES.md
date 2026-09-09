@@ -2148,3 +2148,137 @@ The general shape, since this codebase collects them: **when the platform alread
 control, drawing a second one is not an addition, it is an ambiguity.** The CSS drag region
 that made the header look like a title bar was written for the compact window and quietly
 implied a frameless full one, which is how the duplicate got there.
+
+## 108. The assistant was given a character, and it cost 95 tokens
+
+**Doc:** Stage 03 — keep the system prompt short; it grew to 673 tokens once and the model
+began reciting it at the user.
+**Asked for:** an assistant that can chat, is funny, and has an identity, rather than one
+that "feels dead" and only calls tools.
+**Code:** 276 tokens to 371, and the overhead reservation from 2600 to 2816.
+
+The constraint is what shaped the answer. There is no room for a page describing a
+personality, and a page would not work anyway: a model imitates the register it is given
+far more reliably than it follows a description of one. So the character is carried by the
+shape of the sentences it is asked to write — "warm, quick and a little funny", "you tease
+lightly, you never grovel", "short sentences, say the interesting part first" — which is
+two lines rather than twenty.
+
+It works, and the evidence is one real reply. Asked to move a file, it said: *"Done.
+gold.txt is in the work folder now. Was it ready to be moved, or was I just being
+helpful?"* The old prompt produced "The file has been moved successfully."
+
+Two of the new lines are not personality at all and are the reason this note is filed
+under behaviour rather than taste. **"If you say you are about to do something, do it in
+the same turn"** and **"talking is a real thing to do"** are the two failures the previous
+prompt actually produced — a cheerful promise with no tool call behind it, and an assistant
+that treated a greeting as a work order.
+
+## 109. A model that cannot narrate alongside a tool call needs a second generation
+
+**Asked for:** the assistant should talk *during* a job rather than going silent from the
+question to the finished answer.
+**The obvious implementation, which does not work:** use the message content that comes
+back alongside the tool calls. The tool loop has always produced that and always thrown it
+away, so passing it on looked like a two-line change.
+
+Measured on this model, a response carrying tool calls carries `content=''` **every time**.
+With the system prompt asking for a line. With an extra system message ordering one
+explicitly, immediately before the call. The chat template puts the tool calls where the
+message would be, and there is nothing else in the response.
+
+That matters more than the feature does, because a sink fed by nothing is note 55 in a new
+costume: `_interim` would have been a mechanism that never fired, indistinguishable from a
+mechanism that was broken, sitting in the code looking finished. Two of those have already
+been found in this repo.
+
+So the line is generated on purpose — one call, no tools bound, forty tokens — before the
+first tool of a turn runs. It costs about a third of a second against several seconds of a
+silent orb, and it is still the model's own voice rather than a template the runtime fills
+in. Measured, from a real turn: *"I'm reading gold.txt right now."*
+
+Once per turn, and specifically before the *first* tool, because that is the longest
+silence: the person has just stopped speaking and nothing whatsoever has happened yet. The
+gaps between later rounds are shorter and already have a moving orb in them.
+
+**It is `Agent.one_liner`, not another `Agent.chat`, and that distinction is load-bearing.**
+Written as a second `chat` in the middle of the loop it silently consumed the next reply of
+every scripted test double, and four loop tests failed for reasons that had nothing to do
+with the loop. A double that does not implement `one_liner` is a double that does not
+narrate, which leaves those tests testing what they were written to test.
+
+## 110. Turning the microphone on at startup makes ambient speech expensive
+
+**Asked for:** the app should start with the machine, with the microphone open, so it
+answers its name without anybody clicking anything.
+**Code:** `[audio] listen_on_start`, and the sidecar opens the ear as it binds the socket
+rather than waiting for a client to ask for voice mode.
+**Why it is here and not just in the changelog:** it changes what the *default* failure
+looks like, and the change is not small.
+
+Two things happened within minutes of switching it on, in an ordinary room:
+
+Speech from somewhere else in the room was transcribed and run as a turn. "And like yeah,
+yeah, that's the thing. On the image center." arrived twice as user input. The clip guards
+did their job — the turn was discarded and the trace said so — but the turn *ran*.
+
+And a two-step job was cancelled by barge-in while it was working. The tools both ran and
+the file was written correctly; the turn was then discarded, so nothing about it was
+remembered. **Side effects applied, no memory that they were.** That combination is not new
+— it is what `committed: False` has always meant — but an open microphone in a room with
+other people in it is what makes it likely rather than theoretical.
+
+None of the guards are wrong. Barge-in during *thinking* is deliberate and note-worthy in
+its own right: the gap between a question and the first word of an answer is the likeliest
+moment to change your mind. The follow-up window is deliberate. The VAD threshold is
+measured. They simply add up to an assistant that, with the microphone open by default,
+treats a conversation happening near it as instructions.
+
+So the default stays `false` in the shipped example config and is `true` in the local one,
+which is the honest split: it is what was asked for on this machine, and it is not
+something to switch on for somebody else without telling them. If it fires at the
+television, the levers are `[audio] vad_threshold`, `[wake] follow_up_ms`, and mute — which
+is a real toggle that stops the capture stream rather than ignoring it.
+
+## 111. The window was rebuilt, and every ugly thing about it was structural
+
+**Asked for:** it looked ugly; the font was small and bad, the orb was stiff and
+traditional, the backstage panel was complicated and the whole thing had poor UX. Make it
+look like Claude.
+
+None of that turned out to be a matter of taste, which is why it is a note. Each complaint
+had a specific cause:
+
+**The palette was cold.** `#0e0f12` is a blue-black, and amber on blue-black looks like a
+warning light on a server. The greys have red in them now — `#262624` — and the three
+load-bearing colours were warmed to sit in it. Amber is still work on this machine, teal is
+still something leaving, red is still a refusal, and nothing else is ever teal. The
+meanings did not move; only the hues did.
+
+**The orb looked like a status LED because it had an edge.** A one-pixel stroke around a
+single radial gradient is a widget. Light that falls off into the background over forty
+pixels is a light. There is no stroke anywhere in it now — three layered gradients, a
+bloom, a body and an offset highlight — and the particles are drawn in two passes, in front
+of the core and behind it, so they have depth instead of sliding around a flat ring.
+
+**It looked stiff because every animation was one sine wave.** One sine is a metronome, and
+a person reads it as a machine. The breathing is three sines with incommensurate periods
+now, so it never quite repeats.
+
+**The backstage panel shouted.** Every line carried an uppercase letter-spaced 10px heading,
+so a turn produced twenty small headings and no shape at all — the eye had nowhere to rest
+and it read as an error log. The step is a quiet prefix now, the text is the size of text,
+and only memory, tools and the closing line carry a colour. It is also closed by default:
+the trace is still emitted, because it is the only thing that separates "memory was read
+and had nothing" from "memory could not be opened", but a running column of machine
+narration beside a conversation is what made this feel like a debugger.
+
+**The layout spent a fifth of the window on sixty pixels of information.** The orb had a
+190px band to itself; it now sits on one line with the name and the controls. The transcript
+is a 660px reading column rather than the full width, because long lines are the fastest way
+to make prose unreadable and this is mostly prose. The four controls in a row read as a
+form, so they are inside one rounded field that reads as somewhere to talk.
+
+**The name is not written down anywhere in the window.** It arrives on `ready`, from
+`[assistant] name`. Note 83's rule reaches the shell too, and the markup nearly grew a
+literal "Alexa" before it was caught.

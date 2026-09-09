@@ -121,6 +121,15 @@ class Sidecar:
         async with serve(self._handle, self.host, self.port) as server:
             bound = server.sockets[0].getsockname()[1]  # type: ignore[union-attr]
             Handshake(port=bound, token=self.token).write()
+            if self.runtime.cfg.audio.listen_on_start:
+                # The ear before the first client. Starting it here rather
+                # than on a `set_mode` is what lets the app answer its name
+                # from a cold start -- the window may not be open yet, and
+                # the whole point of a wake word is that it does not need to
+                # be. The models load on the ear's own thread, so this does
+                # not delay the socket.
+                self.mode = "voice"
+                self._set_listening(True)
             print(f"sidecar listening on ws://{self.host}:{bound}")
             print(f"handshake written to {config.HANDSHAKE_PATH}")
             try:
@@ -164,6 +173,11 @@ class Sidecar:
             "mode": self.mode,
             "muted": self.muted,
             "model": self.runtime.cfg.models.agent,
+            # The window puts this above the transcript, so it travels rather
+            # than being written down there. `[assistant] name` is the one
+            # place it is decided, and a window with "Alexa" in its markup is
+            # a window that is wrong the day somebody changes it.
+            "name": self.runtime.cfg.assistant.name,
             "setup": self.runtime.setup_needed(),
         }
 

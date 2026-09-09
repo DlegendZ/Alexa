@@ -26,7 +26,7 @@ def test_the_slices_leave_room_for_everything_else_in_the_window(cfg):
 
     The slices are not the only claimants: the system prompt, the bound tool
     schemas, the memory framing block and the standing system lines cost around
-    2300 tokens no slice pays for, and the reply needs room too. Sizing the
+    2550 tokens no slice pays for, and the reply needs room too. Sizing the
     slices *to* the window overruns num_ctx, and Ollama drops the oldest
     messages without saying so.
     """
@@ -69,6 +69,12 @@ def test_the_real_overhead_fits_the_reservation(cfg):
             )
         )
         + budget.count(prompts.RETRY_HINT)
+        # The loop's own nudges. Both can appear in one turn -- the first asks
+        # whether it understood the job, the second asks where the job went --
+        # and neither was counted here, which is the same omission that let
+        # the fast paths guard two call sites out of three.
+        + budget.count(prompts.SECOND_CHANCE)
+        + budget.count(prompts.FINISH_IT)
         # Only one of these can appear in a turn, so the larger one is the cap.
         + max(
             budget.count(runtime_module.DOOR_OFF_SYSTEM),

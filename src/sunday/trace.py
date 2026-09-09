@@ -222,6 +222,25 @@ def second_chance() -> Line:
     )
 
 
+def said_meanwhile(text: str) -> Line:
+    """What it said while it was still working.
+
+    Worth a line of its own because it is the one thing the user hears before
+    the turn is finished, and because a model that narrates and then does
+    nothing is the failure `FINISH_IT` exists for -- seeing the narration in
+    the trace is how you tell the two apart.
+    """
+    return _line("agent", f"said while working: {text!r}", said=text)
+
+
+def finish_it() -> Line:
+    return _line(
+        "agent",
+        "it described doing something and then called nothing. Asking it to "
+        "actually do the thing it just announced.",
+    )
+
+
 def model_is_ready() -> Line:
     return _line(
         "agent",

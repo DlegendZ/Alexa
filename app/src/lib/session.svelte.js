@@ -38,6 +38,9 @@ export class Session {
   status = $state('connecting');
   connected = $state(false);
   model = $state('');
+  /** What it calls itself. From `[assistant] name` by way of `ready` -- never
+   *  written down in the window, which would go stale the day it is renamed. */
+  name = $state('');
   mode = $state('text');
   muted = $state(false);
   busy = $state(false);
@@ -260,6 +263,7 @@ export class Session {
       case 'ready':
         this.connected = true;
         this.model = message.model;
+        this.name = message.name || '';
         this.mode = message.mode;
         this.muted = message.muted;
         this.setup = message.setup ?? null;

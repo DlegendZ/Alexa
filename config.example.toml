@@ -23,7 +23,7 @@ summariser      = "deepseek-v4-flash"
 stt             = "parakeet-tdt-0.6b-v2"
 # Taken off the top before the memory slices are sized: the system prompt, the
 # tool schemas and the memory framing block, then room for the reply itself.
-overhead_tokens = 2600
+overhead_tokens = 2816
 reply_tokens    = 768
 
 [audio]
@@ -36,6 +36,16 @@ vad_silence_ms = 700
 min_clip_ms   = 300    # of speech, not of clip: every clip carries pre-roll
 max_clip_ms   = 30000
 preroll_ms    = 500    # kept from before the wake word finished
+# Open the microphone as soon as the sidecar starts, so the app answers its
+# name from a cold start without anybody clicking anything first.
+#
+# Off in the shipped example on purpose. With it on, speech anywhere in the
+# room is a turn: measured within minutes of switching it on, a conversation
+# happening nearby was transcribed and run, and a two-step job was cancelled
+# by barge-in after both its tools had already changed things on disk. The
+# guards all behaved correctly; an open microphone simply means the room is
+# talking to it. Turn it on once you know the room.
+listen_on_start = false
 lead_in_ms    = 4000   # woke, heard nothing, go back to sleep
 
 [wake]
@@ -87,7 +97,7 @@ distance_cutoff = 0.45   # tune with real turns
 top_k           = 5
 idle_minutes    = 10
 # Sized to fit 23552 rather than scaled into it: these four plus the thinking
-# reservation come to 19456 of the 20184 left after overhead and the reply, so
+# reservation come to 19456 of the 19968 left after overhead and the reply, so
 # the numbers here are the numbers used. Raise the window and raise these too.
 slice_summary   = 2560
 slice_recent    = 7680
@@ -117,13 +127,13 @@ key_shapes   = ["sk-", "sk_live_", "ghp_", "gho_", "glpat-", "AKIA", "ASIA",
                 "eyJ", "-----BEGIN"]
 
 [limits]
-tool_calls = 8   # hard cap per turn: room to be wrong once and recover
+tool_calls = 12  # hard cap per turn: room for a job, not just a lookup
 
 [ui]
 fps_focused     = 60
 fps_blurred     = 10
 start_minimised = false
-autostart       = false
+autostart       = true
 # The backstage trace: one line per step, so you can see what ran rather than
 # only what came back. SUNDAY_TRACE=0 overrides this for a single run.
 trace           = true

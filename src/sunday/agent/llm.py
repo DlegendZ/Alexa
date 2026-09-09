@@ -103,6 +103,18 @@ class Agent:
             done = int(getattr(update, "completed", 0) or 0)
             on_progress(str(getattr(update, "status", "") or ""), done, total)
 
+    def one_liner(self, messages: list[dict[str, Any]], *, max_tokens: int = 40) -> str:
+        """One short line, with no tools bound and nothing to ground it.
+
+        Its own method rather than another `chat`, because it is a different
+        job: `chat` is the tool loop asking what to do next, and every test
+        double in this repo scripts that as a sequence. An extra `chat` in the
+        middle of the loop silently consumes the next scripted reply and shifts
+        everything after it -- which is how this arrived, as four loop tests
+        failing for reasons that had nothing to do with the loop.
+        """
+        return self.chat(messages, max_tokens=max_tokens).content or ""
+
     # -- generation -----------------------------------------------------
 
     def _options(self, max_tokens: int | None = None) -> dict[str, Any]:

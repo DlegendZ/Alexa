@@ -215,6 +215,8 @@ class Runtime:
         self._on_token: TokenSink | None = None
         self._on_sentence: TokenSink | None = None
         self._on_event: EventSink | None = None
+        #: What has already been said mid-turn, so it is not said twice.
+        self._interims: set[str] = set()
         self._on_confirm: ConfirmSink | None = None
         self._tracing = config.trace_enabled(self.cfg)
         self._graph = graph_module.build_graph(self)
@@ -296,6 +298,65 @@ class Runtime:
         speak half of one."""
         if self._on_sentence is not None:
             self._on_sentence(text)
+
+    def _preamble(self, task: str, names: list[str]) -> None:
+        """One line, in its own voice, before the work starts.
+
+        A separate generation rather than a reused one, because this model
+        returns no message content when it returns tool calls -- so there is
+        nothing to reuse. It costs a dozen tokens and about a third of a
+        second, against several seconds of a silent orb, which is the trade
+        this exists to make.
+        """
+        # A double that does not implement this is a double that does not
+        # narrate, which leaves the loop tests testing the loop.
+        speak = getattr(self.agent, "one_liner", None)
+        if speak is None:
+            return
+        try:
+            said = speak(
+                [
+                    {"role": "system", "content": prompts.system(self.cfg.assistant.name)},
+                    {"role": "user", "content": task},
+                    {
+                        "role": "system",
+                        "content": (
+                            f"{prompts.PREAMBLE}\n"
+                            f"(You are about to use: {', '.join(names)}.)"
+                        ),
+                    },
+                ]
+            )
+        except Exception:  # noqa: BLE001 - a missing pleasantry never fails a turn
+            return
+        self._interim(said or "")
+
+    def _interim(self, text: str) -> None:
+        """What the model says while it is still working.
+
+        The tool rounds have always produced this and always thrown it away:
+        asked to move a file, the model replies "Sure, moving that now" *and* a
+        call to `move_file`, and only the call was ever used. So a turn with
+        four steps in it was four steps of silence followed by an answer, and
+        the longer the job the more it looked like a hang.
+
+        It goes through both sinks, so it is spoken as well as shown -- which
+        is the whole point, because the silence is worst when you are talking
+        to it rather than watching it. Markdown is stripped here for the same
+        reason it is stripped in the fork: this text reaches a synthesiser.
+
+        Deduplicated, because a model that has said "let me check that" once
+        will happily say it again every round, and hearing it four times is
+        worse than not hearing it at all.
+        """
+        said = stream.despeckle(text).strip()
+        if not said or said in self._interims:
+            return
+        self._interims.add(said)
+        self._trace(trace.said_meanwhile(said))
+        self._token(said + " ")
+        for sentence in stream.sentences([said + " "]):
+            self._sentence(sentence)
 
     def _roots_line(self) -> str:
         """Which folders are open, in the model's own message list."""
@@ -401,6 +462,7 @@ class Runtime:
         told_about_the_door = False
         told_about_failure = False
         offered_second_chance = False
+        offered_to_finish = False
 
         # Two deterministic patterns run before the model is asked anything.
         # The answer arrives as an ordinary tool result, so the turn continues
@@ -458,14 +520,31 @@ class Runtime:
                 tools=tool_registry.schemas(self._bound_tools(flags)),
                 max_tokens=agent_loop.TOOL_ROUND_MAX_TOKENS,
             )
+            said = (reply.content or "").strip()
+            if reply.tool_calls and said:
+                # It is working and it said something about it. Pass that on
+                # now rather than at the end: a multi-step job used to be
+                # silent until every step had finished.
+                self._interim(said)
             if not reply.tool_calls:
                 # Nothing ran this turn, and the model has stopped. That is
                 # either a conversation or a job it talked itself out of, and
-                # the two are indistinguishable from here -- so ask once.
+                # the two are indistinguishable from here -- so ask twice, for
+                # the two different reasons it happens.
                 if not results and not offered_second_chance:
                     offered_second_chance = True
                     ctx.scaffold(prompts.SECOND_CHANCE)
                     self._trace(trace.second_chance())
+                    continue
+                # The second reason, and the one a person actually notices: it
+                # announced the job in prose and then did not do it. "Sure,
+                # moving that now" with no call is a turn that reads as success
+                # and leaves the file where it was. Nothing errored, so nothing
+                # else in this loop would ever ask again.
+                if not results and not offered_to_finish and said:
+                    offered_to_finish = True
+                    ctx.scaffold(prompts.FINISH_IT)
+                    self._trace(trace.finish_it())
                     continue
                 self._trace(trace.model_is_ready())
                 break
@@ -475,6 +554,12 @@ class Runtime:
                     len(reply.tool_calls), [c.name for c in reply.tool_calls]
                 )
             )
+            if not self._interims:
+                # The longest silence in a turn is the one that has just
+                # started: the user stopped talking, the orb went amber, and
+                # nothing will be said until every tool has run. Fill that one
+                # and leave the later, shorter gaps alone.
+                self._preamble(state["task"], [c.name for c in reply.tool_calls])
             ctx.messages.append(reply.raw)
             for call in reply.tool_calls:
                 self._check_cancelled()
@@ -988,6 +1073,10 @@ class Runtime:
         self.session.touch()
 
         self._cancel.clear()
+        # Per turn, not per process: the same "let me check that" said in two
+        # different turns is two different things to hear, and only a repeat
+        # inside one turn is noise.
+        self._interims.clear()
         trace_id = uuid.uuid4().hex[:12]
         log = telemetry.TurnLog(trace_id, modality)
         ctx = TurnContext(log)

@@ -61,13 +61,13 @@
     </div>
   {:else}
     <div class="buttons">
-      <button type="button" onclick={onfetch}>
+      <button class="primary" type="button" onclick={onfetch}>
         {setup.ollama ? 'Download what is missing' : 'Retry'}
       </button>
       {#if onskip}
         <!-- Only offered when there is something behind this screen to use.
              Voice is the skippable half; the model is not. -->
-        <button type="button" onclick={onskip}>Not now — let me type</button>
+        <button class="ghost" type="button" onclick={onskip}>Not now — let me type</button>
       {/if}
     </div>
   {/if}
@@ -83,11 +83,12 @@
     margin: 0 auto;
     align-self: center;
     display: grid;
-    gap: 14px;
-    padding: 24px;
+    gap: 16px;
+    padding: 32px 24px;
   }
   h1 {
-    font-size: 20px;
+    font-family: var(--serif);
+    font-size: 26px;
     margin: 0;
     font-weight: 600;
   }
@@ -104,11 +105,13 @@
   }
   li {
     border-left: 2px solid var(--stop);
-    padding-left: 12px;
+    padding-left: 14px;
     color: var(--dim);
+    font-size: 14px;
+    line-height: 1.55;
   }
   li.done {
-    border-color: var(--local);
+    border-color: var(--external);
   }
   li b {
     display: block;
@@ -119,6 +122,9 @@
     display: flex;
     gap: 8px;
   }
+  .buttons .ghost {
+    border-color: var(--line);
+  }
   .progress {
     display: grid;
     gap: 8px;
@@ -126,7 +132,7 @@
   .bar {
     height: 6px;
     border-radius: 3px;
-    background: #1b1f27;
+    background: var(--raised);
     overflow: hidden;
   }
   .fill {
@@ -139,7 +145,7 @@
     font-size: 13px;
   }
   .error {
-    color: #e5a3a1;
+    color: var(--stop);
     margin: 0;
   }
 </style>

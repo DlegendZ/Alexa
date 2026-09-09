@@ -96,20 +96,24 @@ class Models:
     #: What no memory slice pays for: the system prompt, the bound tool
     #: schemas, the memory framing block, and the standing system lines the
     #: runtime adds every turn -- which folders are open, and what asks before
-    #: it happens. Measured at ~2300 worst case: 1552 of bound schemas, 276 of
-    #: system prompt, and the rest in framing and the situational lines.
+    #: it happens, and the two nudges the loop can add to it. Measured at
+    #: ~2550 worst case: 1552 of bound schemas, 371 of system prompt, and the
+    #: rest in framing, the situational lines and the loop's own scaffolding.
     #: Underestimating this overruns num_ctx, and Ollama answers by dropping
     #: the oldest messages without saying so, so the rest is headroom.
     #:
     #: The trend is still the thing to watch -- all of it is paid every turn,
     #: whether or not a tool is called -- but it is no longer a crisis. At the
     #: old 8192 window this was 29% of everything and the slices were being
-    #: scaled to 0.61 to fit under it; at 20480 the same 2600 is 13% and the
+    #: scaled to 0.61 to fit under it; at 23552 the 2816 is 12% and the
     #: slices are sized to fit rather than scaled into it. Twelve tools costing
     #: 1552 tokens of bound schema is a cost worth knowing rather than a
-    #: reason not to add the thirteenth -- calendar and mail were the eleventh
-    #: and twelfth, and they moved this number for the fourth time.
-    overhead_tokens: int = 2600
+    #: reason not to add the thirteenth.
+    #:
+    #: Moved a fifth time when the assistant was given a character: the system
+    #: prompt went from 276 tokens to 371, and the loop gained a second nudge.
+    #: Personality is not free, and this is where it is paid for.
+    overhead_tokens: int = 2816
     #: Room for the reply itself, which has no slice of its own.
     reply_tokens: int = 768
 
@@ -130,6 +134,15 @@ class Audio:
     #: How much of the ring buffer is kept when the wake word fires. People
     #: start the question before they finish the trigger.
     preroll_ms: int = 500
+    #: Open the microphone as soon as the sidecar comes up, rather than
+    #: waiting for a client to ask for voice mode.
+    #:
+    #: This is what makes the app answer its name from a cold start: the shell
+    #: launches at login, the sidecar comes up with it, and the wake word is
+    #: already listening before anybody has clicked anything. Off by default
+    #: because a headless or text-only run has no use for a microphone -- and
+    #: because opening one unasked is a thing to opt into, not out of.
+    listen_on_start: bool = False
     #: How long to wait, after the wake word fires, for the question to
     #: start. Nothing said in that time and the clip is abandoned -- the
     #: television, usually. Without it the clip records silence until
@@ -309,7 +322,7 @@ class Memory:
     top_k: int = 5
     idle_minutes: int = 10
     #: Sized to fit the window rather than scaled into it. With 23552 of
-    #: window, 2600 of overhead and 768 for the reply, 20184 is left; these
+    #: window, 2816 of overhead and 768 for the reply, 19968 is left; these
     #: four plus the thinking reservation come to 19456, so nothing is
     #: scaled and the numbers here are the numbers used.
     #:
@@ -390,11 +403,16 @@ class Guardrail:
 
 @dataclass
 class Limits:
-    #: Eight rather than five, so a turn can be wrong once and still finish.
-    #: Five was sized for a turn that meant one lookup; a turn that picks the
-    #: wrong tool, reads the refusal and tries again needs room for the
-    #: recovery as well as the mistake.
-    tool_calls: int = 8
+    #: Twelve rather than eight, so a turn can be a *job* rather than a
+    #: lookup. Five was sized for one call; eight left room to be wrong once
+    #: and recover. Twelve is for the turn that reads a file, thinks about it,
+    #: writes another, moves it and says so -- which is the shape of work this
+    #: is now asked to narrate its way through rather than answer in one shot.
+    #:
+    #: It bounds the turn and nothing else does: the loop ends when the model
+    #: stops asking for tools, so this is the only thing standing between a
+    #: confused model and an afternoon.
+    tool_calls: int = 12
 
 
 @dataclass
