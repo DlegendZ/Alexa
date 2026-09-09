@@ -5,19 +5,15 @@
   import Backstage from './lib/Backstage.svelte';
   import Setup from './lib/Setup.svelte';
   import { Session } from './lib/session.svelte.js';
-  import { onShellEvent, setCompact, setState, settings } from './lib/shell.js';
+  import { onShellEvent, quit, setCompact, setState, settings } from './lib/shell.js';
 
   const session = new Session();
 
   let text = $state('');
   let compact = $state(new URLSearchParams(location.search).has('compact'));
-  /* Closed by default. The trace is still emitted -- it is the only thing that
-   * can tell "memory was read and had nothing" from "memory could not be
-   * opened" -- but a running column of machine narration is not what a person
-   * wants beside a conversation, and it was the first thing that made this
-   * window feel like a debugger rather than an assistant. */
-  let showBackstage = $state(false);
+  let showBackstage = $state(true);
   let fps = $state({ focused: 60, blurred: 10 });
+  let hotkey = $state('');
   /* Skipping only ever hides the screen. It cannot hide a `blocked` one,
      because there is nothing behind it to use. */
   let skippedSetup = $state(false);
@@ -27,9 +23,10 @@
     settings().then((s) => {
       if (!s) return;
       fps = { focused: s.fps_focused, blurred: s.fps_blurred };
+      hotkey = s.hotkey || '';
       if (s.start_minimised) toggleCompact(true);
-      /* A hotkey another program already owns is the quietest possible
-       * failure: you press the keys and nothing at all happens, with no
+      /* A shortcut every candidate for which is already taken is the quietest
+       * possible failure: you press keys and nothing at all happens, with no
        * console in a packaged app to explain it. */
       if (s.hotkey_error) session.notice(s.hotkey_error);
     });
@@ -41,9 +38,9 @@
       onShellEvent('toggle-mute', () => toggleMute()),
       onShellEvent('toggle-mode', () => toggleMode()),
       onShellEvent('shutdown', () => session.shutdown()),
-      /* The shell spawned the sidecar, so the shell is what notices it die
-       * and what restarts it. The window only learns the connection is now a
-       * different connection. */
+      /* The tray can pull the window out of compact, because compact is
+       * exactly the state in which the window may be hard to click. */
+      onShellEvent('expanded', () => (compact = false)),
       onShellEvent('sidecar-restarted', (handshake) => session.open(handshake)),
       onShellEvent('sidecar-lost', (why) => session.lost(why)),
     ];
@@ -56,8 +53,6 @@
     setState(session.muted ? 'muted' : session.state);
   });
 
-  /* The window is the only client, so it is the one that has to say goodbye.
-   * `shutdown` is what flushes the session summary into Chroma. */
   $effect(() => {
     const bye = () => session.shutdown();
     addEventListener('beforeunload', bye);
@@ -70,14 +65,9 @@
     if (session.ask(text)) text = '';
   }
 
-  /* Return sends, explicitly rather than by implicit form submission.
-   *
-   * The markup is a real form with a real submit button, so a browser would do
-   * this on its own -- but "on its own" is a behaviour no harness here can
-   * drive, and Return is the key a person actually presses. A path that cannot
-   * be run is a path nobody checks, and the last time that was true of this
-   * repo it was the command in the README.
-   */
+  /* Return sends, explicitly rather than by implicit form submission -- the
+   * markup would do it unaided, but "unaided" is a path no harness here can
+   * drive, and Return is the key a person actually presses. */
   function onKey(event) {
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
@@ -98,9 +88,14 @@
     setCompact(value);
   }
 
-  /* What it is doing, in words, under the name. Said only when it is worth
-     saying: "idle" is what a window looks like when nothing is happening, so
-     it does not need a caption. */
+  /* Quit in the right order: the socket is told first, because `shutdown` is
+   * what flushes the session summary into Chroma and, as it turns out, what
+   * leaves the database readable. The shell then waits and stops waiting. */
+  function sayGoodbye() {
+    session.shutdown();
+    quit();
+  }
+
   const SAYING = {
     connecting: 'starting up',
     listening: 'listening',
@@ -111,6 +106,7 @@
     blocked: 'refused that',
     speaking: 'speaking',
     muted: 'muted',
+    idle: 'ready',
   };
   const saying = $derived(
     session.connected ? (SAYING[session.muted ? 'muted' : session.state] ?? '') : session.status,
@@ -119,13 +115,21 @@
 
 <main class:compact>
   {#if compact}
-    <!-- Just the orb. It is the whole status display, so a window with only
-         the orb in it is still a window that tells you everything. -->
+    <!-- Just the orb. Two ways out, because this is the state in which being
+         unable to get out strands the whole app: the strip at the top is the
+         drag handle and carries an explicit button, and the orb itself is
+         clickable. The orb is deliberately NOT a drag region -- making it one
+         is what swallowed every click on it. -->
+    <div class="compactbar drag">
+      <button class="nodrag chip" type="button" title="back to the full window" onclick={() => toggleCompact(false)}>
+        Expand
+      </button>
+    </div>
     <button
-      class="orbonly drag"
+      class="orbonly nodrag"
       type="button"
-      title="double-click for the full window"
-      ondblclick={() => toggleCompact(false)}
+      title="back to the full window"
+      onclick={() => toggleCompact(false)}
     >
       <Orb
         state={session.state}
@@ -136,8 +140,6 @@
       />
     </button>
   {:else if session.blocked || session.fetching || (session.needsSetup && !skippedSetup)}
-    <!-- A first run that has not finished. The window says which of the three
-         halves is missing rather than refusing questions silently. -->
     <Setup
       setup={session.setup}
       fetching={session.fetching}
@@ -147,35 +149,50 @@
     />
   {:else}
     <div class="body" class:withpanel={showBackstage}>
-      <section class="stage">
-        <div class="hero">
-          <div class="orb">
-            <Orb
-              state={session.state}
-              muted={session.muted}
-              mic={session.micLevel}
-              out={session.outLevel}
-              {fps}
-            />
-          </div>
-          <div class="who">
-            <h1>{session.name}</h1>
-            <p class="saying" class:showing={Boolean(saying)}>{saying || ' '}</p>
-          </div>
-          <div class="tools">
-            <button type="button" onclick={toggleMode} disabled={!session.connected}>
-              {session.mode === 'voice' ? 'Voice on' : 'Voice off'}
-            </button>
-            <button type="button" onclick={toggleMute} disabled={!session.connected}>
-              {session.muted ? 'Unmute' : 'Mute'}
-            </button>
-            <button type="button" class:on={showBackstage} onclick={() => (showBackstage = !showBackstage)}>
-              Backstage
-            </button>
-            <button type="button" onclick={() => toggleCompact()}>Compact</button>
-          </div>
+      <!-- Left: the orb, big, with nothing competing with it. It is the whole
+           status display, so it gets a wall rather than a corner. -->
+      <aside class="side">
+        <div class="orb">
+          <Orb
+            state={session.state}
+            muted={session.muted}
+            mic={session.micLevel}
+            out={session.outLevel}
+            {fps}
+          />
+        </div>
+        <h1>{session.name}</h1>
+        <p class="saying">{saying}</p>
+
+        <div class="controls">
+          <button type="button" class:on={session.mode === 'voice'} onclick={toggleMode} disabled={!session.connected}>
+            <span class="glyph">{session.mode === 'voice' ? '◉' : '○'}</span>
+            {session.mode === 'voice' ? 'Voice on' : 'Voice off'}
+          </button>
+          <button type="button" class:on={session.muted} onclick={toggleMute} disabled={!session.connected}>
+            <span class="glyph">{session.muted ? '⊘' : '⏺'}</span>
+            {session.muted ? 'Muted' : 'Mic live'}
+          </button>
+          <button type="button" class:on={showBackstage} onclick={() => (showBackstage = !showBackstage)}>
+            <span class="glyph">☰</span> Backstage
+          </button>
+          <button type="button" onclick={() => toggleCompact(true)}>
+            <span class="glyph">⤡</span> Compact
+          </button>
         </div>
 
+        <div class="foot">
+          {#if hotkey}
+            <p class="hint">Push to talk anywhere: <b>{hotkey}</b></p>
+          {/if}
+          <!-- Distinct from the window's close, which hides to the tray. This
+               is the one that stops the sidecar, and it says so. -->
+          <button class="quit" type="button" onclick={sayGoodbye}>Quit Alexa</button>
+        </div>
+      </aside>
+
+      <!-- Middle: the conversation. -->
+      <section class="stage">
         <Transcript entries={session.entries} onanswer={(id, ok) => session.answer(id, ok)} />
 
         <form onsubmit={submit}>
@@ -190,7 +207,7 @@
             <button
               class="icon"
               type="button"
-              title="push to talk"
+              title={hotkey ? `Push to talk (${hotkey})` : 'Push to talk'}
               aria-label="push to talk"
               onclick={() => session.listen()}
               disabled={!session.connected}
@@ -198,20 +215,14 @@
               ◎
             </button>
             {#if session.busy}
-              <button
-                class="icon stop"
-                type="button"
-                title="stop"
-                aria-label="stop"
-                onclick={() => session.cancel()}
-              >
+              <button class="icon stop" type="button" title="Stop" aria-label="stop" onclick={() => session.cancel()}>
                 ■
               </button>
             {:else}
               <button
                 class="icon send"
                 type="submit"
-                title="send"
+                title="Send"
                 aria-label="send"
                 disabled={!session.connected || !text.trim()}
               >
@@ -234,86 +245,114 @@
     height: 100vh;
     display: grid;
   }
+  main.compact {
+    grid-template-rows: 28px minmax(0, 1fr);
+  }
 
   .body {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: 250px minmax(0, 1fr);
     overflow: hidden;
   }
   .body.withpanel {
-    grid-template-columns: minmax(0, 1fr) 320px;
-  }
-  .stage {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    overflow: hidden;
+    grid-template-columns: 250px minmax(0, 1fr) 340px;
   }
 
-  /* The orb, the name and the controls on one line. It was a 190px band with
-     a lone orb floating in it, which spent a fifth of the window on something
-     that is sixty pixels of actual information. */
-  .hero {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 14px 24px 10px;
+  /* -- left: the orb ---------------------------------------------------- */
+  .side {
+    display: grid;
+    grid-template-rows: auto auto auto 1fr auto;
+    justify-items: center;
+    gap: 4px;
+    padding: 28px 20px 20px;
+    border-right: 1px solid var(--line-soft);
+    text-align: center;
   }
   .orb {
-    width: 64px;
-    height: 64px;
-    flex: none;
-  }
-  .who {
-    flex: 1;
-    min-width: 0;
+    width: 150px;
+    height: 150px;
   }
   h1 {
-    font-family: var(--serif);
-    font-size: 21px;
+    font-size: 27px;
     font-weight: 600;
-    margin: 0;
+    margin: 10px 0 0;
     letter-spacing: 0.01em;
   }
   .saying {
-    margin: 1px 0 0;
-    font-size: 13px;
+    margin: 0;
+    font-size: 14.5px;
     color: var(--dim);
-    opacity: 0;
-    transition: opacity 180ms ease;
   }
-  .saying.showing {
-    opacity: 1;
+  .controls {
+    align-self: start;
+    margin-top: 24px;
+    display: grid;
+    gap: 6px;
+    width: 100%;
   }
-  .tools {
+  .controls button {
     display: flex;
-    gap: 2px;
-    flex: none;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    padding: 11px 14px;
   }
-  .tools button {
-    font-size: 13px;
-    padding: 6px 11px;
-  }
-  .tools button.on {
+  .controls button.on {
     background: var(--raised);
     color: var(--text);
   }
-
-  form {
-    padding: 10px 24px 20px;
+  .glyph {
+    font-size: 17px;
+    line-height: 1;
+    width: 20px;
+    text-align: center;
+    flex: none;
   }
-  /* One rounded field with its buttons inside it, rather than four separate
-     controls in a row. The row read as a form; this reads as somewhere to
-     talk. */
+  .foot {
+    width: 100%;
+    display: grid;
+    gap: 10px;
+  }
+  .hint {
+    margin: 0;
+    font-size: 13px;
+    color: var(--faint);
+    line-height: 1.45;
+  }
+  .hint b {
+    color: var(--dim);
+    font-weight: 600;
+  }
+  .quit {
+    border: 1px solid var(--line);
+    width: 100%;
+  }
+  .quit:hover {
+    border-color: var(--stop);
+    color: var(--stop);
+    background: var(--stop-soft);
+  }
+
+  /* -- middle: the conversation ----------------------------------------- */
+  .stage {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    overflow: hidden;
+  }
+  form {
+    padding: 12px 28px 26px;
+  }
   .field {
-    max-width: 660px;
+    max-width: 720px;
     margin: 0 auto;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--r-lg);
-    padding: 5px 6px 5px 8px;
+    padding: 6px 8px 6px 10px;
     transition: border-color 140ms ease;
   }
   .field:focus-within {
@@ -324,8 +363,8 @@
     min-width: 0;
     border: 0;
     background: transparent;
-    padding: 9px 8px;
-    font-size: 15px;
+    padding: 11px 8px;
+    font-size: 16.5px;
   }
   .field input:focus-visible {
     outline: none;
@@ -335,13 +374,13 @@
   }
   .icon {
     flex: none;
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
     padding: 0;
     display: grid;
     place-items: center;
     border-radius: 50%;
-    font-size: 15px;
+    font-size: 19px;
     line-height: 1;
   }
   .icon.send {
@@ -360,11 +399,22 @@
   .icon.stop {
     background: var(--stop-soft);
     color: var(--stop);
-    font-size: 11px;
+    font-size: 13px;
   }
 
-  /* Compact: the orb fills the window and is the drag handle. Double-click
-     comes back, so a single click cannot dismiss it by accident. */
+  /* -- compact ---------------------------------------------------------- */
+  .compactbar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: var(--bg);
+  }
+  .chip {
+    font-size: 12.5px;
+    padding: 3px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+  }
   .orbonly {
     border: 0;
     background: none;
@@ -377,9 +427,9 @@
     background: none;
   }
 
-  @media (max-width: 820px) {
+  @media (max-width: 1000px) {
     .body.withpanel {
-      grid-template-columns: minmax(0, 1fr);
+      grid-template-columns: 250px minmax(0, 1fr);
     }
   }
 </style>

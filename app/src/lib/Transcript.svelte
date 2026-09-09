@@ -56,15 +56,15 @@
 <style>
   .transcript {
     overflow-y: auto;
-    padding: 8px 24px 8px;
+    padding: 28px 28px 8px;
   }
   /* A reading column rather than the full width of the window. Long lines are
      the fastest way to make prose unreadable, and this is mostly prose. */
   .column {
-    max-width: 660px;
+    max-width: 720px;
     margin: 0 auto;
     display: grid;
-    gap: 22px;
+    gap: 26px;
     align-content: start;
   }
 
@@ -79,28 +79,27 @@
     justify-self: end;
     max-width: 80%;
     background: var(--surface);
-    padding: 11px 16px;
-    border-radius: var(--r-lg) var(--r-lg) 4px var(--r-lg);
+    padding: 13px 18px;
+    border-radius: var(--r-lg) var(--r-lg) 6px var(--r-lg);
     color: var(--text);
   }
   .them {
-    font-family: var(--serif);
-    font-size: 17px;
-    line-height: 1.7;
+    font-size: 18px;
+    line-height: 1.72;
     color: var(--text);
   }
 
   .note {
     display: flex;
     align-items: baseline;
-    gap: 9px;
-    font-size: 13.5px;
+    gap: 11px;
+    font-size: 15px;
     color: var(--dim);
   }
   .dot {
     flex: none;
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     background: var(--faint);
     transform: translateY(-2px);

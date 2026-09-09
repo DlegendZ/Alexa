@@ -60,12 +60,12 @@
     padding: 16px 18px 10px;
     color: var(--text);
     font-weight: 600;
-    font-size: 14px;
+    font-size: 16px;
   }
   .count {
     color: var(--faint);
     font-weight: 400;
-    font-size: 12.5px;
+    font-size: 13.5px;
   }
   ol {
     list-style: none;
@@ -83,12 +83,12 @@
     border-left: 2px solid var(--line);
   }
   .what {
-    font-size: 12px;
+    font-size: 13px;
     color: var(--faint);
   }
   .text {
-    font-size: 13px;
-    line-height: 1.55;
+    font-size: 14.5px;
+    line-height: 1.6;
     color: var(--dim);
   }
   /* Memory is the half of a turn you cannot otherwise watch happen; tools are

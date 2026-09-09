@@ -25,3 +25,13 @@ lto = true
 strip = true
 panic = "abort"
 codegen-units = 1
+
+# The title bar is painted by Windows, not by the WebView, so matching it to
+# the app's background needs DWM rather than CSS. Windows 11 only; on anything
+# older the call fails and the bar stays default, which is why it is ignored
+# rather than checked.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+] }

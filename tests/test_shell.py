@@ -132,3 +132,55 @@ def test_the_output_level_reaches_the_socket():
     """Measured is not emitted. This is the step that was missing."""
     source = (PACKAGE / "audio" / "voice.py").read_text(encoding="utf-8")
     assert '"out": event.out' in source
+
+# -- one fact, one producer ------------------------------------------------
+
+#: Messages that state a single fact about a turn, and must therefore be
+#: emitted from exactly one place. Everything not listed here is legitimately
+#: emitted from many: `state` changes all through a turn, `notice` and `error`
+#: can come from anywhere, `token` and `sentence` are streams.
+ONE_PRODUCER = {
+    "partial": "the turn announces what was asked, whoever asked it",
+    "ready": "one greeting, assembled in one place",
+    "confirm": "two emitters meant two cards, and the first card's buttons did nothing",
+    "pong": "one answer to one ping",
+}
+
+#: `done` is deliberately not on that list. The runtime emits it at the end of
+#: every turn it runs, and the socket emits it for the two turns the runtime
+#: never sees -- Ollama unreachable, and setup unfinished. Those are not a
+#: second copy of one fact; they are the only copy, for a turn that did not
+#: reach the thing that would otherwise say it. A client that stops listening
+#: at `done` has to get one either way.
+
+
+def test_a_fact_about_a_turn_has_exactly_one_producer():
+    """`partial` had two, and only spoken turns showed it.
+
+    The ear announced the transcript and then started a turn, which announced
+    it again -- so a typed question appeared once in the transcript and a
+    spoken one appeared twice. No test caught it, because the fake ear calls
+    `on_transcript` directly and never runs `_deliver`, which is where the
+    second one was.
+
+    That is the same failure as the duplicate confirmation card, and this is
+    the general form of it: a message that states one fact is emitted from one
+    place, and the way to check that is to count the places rather than to
+    watch one modality and trust the other.
+    """
+    emitters: dict[str, list[str]] = {kind: [] for kind in ONE_PRODUCER}
+    for path in PACKAGE.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for kind in ONE_PRODUCER:
+            # Both spellings the package uses: the dict literal that goes on
+            # the socket, and the runtime's keyword form.
+            hits = len(re.findall(rf'"type": "{kind}"', source))
+            hits += len(re.findall(rf'type="{kind}"', source))
+            emitters[kind].extend([path.name] * hits)
+
+    for kind, why in ONE_PRODUCER.items():
+        where = emitters[kind]
+        assert len(where) == 1, (
+            f"{kind!r} is emitted from {len(where)} places ({', '.join(where) or 'none'}) "
+            f"and should come from one -- {why}"
+        )

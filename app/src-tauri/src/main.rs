@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod sidecar;
+mod titlebar;
 mod tray;
 
 use std::sync::Mutex;
@@ -29,14 +30,16 @@ struct Shell {
     /// What the orb is showing. The window is the only thing that knows, and
     /// the tray is the only thing that needs telling.
     state: Mutex<String>,
-    /// Why the global hotkey is not working, if it is not.
+    /// Which push-to-talk shortcut actually bound, and why none did.
     ///
-    /// Another program can already hold `Ctrl+Alt+Space`, and on this machine
-    /// one did. Refusing to start over that would be worse than having no
-    /// hotkey -- but so is printing it to a console that a packaged app does
-    /// not have. It reaches the window instead, which is the only place the
-    /// person who pressed the keys is looking.
+    /// Another program can already own the one we want, and on this machine
+    /// one owned `Ctrl+Alt+Space`. Refusing to start over that would be worse
+    /// than having no hotkey -- but so is printing it to a console a packaged
+    /// app does not have, and so is a window that never says which keys work.
+    /// Both facts reach the window, which is the only place the person who
+    /// pressed them is looking.
     hotkey: Mutex<Option<String>>,
+    hotkey_error: Mutex<Option<String>>,
 }
 
 /// The `[ui]` block, read once and handed to the window.
@@ -51,7 +54,11 @@ struct Settings {
     start_minimised: bool,
     autostart: bool,
     trace: bool,
-    /// None when the hotkey registered. Some(reason) when it did not.
+    /// The shortcut that actually bound, so the window can show it rather than
+    /// leaving the user to guess which keys do anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hotkey: Option<String>,
+    /// None when one of them registered. Some(reason) when none did.
     #[serde(skip_serializing_if = "Option::is_none")]
     hotkey_error: Option<String>,
 }
@@ -64,6 +71,7 @@ impl Default for Settings {
             start_minimised: false,
             autostart: false,
             trace: true,
+            hotkey: None,
             hotkey_error: None,
         }
     }
@@ -97,6 +105,7 @@ fn read_settings() -> Settings {
             start_minimised: flag("start_minimised", false),
             autostart: flag("autostart", false),
             trace: flag("trace", true),
+            hotkey: None,
             hotkey_error: None,
         };
         break;
@@ -128,7 +137,8 @@ fn connection(shell: State<'_, Shell>) -> Result<Handshake, String> {
 #[tauri::command]
 fn settings(shell: State<'_, Shell>) -> Settings {
     let mut out = read_settings();
-    out.hotkey_error = shell.hotkey.lock().ok().and_then(|held| held.clone());
+    out.hotkey = shell.hotkey.lock().ok().and_then(|held| held.clone());
+    out.hotkey_error = shell.hotkey_error.lock().ok().and_then(|held| held.clone());
     out
 }
 
@@ -160,6 +170,14 @@ fn set_compact(app: AppHandle, compact: bool) {
     let _ = window.set_decorations(!compact);
     let _ = window.set_always_on_top(compact);
     let _ = window.set_size(LogicalSize::new(w, h));
+    if !compact {
+        // Turning decorations back on gives the window a brand new frame,
+        // painted in the system colour. Without this, coming back from
+        // compact is how the light title bar reappears.
+        if let Ok(handle) = window.hwnd() {
+            titlebar::match_the_app(handle.0 as isize);
+        }
+    }
 }
 
 #[tauri::command]
@@ -192,6 +210,18 @@ fn quit(app: AppHandle, shell: State<'_, Shell>) {
     app.exit(0);
 }
 
+/// Leave compact mode from the shell side.
+///
+/// The window can ask for this itself, but compact is exactly the state in
+/// which the window may be unclickable -- so the tray needs its own way out,
+/// or a mis-click strands the app as a small circle with no menu.
+#[tauri::command]
+fn expand(app: AppHandle) {
+    set_compact(app.clone(), false);
+    let _ = app.emit("expanded", ());
+    show(&app);
+}
+
 // -- the window ----------------------------------------------------------
 
 fn show(app: &AppHandle) {
@@ -199,6 +229,9 @@ fn show(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+        if let Ok(handle) = window.hwnd() {
+            titlebar::match_the_app(handle.0 as isize);
+        }
     }
 }
 
@@ -262,9 +295,11 @@ fn main() {
             sidecar: Mutex::new(Sidecar::default()),
             state: Mutex::new("connecting".to_string()),
             hotkey: Mutex::new(None),
+            hotkey_error: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             connection,
+            expand,
             settings,
             set_state,
             set_compact,
@@ -276,12 +311,23 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            let show_item = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            // The bar belongs to Windows, so CSS cannot reach it. Painted
+            // once here and again whenever the window is shown, because
+            // leaving and re-entering compact mode rebuilds the frame.
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(handle) = window.hwnd() {
+                    titlebar::match_the_app(handle.0 as isize);
+                }
+            }
+
+            let show_item = MenuItemBuilder::with_id("show", "Show Alexa").build(app)?;
+            let expand_item =
+                MenuItemBuilder::with_id("expand", "Leave compact mode").build(app)?;
             let mute_item = MenuItemBuilder::with_id("mute", "Mute").build(app)?;
             let mode_item = MenuItemBuilder::with_id("mode", "Voice / text").build(app)?;
-            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit Alexa").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&show_item, &mute_item, &mode_item])
+                .items(&[&show_item, &expand_item, &mute_item, &mode_item])
                 .separator()
                 .items(&[&quit_item])
                 .build()?;
@@ -292,6 +338,7 @@ fn main() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show(app),
+                    "expand" => expand(app.clone()),
                     // Mute and mode are the window's to change, because the
                     // window is what holds the socket. The tray only asks.
                     "mute" => {
@@ -304,8 +351,20 @@ fn main() {
                     _ => {}
                 })
                 .on_tray_icon_event(|icon, event| {
-                    if let TrayIconEvent::DoubleClick { .. } = event {
-                        show(&icon.app_handle().clone());
+                    // Left click as well as double: a tray icon you have to
+                    // discover the double-click on is a tray icon that has
+                    // stranded somebody.
+                    let wake = matches!(
+                        event,
+                        TrayIconEvent::DoubleClick { .. }
+                            | TrayIconEvent::Click {
+                                button: tauri::tray::MouseButton::Left,
+                                button_state: tauri::tray::MouseButtonState::Up,
+                                ..
+                            }
+                    );
+                    if wake {
+                        expand(icon.app_handle().clone());
                     }
                 })
                 .build(app)?;
@@ -313,7 +372,11 @@ fn main() {
             // Push to talk. It reaches the sidecar as `listen`, which is one
             // event rather than a standing mode -- the wake word is the usual
             // way in, and this is for when you would rather not say it.
-            let hotkey = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::Space);
+            //
+            // A list rather than one shortcut, because the obvious choice was
+            // already owned by something else on the first machine this ran
+            // on. Whichever binds first wins and the window is told which, so
+            // "the hotkey" is a thing you can read rather than guess at.
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, _shortcut, event| {
@@ -325,20 +388,44 @@ fn main() {
                     })
                     .build(),
             )?;
-            if let Err(why) = app.global_shortcut().register(hotkey) {
-                // Another program already has it. Carry on -- a window that
-                // refuses to start over a hotkey is worse than a window with
-                // no hotkey -- but record it where the window can say so. A
-                // console message is invisible in a packaged app, and a
-                // shortcut that quietly does nothing is the failure this
-                // codebase keeps relearning.
-                let told = format!(
-                    "Ctrl+Alt+Space is already taken by another program, so push-to-talk from the keyboard will not work ({why})."
-                );
-                eprintln!("{told}");
-                if let Some(shell) = app.try_state::<Shell>() {
-                    if let Ok(mut held) = shell.hotkey.lock() {
-                        *held = Some(told);
+
+            let candidates = [
+                ("Ctrl+Alt+A", Modifiers::CONTROL | Modifiers::ALT, Code::KeyA),
+                ("Ctrl+Shift+Space", Modifiers::CONTROL | Modifiers::SHIFT, Code::Space),
+                ("Ctrl+Alt+Space", Modifiers::CONTROL | Modifiers::ALT, Code::Space),
+                ("Ctrl+Alt+J", Modifiers::CONTROL | Modifiers::ALT, Code::KeyJ),
+            ];
+            let mut bound: Option<&str> = None;
+            let mut last_error = String::new();
+            for (label, mods, code) in candidates {
+                match app.global_shortcut().register(Shortcut::new(Some(mods), code)) {
+                    Ok(()) => {
+                        bound = Some(label);
+                        break;
+                    }
+                    Err(why) => last_error = why.to_string(),
+                }
+            }
+            if let Some(shell) = app.try_state::<Shell>() {
+                match bound {
+                    Some(label) => {
+                        if let Ok(mut held) = shell.hotkey.lock() {
+                            *held = Some(label.to_string());
+                        }
+                    }
+                    // Carry on -- a window that refuses to start over a
+                    // keyboard shortcut is worse than a window without one --
+                    // but say so where it can be read. A shortcut that quietly
+                    // does nothing is the failure this codebase keeps
+                    // relearning.
+                    None => {
+                        let told = format!(
+                            "No push-to-talk shortcut could be registered; every one tried is already taken by another program ({last_error}). The microphone button still works."
+                        );
+                        eprintln!("{told}");
+                        if let Ok(mut held) = shell.hotkey_error.lock() {
+                            *held = Some(told);
+                        }
                     }
                 }
             }

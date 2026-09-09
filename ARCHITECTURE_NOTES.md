@@ -2329,3 +2329,91 @@ identical log lines. The backstage trace distinguishes them, in words, and is th
 that does. That asymmetry is exactly what the trace was built for, and it is also a gap in
 the log: the one channel that persists is the one that cannot tell a fault from an empty
 cabinet.
+
+## 113. A spoken turn appeared twice, because two things announced it
+
+**Reported:** speaking one sentence put two identical messages in the transcript.
+**Cause:** two producers of `partial`. The ear announced the transcript in `_deliver`, then
+started a turn, and `Sidecar._run_turn` announced it again. A typed question appeared once;
+a spoken one appeared twice.
+**Fix:** the turn is the producer, because it is the thing that happens in both modalities.
+
+This is the duplicate confirmation card again, exactly — two emitters for one fact — and it
+survived because **no test could have caught it**. `FakeEar.heard()` calls `on_transcript`
+directly and never runs `_deliver`, which is where the second one lived. The existing test
+asserted `partials and partials[0]["text"] == ...`: that *a* partial arrives, never that
+only one does. A double that skips the code under test, and an assertion that counts to at
+least one.
+
+So the test is a source scan instead, and it is written as the general rule rather than
+this instance: **a message that states one fact about a turn is emitted from one place.**
+`partial`, `ready`, `confirm` and `pong` are enumerated; the count of emitters is the
+assertion.
+
+`done` is deliberately excluded and the reason is worth recording, because it looks like an
+exception being waved through. The runtime emits it at the end of every turn it runs, and
+the socket emits it for the two turns the runtime never sees -- Ollama unreachable, and
+setup unfinished. Those are not a second copy of one fact; they are the only copy, for a
+turn that never reached the thing that would otherwise say it. A client stops listening at
+`done`, so it has to arrive either way.
+
+## 114. Compact mode was a trap, and the drag region is what sprang it
+
+**Reported:** no way back out of compact mode.
+**Cause:** the orb was the whole window *and* carried `-webkit-app-region: drag`. A drag
+region swallows mouse events before the page sees them, so the click handler on it could
+never fire. The way out was a double-click on an element that could not receive clicks.
+
+Three ways out now, because this is the state in which having no way out strands the entire
+app -- a small circle, always on top, with no menu and no title bar:
+
+- a strip at the top of the compact window, which is the drag handle and carries an
+  explicit **Expand** button that is marked `no-drag`;
+- the orb itself, which is no longer a drag region and takes a single click;
+- **Leave compact mode** in the tray menu, and a single left click on the tray icon.
+
+The last one is the important one and generalises past this bug. **A mode that can make the
+window hard to click needs an escape that is not in the window.** The tray already existed;
+it just had no reason to know about compact.
+
+The same reasoning fixed quitting, which was reported in the same breath. Closing the window
+hides it to the tray, which is right for something meant to keep listening -- but note 107
+had removed the header's close button to stop it duplicating the native one, and that left
+*no* quit anywhere except a tray menu that had to be discovered. There is a labelled **Quit
+Alexa** button in the window now. It is not a duplicate of the native close: they do
+different things, and it says which one it is.
+
+## 115. The title bar is drawn by Windows, so CSS cannot reach it
+
+**Reported:** the title bar should be the colour of the app.
+**Why it needed code:** the bar is painted by the window manager, above the WebView and
+outside the document. A dark window under a light grey caption strip reads as two programs
+stacked in one frame, and no stylesheet can touch it.
+
+`DwmSetWindowAttribute` with `DWMWA_CAPTION_COLOR`, `DWMWA_TEXT_COLOR` and
+`DWMWA_BORDER_COLOR`, which arrived in Windows 11. On anything older the calls fail, the bar
+stays the system colour and the app is otherwise fine -- so the results are ignored rather
+than reported. The border is set a little lighter than the background on purpose, or the
+window has no edge at all against a dark desktop.
+
+Two traps, one of which would have shipped. **A `COLORREF` is `0x00BBGGRR`, not RGB** --
+writing the hex the way it appears in the stylesheet swaps red and blue, which looks like a
+deliberate colour choice rather than a bug. And **leaving compact mode builds a new frame**,
+painted in the system colour, so the caption has to be repainted every time decorations come
+back. Painting it once at startup looks correct until the first trip through compact mode.
+
+## 116. The program is Alexa; the project is still Sunday
+
+**Asked for:** the app should be called Alexa everywhere, not Sunday.
+**Changed:** `productName`, the window title, the executable, the installer, and the tray
+menu.
+**Not changed, deliberately:** the repository, the Python package, the sidecar process, and
+`%LOCALAPPDATA%\Sunday`.
+
+The data directory is the one that matters and the reason is not tidiness. It holds the
+memory store, which has several hundred filed turns in it. Renaming the folder orphans all
+of them, silently -- a fresh empty store would be created next to the old one and everything
+would look like it was working. The name a person sees and the name a path uses are
+different facts, and note 83 already established that the first one is configuration:
+`[assistant] name` is what the window shows, and it now travels over `ready` rather than
+being written into the markup, where it nearly ended up as a literal "Alexa".

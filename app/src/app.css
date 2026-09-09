@@ -29,13 +29,18 @@
   --stop-soft: #472f2c;
   --memory: #8fa4c9; /* the half you cannot otherwise watch happen */
 
-  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  /* One family, everywhere. The window used to mix a UI sans with a serif for
+     replies, which is the convention -- and which made it look like two
+     programs sharing a frame. It is all the serif now, including the buttons,
+     because the thing being read is prose and the controls are furniture
+     around it. */
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+  --sans: var(--serif);
   --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, monospace;
 
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 18px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 22px;
 
   color-scheme: dark;
 }
@@ -53,7 +58,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.6 var(--sans);
+  font: 16.5px/1.65 var(--serif);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -74,11 +79,12 @@ button,
 input,
 select {
   font: inherit;
+  font-size: 15px;
   color: var(--text);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
-  padding: 8px 12px;
+  padding: 10px 14px;
 }
 
 button {

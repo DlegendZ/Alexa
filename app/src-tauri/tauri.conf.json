@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Sunday",
+  "productName": "Alexa",
   "version": "0.1.0",
   "identifier": "com.sunday.assistant",
   "build": {
@@ -13,11 +13,11 @@
     "windows": [
       {
         "label": "main",
-        "title": "Sunday",
-        "width": 960,
-        "height": 700,
-        "minWidth": 420,
-        "minHeight": 320,
+        "title": "Alexa",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 560,
+        "minHeight": 420,
         "resizable": true,
         "center": true,
         "theme": "Dark"

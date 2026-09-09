@@ -322,8 +322,16 @@ class Ear:
         self._deliver(text)
 
     def _deliver(self, text: str) -> None:
-        """Hand the transcript over. From here it is a string like any other."""
-        self._emit({"type": "partial", "text": text, "final": True})
+        """Hand the transcript over. From here it is a string like any other.
+
+        It does **not** announce the transcript. `Sidecar._run_turn` broadcasts
+        `partial` for every turn, whatever started it, so emitting one here as
+        well put two copies of every spoken sentence in the transcript -- one
+        from the ear, one from the turn it started. A typed turn had one and a
+        spoken turn had two, which is exactly the shape of the duplicate
+        confirmation card: two emitters for one fact. The turn is the producer,
+        because it is the thing that happens in both modalities.
+        """
         if self._listener is not None:
             # The turn starts here and is not over until a reply has been
             # spoken. Talking during it is an interruption, and the thinking
