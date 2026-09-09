@@ -238,8 +238,14 @@ class Ear:
 
     def _handle(self, event: Any) -> None:
         if event.kind == "level":
-            self._emit({"type": "level", "rms": event.rms})
+            self._emit({"type": "level", "rms": event.rms, "out": event.out})
         elif event.kind == "wake":
+            # Two events, and the first one is the whole point of a wake word:
+            # it says "I heard you" before anything slow has started. The orb
+            # flashes on it and then settles into listening. It was documented
+            # as a state and had no producer, which is a step that never
+            # happens wearing the costume of a step that does.
+            self._emit({"type": "state", "value": "wake"})
             self._emit({"type": "state", "value": "listening"})
         elif event.kind == "dropped":
             # Say why. A clip that is dropped in silence is indistinguishable

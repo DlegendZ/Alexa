@@ -81,6 +81,11 @@ class VoiceEvent:
     kind: Literal["wake", "level", "clip", "dropped", "barge_in", "follow_up"]
     score: float = 0.0
     rms: float = 0.0
+    #: What is coming out of the speaker, at the microphone's rate, the same
+    #: frame. Already measured for the barge-in floor; carried here because the
+    #: orb's speaking rings pulse with it, and rings driven by a timer would
+    #: look identical and mean nothing.
+    out: float = 0.0
     clip: Clip | None = None
     why: str = ""
 
@@ -235,7 +240,13 @@ class Listener:
             return
         self._level_samples = 0
         rms = float(np.sqrt(np.mean(np.square(block))))
-        events.append(VoiceEvent(kind="level", rms=round(rms, 4)))
+        events.append(
+            VoiceEvent(
+                kind="level",
+                rms=round(rms, 4),
+                out=round(self.reference_rms, 4),
+            )
+        )
 
     # -- sleeping -------------------------------------------------------
 

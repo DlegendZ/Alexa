@@ -12,3 +12,9 @@ config.toml
 *.egg-info/
 build/
 dist/
+
+# the shell
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/gen/
