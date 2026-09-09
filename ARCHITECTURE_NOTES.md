@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–89 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–90 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1638,3 +1638,33 @@ echo to tell from a person, and loud sustained speech can only be one thing.
 The three states now read as one rule rather than three cases. **Speaking, thinking, and
 the tail after speaking are all "a turn is happening", and talking during any of them
 interrupts it.** Only a genuinely idle listener needs the wake word.
+
+## 90. Two readers on one stdin, and the confirmation lost the race
+
+**Doc:** Stage 04 — overwriting asks, and anything that is not clearly a yes is a no.
+**Code, as written:** `Keyboard._read` called `input()` in a loop for questions, and
+`_confirm` called `input()` again from the turn thread for the answer.
+**Code, now:** one thread reads and *routes*. While a confirmation is outstanding the next
+line belongs to it; otherwise the line is a question.
+**Why:** this is note 73 coming back through the door it opened.
+
+Note 73 moved `input()` onto its own thread so the prompt could be reprinted by whoever
+knew the app was idle. That was right, and it quietly gave a resource with exactly one
+reader a second one. Typing `y` at an overwrite prompt then went to whichever thread won
+the race — usually the reader, which had been blocked in `input()` first — so it arrived
+as a *question*, the confirmation waited out its two minutes, refused, and the file was
+left alone while "y" was answered as though it were something the user had asked.
+
+Reproduced against the old shape, which is the only way to be sure it was the shape and
+not the wording:
+
+    old shape -> confirmation got: []  |  inbox got: [('text', 'y')]
+
+It affected typing as much as voice. `--voice` was where it was noticed, because that is
+where a spoken question and a typed answer sit either side of the same prompt, but the
+reader thread became unconditional in note 73 and the race came with it.
+
+**The rule worth keeping:** a file descriptor has one reader. If two parts of the program
+want what arrives on it, the reader routes — it does not fork. `main.py` had no tests at
+all before this, on the grounds that it is a printing loop; the one piece of it that was
+not printing is the piece that broke.

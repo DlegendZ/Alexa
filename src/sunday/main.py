@@ -36,19 +36,77 @@ TRACE_COLOURS = {
 }
 
 
-def _confirm(request: ConfirmRequest) -> bool:
-    """Overwriting a file you already have, or deleting one at all.
+#: How long a confirmation waits for a typed answer. The same two minutes the
+#: socket allows, and the same answer when it runs out: silence is not consent.
+CONFIRM_TIMEOUT_S = 120
 
-    Anything that is not clearly a yes is a no, including a closed stdin: the
-    default has to be the one that leaves your file alone.
+
+class Keyboard:
+    """One thread on stdin, and two things that want the lines it produces.
+
+    There must only ever be one reader. Typed questions arrive whenever you
+    like, and a confirmation has to be answered in the middle of a turn -- so
+    the obvious shape, `input()` in the turn loop and `input()` again inside the
+    confirmation, is two threads racing for the same file descriptor. Whichever
+    wins takes the line: answer `y` to an overwrite and the turn loop is as
+    likely to receive it, treat it as your next question, and leave the
+    confirmation waiting for something that already happened.
+
+    So the thread reads, and *routes*. While a confirmation is outstanding the
+    next line belongs to it; otherwise the line is a question.
     """
-    print(f"\n{AMBER}  ? {request.question} [y/N] {RESET}", end="", flush=True)
-    try:
-        answer = input().strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return False
-    return answer in {"y", "yes"}
+
+    def __init__(self, inbox: "queue.Queue[Heard | None]") -> None:
+        self.inbox = inbox
+        self._answers: queue.Queue[str] = queue.Queue()
+        self._awaiting = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._read, name="sunday-stdin", daemon=True)
+        self._thread.start()
+
+    def _read(self) -> None:
+        while True:
+            try:
+                # PowerShell puts a UTF-8 BOM on the first line it pipes to a
+                # native exe, so a scripted `"exit" | sunday` would otherwise
+                # be answered as a question instead of quitting.
+                text = input().lstrip("\ufeff").strip()
+            except (EOFError, KeyboardInterrupt):
+                # Release anything waiting on an answer before leaving, or the
+                # turn hangs until the timeout on a stdin that will never speak
+                # again. An empty answer is a no, which is the safe one.
+                self._answers.put("")
+                self.inbox.put(None)
+                return
+            if self._awaiting.is_set():
+                self._answers.put(text)
+                continue
+            if not text:
+                continue
+            if text.lower() in {"exit", "quit"}:
+                self.inbox.put(None)
+                return
+            self.inbox.put(("text", text))
+
+    def confirm(self, request: ConfirmRequest) -> bool:
+        """Overwriting a file you already have, or deleting one at all.
+
+        Anything that is not clearly a yes is a no, including a closed stdin
+        and a question nobody answered: the default has to be the one that
+        leaves your file alone.
+        """
+        print(f"\n{AMBER}  ? {request.question} [y/N] {RESET}", end="", flush=True)
+        self._awaiting.set()
+        try:
+            answer = self._answers.get(timeout=CONFIRM_TIMEOUT_S)
+        except queue.Empty:
+            print()
+            return False
+        finally:
+            self._awaiting.clear()
+        return answer.strip().lower() in {"y", "yes"}
 
 
 #: Where typed lines and spoken ones meet. The turn loop pulls from one place
@@ -169,24 +227,7 @@ def main() -> int:
         else None
     )
 
-    def typing() -> None:
-        while True:
-            try:
-                # PowerShell puts a UTF-8 BOM on the first line it pipes to a
-                # native exe, so a scripted `"exit" | sunday` would otherwise
-                # be answered as a question instead of quitting.
-                text = input().lstrip("﻿").strip()
-            except (EOFError, KeyboardInterrupt):
-                inbox.put(None)
-                return
-            if not text:
-                continue
-            if text.lower() in {"exit", "quit"}:
-                inbox.put(None)
-                return
-            inbox.put(("text", text))
-
-    keyboard = threading.Thread(target=typing, name="sunday-stdin", daemon=True)
+    keyboard = Keyboard(inbox)
     keyboard.start()
     _prompt()
 
@@ -218,7 +259,7 @@ def main() -> int:
             on_token=on_token,
             on_sentence=ear.say if ear is not None else None,
             on_event=_print_event,
-            on_confirm=_confirm,
+            on_confirm=keyboard.confirm,
         )
         if not state.get("committed") and not state.get("final_response"):
             print(f"\n{GREY}  · cancelled{RESET}\n")
