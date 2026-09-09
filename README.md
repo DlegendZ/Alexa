@@ -58,7 +58,7 @@ That is the terminal client. It stays alive for the whole build — it is the
 fastest way to test the core without an app in the way. `.venv\Scripts\python.exe
 -m sunday.main` does the same thing if you prefer the module form.
 
-Add `--voice` to open the microphone as well. Say "hey jarvis", then ask; it
+Add `--voice` to open the microphone as well. Say "alexa" -- its own name, and `[assistant] name` changes both -- then ask; it
 answers out loud, and for eight seconds afterwards you can just keep talking
 without the wake word. Talking over it stops it.
 

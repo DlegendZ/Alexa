@@ -4,10 +4,16 @@
 # %LOCALAPPDATA%\Sunday\config.toml (installed). The repo-root copy wins when
 # both exist. Set SUNDAY_HOME to move the data directory somewhere else.
 
+[assistant]
+# What it calls itself, in the system prompt and in the transcript. The
+# package, the process and the data folder stay "sunday" -- those are the
+# program; this is the person it plays.
+name = "Alexa"
+
 [models]
 agent           = "qwen3.5:4b"
 ollama_url      = "http://127.0.0.1:11434"
-context_tokens  = 16384      # measured: the largest 4b window that stays 100% on the card
+context_tokens  = 20480      # measured: the largest 4b window that stays 100% on the card
 thinking_budget = 2048
 # The airlock summariser. The only model that is not local, and it only ever
 # sees a cleared query plus text that was already public.
@@ -34,7 +40,7 @@ lead_in_ms    = 4000   # woke, heard nothing, go back to sleep
 
 [wake]
 enabled     = true
-model       = "hey_jarvis"
+model       = "alexa"
 # Measured, not guessed: a clear "hey jarvis" scores ~0.49 on this mic and
 # everything that is not the phrase scores ~0.0002. Run
 # `python -m sunday.audio.check` to see both numbers for your own voice.
@@ -75,10 +81,10 @@ idle_minutes    = 10
 # Sized to fit 16384 rather than scaled into it: these four plus the thinking
 # reservation come to 12800 of the 13216 left after overhead and the reply, so
 # the numbers here are the numbers used. Raise the window and raise these too.
-slice_summary   = 1536
-slice_recent    = 4608
-slice_retrieved = 1536
-slice_tools     = 3072
+slice_summary   = 2048
+slice_recent    = 6144
+slice_retrieved = 2048
+slice_tools     = 4096
 
 [external]
 enabled           = true

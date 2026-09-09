@@ -99,6 +99,20 @@ NO_ROOM = (
 #: Below this, a clipped result carries no information worth the confusion.
 MIN_RESULT_TOKENS = 24
 
+#: How many of the user's own earlier questions the airlock may see.
+#:
+#: It needs some, or a question that points at something has nothing to point
+#: at: "check the internet for that" composed the query "price of", because the
+#: hint naming what "that" was had been written by the agent -- which has seen
+#: the private half -- and was correctly stripped for containing words the
+#: cleared material did not.
+#:
+#: Three, because the referent of "that" is almost always the last thing said
+#: and never four turns back, and because every line here is a line that can
+#: reach the composer. They are the user's own words, which is the same label
+#: `task` already carries; replies and retrieved turns are not, and do not.
+AIRLOCK_HISTORY = 3
+
 WRITE_DECLINED = (
     "refused: the user was asked before overwriting that file and said no. Do "
     "not try again or write it somewhere else unless they ask you to."
@@ -331,6 +345,7 @@ class Runtime:
         return {
             "context": context,
             "context_tokens": tokens,
+            "asked_before": self.session.recent_questions(AIRLOCK_HISTORY),
             # Retrieved memory is always private, whatever the original turn
             # was. It never reaches the airlock, which does not read context.
             "saw_private": bool(fresh),

@@ -154,7 +154,7 @@ def main() -> int:
         return 1
 
     where = cfg.source or "built-in defaults"
-    print(f"{GREY}Sunday · {cfg.models.agent} · config: {where}{RESET}")
+    print(f"{GREY}{cfg.assistant.name} · {cfg.models.agent} · config: {where}{RESET}")
     if config.trace_enabled(cfg):
         print(
             f"{GREY}Backstage trace is on -- the '|' lines are what is "
@@ -191,10 +191,11 @@ def main() -> int:
     _prompt()
 
     first_token = [True]
+    speaker = f"{cfg.assistant.name.lower()}> "
 
     def on_token(piece: str) -> None:
         if first_token[0]:
-            print("sunday> ", end="", flush=True)
+            print(speaker, end="", flush=True)
             first_token[0] = False
         print(piece, end="", flush=True)
 
@@ -225,7 +226,7 @@ def main() -> int:
             continue
 
         if first_token[0] and state.get("final_response"):
-            print(f"sunday> {state['final_response']}", end="")
+            print(f"{speaker}{state['final_response']}", end="")
         print("\n")
         # The door stays open for a moment, so the next question needs no wake
         # word. The ear waits for the reply to finish being spoken first.

@@ -44,6 +44,11 @@ class SundayState(TypedDict, total=False):
     # --- memory (read before anything else) ---
     context: str  # summary + recent + retrieved
     context_tokens: int  # against the Stage 02 slices
+    #: The user's own last few questions, for the airlock and nothing else.
+    #: `context` never reaches it -- that carries replies and retrieved turns,
+    #: which may quote a private file. These are the user's words, which is
+    #: what `task` is, so they carry the same label and the same permission.
+    asked_before: list[str]
 
     # --- provenance & the door ---
     tainted: bool  # a credential path was read -> door shut
@@ -80,6 +85,7 @@ def new_state(
         trace_id=trace_id,
         context="",
         context_tokens=0,
+        asked_before=[],
         tainted=False,
         blocked=False,
         redactions=0,

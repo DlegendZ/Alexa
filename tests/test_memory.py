@@ -335,6 +335,13 @@ def test_asking_the_same_question_again_recalls_no_noise(cfg):
 
 
 def test_what_is_already_in_the_recent_block_is_not_retrieved_twice(cfg):
+    """The stored document is deliberately written under the *old* name here.
+
+    The assistant's name is configurable, so documents filed before it changed
+    still say whatever it was called then. De-duplication has to survive that,
+    which is why a recalled turn renders from its question rather than by
+    matching a name it can no longer rely on.
+    """
     text = "You: hello\nSunday: hi"
     memory = FakeMemory(
         [store.Recalled(text, 0.1, time.time(), "s", "private", "turn")]
@@ -343,7 +350,8 @@ def test_what_is_already_in_the_recent_block_is_not_retrieved_twice(cfg):
     runtime.session.add("hello", "hi")
     state = runtime.run_turn("again")
 
-    assert state["context"].count("Sunday: hi") == 1
+    assert state["context"].count(f"{cfg.assistant.name}: hi") == 1
+    assert "Sunday: hi" not in state["context"]
 
 
 def test_going_idle_writes_a_session_summary_and_starts_a_new_session(cfg):

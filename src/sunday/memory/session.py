@@ -39,8 +39,11 @@ class Exchange:
     #: called nothing.
     tools: str = ""
 
-    def render(self) -> str:
-        line = f"You: {self.task}\nSunday: {self.response}"
+    def render(self, name: str | None = None) -> str:
+        from sunday import config
+
+        who = name or config.get().assistant.name
+        line = f"You: {self.task}\n{who}: {self.response}"
         if self.tools:
             # Below the reply, framed as a note rather than as speech: the 2b
             # copies whatever wording is nearest, and this must not come back
@@ -98,6 +101,17 @@ class SessionMemory:
             kept.append(block)
             spent += cost
         return "\n\n".join(reversed(kept))
+
+    def recent_questions(self, limit: int) -> list[str]:
+        """The user's own last few lines, oldest first, and nothing else.
+
+        Their questions, never the replies and never the tool results. This is
+        the only part of the session the airlock is allowed to see, and it is
+        allowed because it is the same thing `state["task"]` already is: words
+        the user typed or said. A reply may quote a file; a question may not
+        have quoted anything the user did not write.
+        """
+        return [e.task for e in self.exchanges[-limit:] if e.task.strip()]
 
     def overflows(self, tokens: int) -> bool:
         return budget.count(self.render_all()) > tokens

@@ -66,7 +66,11 @@ class Recalled:
         if self.kind != "turn":
             return f"[{when}] {self.text}"
 
-        asked = self.text.split("\nSunday:", 1)[0].strip()
+        # Split on the first newline rather than on a name. The stored
+        # document is exactly "You: <task>\n<name>: <response>", and the name
+        # is configurable -- so matching it would stop working the day it
+        # changed, silently, on every document written before the change.
+        asked = self.text.split("\n", 1)[0].strip()
         line = f"[{when}] {asked}"
         if self.tools_used:
             line += f"\n(answered using: {self.tools_used})"
@@ -157,7 +161,9 @@ class LongTermMemory:
         results: list[Result],
         provenance: Provenance | None = None,
     ) -> str | None:
-        document = f"You: {task}\nSunday: {response}"
+        from sunday import config
+
+        document = f"You: {task}\n{config.get().assistant.name}: {response}"
         metadata = {
             "ts": time.time(),
             "session_id": session_id,

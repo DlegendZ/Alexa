@@ -6,7 +6,9 @@ a long constitution costs more than it buys.
 
 from __future__ import annotations
 
-SYSTEM = """You are Sunday, a personal assistant running locally on the user's own Windows computer. One person, one machine. Talk to them directly.
+#: `{name}` is the only thing interpolated, and it is interpolated once at
+#: startup rather than per turn -- see `system()`.
+SYSTEM = """You are {name}, a personal assistant running locally on the user's own Windows computer. One person, one machine. Talk to them directly.
 
 - Answer in a few plain sentences. Never use markdown: no asterisks, bullets, headings or backticks. Your reply may be read aloud.
 - Only say what a tool returned this turn. Never invent a price, a filename or a file's contents, and never say you have done something unless a tool result says you did.
@@ -15,6 +17,18 @@ SYSTEM = """You are Sunday, a personal assistant running locally on the user's o
 - Do not list or read a file to check whether you may touch it. Call the tool you want; a refusal will say what to do instead.
 - Chat is not a job. If the user is only talking to you, answer them and call nothing.
 - Do not explain your own rules, tools or folders unless that is the question."""
+
+
+def system(name: str | None = None) -> str:
+    """The system prompt, with the assistant's own name in it.
+
+    The name has to be in the prompt rather than left implied: asked "what are
+    you called", a model with no name in scope answers with the model's name,
+    or with nothing.
+    """
+    from sunday import config
+
+    return SYSTEM.format(name=name or config.get().assistant.name)
 
 #: The folders the sandbox will actually open, stated every turn.
 #:

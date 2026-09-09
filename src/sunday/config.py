@@ -48,18 +48,25 @@ class Models:
     #: 8192 at the same 63 tokens a second. The 4b is larger, and the card runs
     #: out. Measured here, with a browser open:
     #:
-    #:      model  ctx     on GPU   tok/s
-    #:      2b     32768   100%      64.8
-    #:      4b     16384   100%      46.7
-    #:      4b     24576    85%      41.0
-    #:      4b     32768    79%      33.7
+    #:      model  ctx     on GPU   tok/s   card
+    #:      2b     32768   100%      64.8   3612M
+    #:      4b     16384   100%      46.6   4430M
+    #:      4b     20480   100%      46.6   4560M
+    #:      4b     24576    85%      40.3   4628M
+    #:      4b     32768    79%      32.4   4666M
     #:
-    #: Past 16384 Ollama leaves part of the model on the CPU and never says so
+    #: Past 20480 Ollama leaves part of the model on the CPU and never says so
     #: -- `ollama ps` reports it and nothing else does. The cost is not the
     #: window, it is the 28% of generation speed that goes with the spill. So
-    #: this is the largest window that stays entirely on the card, and Stage 12
-    #: has said since milestone 1 that `ollama ps` must read 100%.
-    context_tokens: int = 16384
+    #: this is the largest window that stays entirely on the card, and the
+    #: build order has said since milestone 1 that `ollama ps` must read 100%.
+    #:
+    #: 16384 was the ceiling until the card was measured again with less on it.
+    #: The number is not a property of the model alone -- it is the model, the
+    #: window and whatever else wants the card, so it is worth re-measuring
+    #: rather than assuming. `OLLAMA_KV_CACHE_TYPE=q8_0` would halve the KV and
+    #: is the documented next lever if 32768 is ever wanted.
+    context_tokens: int = 20480
     thinking_budget: int = 2048
     summariser: str = "deepseek-v4-flash"
     #: Which transcriber. `parakeet-tdt-0.6b-v2` is a 600M-parameter
@@ -121,9 +128,25 @@ class Audio:
 
 
 @dataclass
+class Assistant:
+    """What it calls itself.
+
+    A name rather than a string literal because it appears in three places
+    that must agree -- the system prompt, the rendering of a past exchange,
+    and the terminal banner -- and because the wake phrase and the name should
+    plausibly be the same word. `sunday` stays the package, the process and the
+    data directory; those are the program, and this is the person it plays.
+    """
+
+    name: str = "Alexa"
+
+
+@dataclass
 class Wake:
     enabled: bool = True
-    model: str = "hey_jarvis"
+    #: `alexa`, `hey_jarvis` and `hey_mycroft` ship pretrained. Anything else
+    #: is a model you trained yourself and dropped in `models\wake\`.
+    model: str = "alexa"
     #: 0.3, not the 0.5 this started at, and the difference is measured rather
     #: than felt. On this microphone a clearly spoken "hey jarvis" peaks at
     #: 0.490 -- under the old bar by a hundredth, so it fired perhaps one time
@@ -245,9 +268,9 @@ class Memory:
     distance_cutoff: float = 0.45
     top_k: int = 5
     idle_minutes: int = 10
-    #: Sized to fit the window rather than scaled into it. With 16384 of
-    #: window, 2400 of overhead and 768 for the reply, 13216 is left; these
-    #: four plus the thinking reservation come to 12800, so nothing is
+    #: Sized to fit the window rather than scaled into it. With 20480 of
+    #: window, 2400 of overhead and 768 for the reply, 17312 is left; these
+    #: four plus the thinking reservation come to 16384, so nothing is
     #: scaled and the numbers here are the numbers used.
     #:
     #: That last part is the point. `scaled_to` exists so a smaller window
@@ -260,10 +283,10 @@ class Memory:
     #: They are allowances, not usage. A short session fills none of them, so
     #: the prompt-eval cost -- about 0.15 ms per token above 3k -- arrives
     #: gradually and only in sessions long enough to have earned it.
-    slice_summary: int = 1536
-    slice_recent: int = 4608
-    slice_retrieved: int = 1536
-    slice_tools: int = 3072
+    slice_summary: int = 2048
+    slice_recent: int = 6144
+    slice_retrieved: int = 2048
+    slice_tools: int = 4096
 
 
 @dataclass
@@ -350,6 +373,7 @@ class UI:
 
 @dataclass
 class Config:
+    assistant: Assistant = field(default_factory=Assistant)
     models: Models = field(default_factory=Models)
     audio: Audio = field(default_factory=Audio)
     wake: Wake = field(default_factory=Wake)

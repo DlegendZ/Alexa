@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–81 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–84 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1431,3 +1431,96 @@ still ringing from the sentence that just ended.
 The distinction the code was missing: *no reference right now* and *the reply is over*
 are different facts, and only the second should reset the floor. `silence()` is the one
 that means the second.
+
+## 82. The window went to 20480, because the ceiling is not a property of the model
+
+**Doc:** Stage 02 as revised by note 76 — the window is 16384, the largest the 4b can
+have and stay entirely on the card.
+**Code:** `context_tokens = 20480`, and the slices back up to 2048/6144/2048/4096.
+**Why:** re-measured with less on the card, and the ceiling moved.
+
+| model | window | on the GPU | tokens/s | card |
+| --- | --- | --- | --- | --- |
+| 4b | 16384 | 100% | 46.6 | 4430 MiB |
+| 4b | **20480** | **100%** | **46.6** | 4560 MiB |
+| 4b | 24576 | 85% | 40.3 | 4628 MiB |
+| 4b | 32768 | 79% | 32.4 | 4666 MiB |
+
+The number is not the model's and it is not the design's — it is the model, the window
+and whatever else wants the card at that moment. 16384 was correct when it was measured
+and 20480 is correct now, and the honest conclusion is that this is a number to
+re-measure rather than to reason about. `ollama ps` is still the only thing that reports
+a spill.
+
+The slices go back to what they were before note 77 halved them, and for the same reason
+they were halved: they are sized to fit, not scaled into the window. 16384 of slices plus
+3168 of overhead and reply leaves 928 slack inside 20480, and nothing is scaled.
+
+`OLLAMA_KV_CACHE_TYPE=q8_0` with `OLLAMA_FLASH_ATTENTION=1` is the documented next lever
+and would roughly halve the KV — on this arithmetic it would put 32768 back inside the
+card. It needs an environment variable and an Ollama restart, so it is written down here
+rather than done quietly.
+
+## 83. It is called Alexa, and the name is configuration rather than a literal
+
+**Doc:** the assistant is called Sunday throughout.
+**Code:** `[assistant] name = "Alexa"`, and `[wake] model = "alexa"` — which is one of the
+three phrases openWakeWord ships pretrained, so the wake word and the name agree without
+anyone training a model.
+**Why:** asked for. What is worth writing down is the split.
+
+**The name is the person; `sunday` is still the program.** The package, the process, the
+entry points, the data directory and this repository keep the name they have. Renaming
+those would move `%LOCALAPPDATA%\Sunday\`, which is where 200-odd filed turns live, and
+buys nothing a user ever sees. What a user sees is three strings, and they now come from
+one place: the system prompt, the rendering of a past exchange, and the terminal banner.
+
+**One thing this broke, and it is the interesting part.** `Recalled.render` extracted the
+question from a stored turn by splitting on the literal `"\nSunday:"`. Every document
+filed before today says `Sunday:` and every document after says `Alexa:`, so a name-shaped
+split would have quietly stopped finding the boundary on old documents — returning the
+whole turn, including the reply, which is exactly what note 19 exists to prevent. It
+splits on the first newline now, which is structural: the document is
+`You: <task>\n<name>: <response>` whatever the name is.
+
+The test that caught it was pinned to the literal too. It now files its fixture under the
+*old* name deliberately, and asserts both that the current name renders and that the old
+one does not survive — because a store with two eras in it is the permanent state of
+affairs, not a migration.
+
+## 84. The airlock may see the user's own earlier questions
+
+**Doc:** Stage 05 — "the hint is vetted against exactly the material the prompt is about
+to contain: your line for this turn, and the `public` results."
+**Code:** and the user's own last three questions, from the session store.
+**Why:** without them a question that points at something has nothing to point at.
+
+From a live session, verbatim: *"Check the internet for that."* The agent knew what
+"that" was and put it in the hint. The hint is vetted against the cleared material and
+correctly stripped every word of it, because the cleared material was one sentence
+containing no nouns. **The only text that left the machine was `"price of"`**, and the
+reply explained at length that the search had returned nothing about Bitcoin.
+
+That is the vetting rule working exactly as designed and producing a useless turn. The
+rule is right — the hint is a model output and the model has seen the private half — so
+what had to change is the material, not the check.
+
+The user's own earlier lines are the same kind of thing as `state["task"]`: words the
+user typed or said, carrying the `user` label, which `AIRLOCK_VISIBLE` has always
+allowed. What is deliberately *not* included is everything else in the session: replies
+may quote a file, retrieved turns may be private, tool results have their own label and
+their own gate. `SessionMemory.recent_questions` returns tasks and nothing else, and that
+is the whole of the widening.
+
+Measured on the same turn, with the same hint:
+
+| cleared material | hint survives as |
+| --- | --- |
+| the current line only | `price` |
+| plus three earlier questions | `bitcoin price analysts` |
+
+End to end afterwards, the query that left was `current bitcoin price 2026` and the reply
+had figures in it.
+
+Three, and not more, because the referent of "that" is the last thing said and never four
+turns back — and because every line here is a line that can reach the composer.

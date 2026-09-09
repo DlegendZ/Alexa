@@ -89,7 +89,16 @@ def vet_intent(intent: str, cleared: str) -> tuple[str, int]:
 def compose_prompt(state: SundayState, intent: str) -> list[dict[str, str]]:
     """Build the fresh context. This function is the airlock: everything it
     does not put in is everything that cannot get out."""
-    parts = [f"The user asked: {state['task']}"]
+    parts = []
+    earlier = state.get("asked_before") or []
+    if earlier:
+        # Only the user's own earlier lines, so that a question which points
+        # at something -- "check the internet for that" -- has a "that".
+        parts.append(
+            "Earlier in this conversation the user asked:\n"
+            + "\n".join(f"- {q}" for q in earlier)
+        )
+    parts.append(f"The user asked: {state['task']}")
     public = visible_results(state.get("tool_results") or [])
     if public:
         parts.append(
@@ -118,7 +127,10 @@ def compose(agent: Agent, state: SundayState, intent: str) -> Cleared:
     # The hint is vetted against exactly the material the prompt is about to
     # contain -- not against some wider notion of "public", which would drift.
     public = visible_results(state.get("tool_results") or [])
-    cleared_material = " ".join([state["task"]] + [r.content for r in public])
+    cleared_material = " ".join(
+        [state["task"], *(state.get("asked_before") or [])]
+        + [r.content for r in public]
+    )
     intent, dropped = vet_intent(intent, cleared_material)
 
     reply = agent.chat(compose_prompt(state, intent), think=False, max_tokens=64)

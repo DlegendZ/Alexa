@@ -215,3 +215,66 @@ def test_a_summariser_failure_still_returns_the_public_material(cfg, monkeypatch
     assert result.ok is False
     assert "could not summarise" in result.text
     assert "snippets here" in result.text
+
+
+# -- the user's own earlier questions --------------------------------------
+
+
+def test_a_question_that_points_at_something_has_something_to_point_at(cfg):
+    """"Check the internet for that" composed the query "price of".
+
+    The word naming what "that" was lived in the agent's hint, and the hint is
+    vetted against the cleared material -- correctly, because the agent has
+    seen the private half. With only the current line cleared, every useful
+    word in the hint was new, so every useful word was stripped.
+    """
+    state = new_state("Check the internet for that.", session_id="s", trace_id="t")
+    hint = "bitcoin price analysts forecast"
+
+    alone, dropped_alone = airlock.vet_intent(hint, state["task"])
+    assert alone == "price" and dropped_alone == 3
+
+    state["asked_before"] = ["what is the bitcoin price", "what do analysts say"]
+    material = " ".join([state["task"], *state["asked_before"]])
+    kept, dropped = airlock.vet_intent(hint, material)
+    assert kept == "bitcoin price analysts"
+    assert dropped == 1  # "forecast" was still nobody's word but the agent's
+
+
+def test_only_the_users_own_lines_are_cleared_never_the_replies(cfg):
+    """A reply may quote a file; a question cannot have quoted anything the
+    user did not write. That is the whole reason one is allowed and not the
+    other, so the session must hand over questions and nothing else."""
+    from sunday.memory.session import SessionMemory
+
+    session = SessionMemory()
+    session.add("what is in my notes file", "Your notes say: SECRET-TOKEN abc")
+    questions = session.recent_questions(3)
+
+    assert questions == ["what is in my notes file"]
+    assert not any("SECRET-TOKEN" in q for q in questions)
+
+
+def test_the_earlier_questions_are_bounded(cfg):
+    from sunday.memory.session import SessionMemory
+
+    session = SessionMemory()
+    for i in range(10):
+        session.add(f"question {i}", "answer")
+    assert session.recent_questions(3) == ["question 7", "question 8", "question 9"]
+
+
+def test_earlier_questions_do_not_widen_what_a_private_result_may_do(cfg):
+    """The addition is user words. It must not become a door for anything
+    else, so the label test is still the only thing deciding results."""
+    state = new_state("look that up", session_id="s", trace_id="t")
+    state["asked_before"] = ["what is in my private file"]
+    state["tool_results"] = [
+        Result(tool="read_file", args={}, content="SECRET-TOKEN abc", provenance="private"),
+        Result(tool="ask_external", args={}, content="gold is public", provenance="public"),
+    ]
+    prompt = airlock.compose_prompt(state, "")[1]["content"]
+
+    assert "SECRET-TOKEN" not in prompt
+    assert "gold is public" in prompt
+    assert "what is in my private file" in prompt

@@ -19,7 +19,7 @@ TOOL_ROUND_MAX_TOKENS = 384
 def build_messages(state: SundayState) -> list[dict[str, Any]]:
     """The opening message list for a turn: system prompt, whatever memory
     returned, and what the user actually said."""
-    messages: list[dict[str, Any]] = [{"role": "system", "content": prompts.SYSTEM}]
+    messages: list[dict[str, Any]] = [{"role": "system", "content": prompts.system()}]
     context = state.get("context") or ""
     if context.strip():
         messages.append(
