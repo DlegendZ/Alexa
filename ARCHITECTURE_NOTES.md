@@ -2417,3 +2417,198 @@ would look like it was working. The name a person sees and the name a path uses 
 different facts, and note 83 already established that the first one is configuration:
 `[assistant] name` is what the window shows, and it now travels over `ready` rather than
 being written into the markup, where it nearly ended up as a literal "Alexa".
+
+## 117. The orb is a web now, and white at rest
+
+**Asked for:** a white logo and a white orb, both shaped like a web of particles, with the
+web animating differently in each phase.
+
+The orb was one glowing sphere. A sphere has exactly two channels -- how bright it is and
+what colour it is -- and every state had to be spelled with those two plus a wobble. A mesh
+has a third: **how connected it is**. `link` is now a per-state number saying how far apart
+two nodes may be and still be joined, so `transcribing` knits the web shut, `thinking`
+churns it, and `idle` drops most of the lines and leaves dust drifting. Nothing in the old
+orb could say that.
+
+Thirty-four points on a unit sphere by the golden angle, rotated on two axes, projected
+orthographically, and every pair measured each frame -- 561 distance checks, which is less
+work than one of the three radial gradients the old one drew. Still no WebGL, for the
+original reason: the card is holding the model.
+
+**The number that had to be measured rather than picked.** Thirty-four points spread over a
+sphere sit about **0.68 apart**, so the first set of `link` values -- 0.4 to 0.9, chosen to
+look like a range -- drew a cloud of dots with one line in it. It was not a web and did not
+look like one. The thresholds are calibrated against 0.68 now, and the docstring says so,
+because the next person to add a state will otherwise pick a number that means nothing.
+
+**White is not only a preference; it is what makes the colours louder.** Amber and teal were
+already the two most common looks -- amber covered thinking, speaking and local tools -- so
+teal arriving was a hue shift between two warm states. Colour is now spent on three facts
+only: amber while a tool runs on this machine, teal while one reaches off it, red for a
+refusal. Everything else -- connecting, listening, transcribing, thinking, speaking, idle --
+is white. `AIRLOCK_VISIBLE` did not change; what changed is that the one signal that matters
+is now the only coloured thing on the screen.
+
+The app icon is the same object, drawn once and held still, by the same generator that has
+always drawn the orb. It needs its own numbers in two places: `LINK` is wider than the orb's
+(0.82 against a moving 0.7-1.05), because the orb turns and a chord hidden this frame
+arrives in the next one while a still picture has one frame; and below 96 pixels it drops to
+fourteen points drawn heavier, because a web whose links are thinner than a pixel is a
+smudge. A 16-pixel copy of the 512 is what an icon set exists to avoid.
+
+## 118. Four cosmetic asks with one shape: the window was hoarding space
+
+**Asked for:** no rule beside the orb; the backstage always open; both side panels wider;
+bigger send and stop glyphs.
+
+Four separate complaints, one cause. Every one of them was the window being conservative
+about space or ceremony in a place where it had nothing to gain.
+
+- **The rule beside the orb.** `border-right` on the left panel. The orb spent a whole
+  milestone getting rid of its own one-pixel edge, because an edge makes a thing made of
+  light read as a widget; putting a hairline down the side of it undoes that at one remove.
+- **The backstage toggle.** A panel that answers "is it stuck, or is it reading?" is no use
+  to somebody who has to decide to open it before the question occurs to them. It is always
+  on. The toggle button went with it, and so did the `withpanel` class.
+- **The widths.** 250/340 became 300/390. The transcript gives up the space and loses
+  nothing, because it is capped at a 720px reading measure and was only centring itself in
+  the slack. The minimum window width went to 900, since three columns cannot fit in 560.
+- **The glyphs.** The arrow and the square were text characters at whatever weight the serif
+  drew them, which at 19px inside a 44px circle is a hairline. They are inline SVG at
+  stroke-width 2.4 now. The title bar's three are SVG for the same reason.
+
+## 119. The title bar is the page's, because Windows will not sell half of one
+
+**Asked for:** no name and no icon in the title bar, only minimise, maximise and close, and
+those drawn bigger.
+
+Windows draws the caption as one thing. You cannot keep its buttons and drop the icon and
+the title beside them, and it sizes all three for a file manager. So `decorations` is off
+and the bar is markup: a drag region with nothing in it and three controls at 48px with
+19px glyphs.
+
+That deletes two things note 115 needed. `set_compact` no longer toggles decorations, so
+there is no new frame to repaint on the way back out of compact mode -- which was half of
+115. And `DWMWA_CAPTION_COLOR` and `DWMWA_TEXT_COLOR` now paint something that is not drawn.
+`titlebar.rs` keeps `DWMWA_BORDER_COLOR` alone, which is the one attribute that still lands
+on a frameless window and the only thing standing between a dark window and a dark desktop.
+The `0x00BBGGRR` trap survives with it, so the warning stays.
+
+Close still hides to the tray. It is the same behaviour the native button had, and the app
+is meant to keep listening.
+
+## 120. One switch, not three
+
+**Asked for:** "Mic live means mic is on and Alexa always listens to me, and that means voice
+on -- make them into one." And, separately: delete push to talk.
+
+There were three controls for one fact, and no combination of them was useful. Voice mode
+with the microphone muted was an ear with its capture stream stopped. A live microphone in
+text mode heard you and answered in silence. Push to talk was a fourth way to say the thing
+the wake word already says.
+
+The protocol lost `set_mode`, `set_mute` and `listen`, and gained `set_voice {on}` with a
+`voice` reply; `ready` carries `voice` instead of `mode` and `muted`. On means the ear is
+open, the wake word is listening and replies are spoken. Off means the window is a text box.
+**Typing works either way**, which is exactly why this is a switch and not a mode.
+
+Deleting the switch deleted its state. `Ear.set_muted`, `Ear.trigger`, `Listener.muted` and
+the global shortcut all went, and so did `tauri-plugin-global-shortcut` and everything in
+`main.rs` that reported which of four candidate hotkeys had bound -- note 106's whole
+apparatus, removed by a request rather than by a bug. `Listener.muted` is the one worth
+naming: it was the belt to the capture stream's braces, and with nothing left to set it, it
+was a flag that could never be true.
+
+## 121. A reply is over when the room is quiet, not when the model stops writing
+
+**Asked for:** the orb should go back to listening when it finishes speaking, and when it is
+interrupted.
+
+Both were already nearly true and one line was undoing them. `Sidecar._run_turn` broadcast
+`{"state": "idle"}` the moment the token stream ended -- which is while Kokoro still has
+sentences queued -- so the orb dropped out of `speaking` before the reply had been *heard*,
+and then each remaining sentence flicked it back. `Ear.follow_up` already waits for playback
+to finish and already emits `listening`; the socket was racing it with a worse answer.
+
+The socket says nothing at the end of a turn now, unless there is no ear to say it. Which
+gave `idle` a meaning it did not have before: **`idle` is the closed microphone**, and it is
+the only thing that means that. With the ear open the resting state is `listening`. That is
+also why `muted` could be deleted from the orb's state table without losing the affordance --
+the dim, barely-linked idle web *is* the affordance, and `Sidecar._resting()` is the one
+place the choice is made, so a client attaching to a sidecar that has been listening since
+boot is not told the microphone is shut.
+
+Barge-in needed nothing: `Ear._barge_in` already emitted `listening`.
+
+## 122. A turn is five acts, not twenty lines
+
+**Asked for:** a gap between each task in the backstage, and a description of the one it is
+handling now.
+
+The panel had been through this once in the other direction. The first version put an
+uppercase heading over every line, so a turn produced twenty headings and no shape; note 110
+flattened it to one list with the step as a quiet prefix. That is also shapeless, and for
+the same reason -- a turn is not twenty things, it is five acts of three or four things each.
+
+Consecutive lines of the same step are one act now, with the sidecar's own heading over it
+once and 22px between acts against 9px inside one. Consecutive rather than gathered by name:
+the agent talks, calls a tool, talks again, and that really is three acts in order.
+
+**Colour follows the tool, and it is read off `detail` rather than guessed.** Every trace
+line already carries the raw numbers -- `scope`, `ok`, `why`, `approved`, `query` -- and they
+were being thrown away by a panel that coloured on `step` alone, so a local call, a call to
+the web and a refusal were the same amber. They are amber, teal and red now, the same three
+the orb uses, from the same facts the runtime already sends.
+
+## 123. Waiting with nothing to read
+
+**Asked for:** show the loading status while the agent is working, with a small loading
+particle, instead of leaving the user bored. And a button back to the newest message after
+scrolling up.
+
+The backstage already said what was happening; it was in the far right column, which is not
+where somebody watching for their answer is looking. The newest trace line now also sits
+directly above the composer while a turn is in flight, with one mote orbiting beside it. It
+is deliberately the *same text* -- a second wording for one fact is a second thing to keep
+true -- and it is a mote rather than a bar, because a bar promises a proportion that nothing
+here can measure. The backstage grew the same block at the top of its own column, where it
+holds still while the list under it grows.
+
+The transcript has followed the bottom only while the reader was already there since it was
+written, which is right and was half a rule. The other half was missing: not dragging you
+down is not a reason to leave you to drag yourself back. A **Newest** button appears
+floating over the transcript exactly while there is somewhere to go.
+
+## 124. Quitting is a word, not a button
+
+**Asked for:** remove the Quit Alexa button; typing "exit" or the title bar is enough.
+
+Note 114 added that button because removing the header's close had left no quit anywhere
+except an undiscovered tray menu. The title bar solves that properly, so the button became a
+third way to do the same thing.
+
+`exit`, `quit`, `bye`, `goodbye` and `keluar`, alone on a line, close the app. It is handled
+in the window rather than as a tool or a fast path, and that is the point: quitting is
+something the window does, not something the model may decide to do. The order is unchanged
+and still matters -- `shutdown` over the socket first, because that is what flushes the
+session summary into Chroma and what leaves the database readable.
+
+## 125. It was already 100% on the card; the RAM is the voice models
+
+**Asked:** is this really 100% GPU? RAM climbs while it runs. Change the context length to
+whatever stays entirely on the card.
+
+Measured rather than argued about, which is the rule for this number:
+
+    NAME          ID              SIZE      PROCESSOR    CONTEXT    UNTIL
+    qwen3.5:4b    2a654d98e6fb    3.8 GB    100% GPU     23552      4 minutes from now
+
+`100% GPU` at the shipped 23552. Nothing is on the processor and there is nothing to change;
+lowering the window would cost memory for no gain, and note 51's cliff at 24576 is where the
+spill starts.
+
+The climbing RAM is real and is not the language model. The four voice models -- Kokoro,
+Parakeet, Silero and openWakeWord -- run on the CPU, because this `onnxruntime` has only
+`CPUExecutionProvider`, and they cost about 1.2 GB of ordinary RAM. Chroma and the WebView
+add their own. That is system memory, not VRAM, and the two are not the same question: the
+binding constraint on the window is 6 GB of card, and it is not being touched.

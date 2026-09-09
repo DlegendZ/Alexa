@@ -122,10 +122,15 @@ npm run tauri dev
 ```
 
 The shell spawns the sidecar itself, reads the handshake, restarts it up to three
-times a minute if it dies, and gives up honestly after that. Closing the window
-hides it to the tray; **Quit** is what stops the sidecar, because that is what
-flushes the session summary to memory. `Ctrl+Alt+Space` focuses the window and
-starts listening from anywhere.
+times a minute if it dies, and gives up honestly after that. The title bar is
+drawn by the page, so it carries three controls and nothing else; its close
+hides the window to the tray. Typing **exit** in the box, or **Quit Alexa** in
+the tray menu, is what stops the sidecar — that is what flushes the session
+summary to memory.
+
+One switch controls the voice half. On means the microphone is open, the wake
+word is listening and replies are spoken; off means the window is a text box.
+Typing works either way.
 
 The window can also be run on its own, against a sidecar you started by hand,
 which is much faster to iterate on and is how it was built:
@@ -143,11 +148,13 @@ Then open `http://localhost:5173/?port=PORT&token=TOKEN` with the two values fro
 cd app; npm run tauri build
 ```
 
-Produces `app\src-tauri	argetelease\sunday.exe` -- about 3.6 MB, double-clickable,
+Produces `app\src-tauri	arget
+elease\sunday.exe` -- about 3.6 MB, double-clickable,
 no terminal and no dev server. It finds the sidecar by walking up to `.venv`, so it runs
 from inside the repo.
 
-It also produces an NSIS installer at `targeteleaseundle
+It also produces an NSIS installer at `target
+eleaseundle
 sis\`. That installer is
 **not yet distributable**: it bundles the window but not the Python sidecar, which is still
 supposed to ship as a PyInstaller one-folder build beside the exe. Installed somewhere
@@ -197,7 +204,7 @@ too, if you want the calendar and the mailbox.
 | `web/debug.html` | a plain page that drives a whole turn |
 | `app/src/` | the window: the orb, the transcript, the backstage panel |
 | `app/src/lib/orb.js` | every state the orb draws, on a 2D canvas, never WebGL |
-| `app/src-tauri/` | the Rust shell: window, tray, hotkey, and the sidecar's life |
+| `app/src-tauri/` | the Rust shell: window, tray, title bar, and the sidecar's life |
 
 ## Build progress
 
@@ -218,7 +225,7 @@ launches, spawns the sidecar, reads the handshake and drives a whole turn.
 | 9 | Barge-in | done | Talking over it stops it in about 100 ms — including while it is thinking |
 | 10 | The socket | done | The sidecar protocol; `web/debug.html` drives a whole turn |
 | 11 | Tauri shell + orb | done | A real window; the orb is the whole status display and both amplitudes it moves to are measured. The shell spawns the sidecar and drives a whole turn |
-| 12 | Windows integration | done | Tray tinted with the state, `Ctrl+Alt+Space`, single instance, NSIS, autostart, and a first-run screen that says what is missing. The installer itself has not been produced yet |
+| 12 | Windows integration | done | Tray tinted with the state, a title bar the page draws itself, single instance, NSIS, autostart, and a first-run screen that says what is missing. The installer itself has not been produced yet |
 | 13 | Calendar + mail | done | OAuth once through `sunday-google`, read-only, token on the credential list |
 
 ## Tests
