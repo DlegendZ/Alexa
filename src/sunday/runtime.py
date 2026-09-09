@@ -1091,10 +1091,17 @@ def notices_of(state: SundayState) -> Iterable[str]:
 
 
 def _normalise(text: str) -> str:
-    """For comparing a recalled question against the one just asked."""
+    """For comparing a recalled question against the one just asked.
+
+    The speaker prefix is read from config rather than written down. `sunday`
+    sat in this set as a literal for a milestone after the assistant was
+    renamed, which is note 83's failure in miniature: a name-shaped comparison
+    goes on compiling and quietly stops matching.
+    """
     stripped = "".join(c for c in text.lower() if c.isalnum() or c.isspace())
     words = stripped.split()
     # A rendered turn keeps its date and the "you:" prefix; drop both.
-    while words and (words[0].isdigit() or words[0] in {"you", "sunday"}):
+    speakers = {"you", *config.get().assistant.name.lower().split()}
+    while words and (words[0].isdigit() or words[0] in speakers):
         words.pop(0)
     return " ".join(words)

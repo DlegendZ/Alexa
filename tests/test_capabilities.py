@@ -33,6 +33,26 @@ def test_no_folders_configured_says_so_rather_than_saying_nothing(cfg):
     assert "config.toml" in listed
 
 
+def test_the_capability_list_writes_down_no_name(cfg):
+    """Note 83: the name is `[assistant] name` and nothing may hard-code it.
+
+    This result is a script -- it ends by telling the model to relay it -- so a
+    name written here is a name the user hears. It said "the tools Sunday has"
+    for a milestone after the assistant was renamed to Alexa. It is in the
+    second person now, which cannot disagree with a configured name because it
+    does not name anything. The roots are chosen so a hit is prose rather than
+    an interpolated path.
+    """
+    cfg.files.roots = ["C:/Users/User/Documents/Notes"]
+    cfg.assistant.name = "Alexa"
+    listed = capabilities.list_capabilities()
+    assert "sunday" not in listed.lower()
+
+    # And it does not follow the name either way, because there is none in it.
+    cfg.assistant.name = "Friday"
+    assert capabilities.list_capabilities() == listed
+
+
 def test_the_external_tool_is_marked_as_leaving_the_machine(cfg):
     listed = capabilities.list_capabilities()
     line = next(l for l in listed.splitlines() if l.startswith("ask_external"))

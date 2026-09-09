@@ -6,6 +6,11 @@ before any disk access happens -- that is what stops `../../.ssh/id_rsa`.
 
 Results are labelled `private`. Private is not secret: reading an ordinary file
 does not shut the airlock door. That is the deny overlay's job, in guardrail.py.
+
+Every refusal here is written in the second person and carries no name. A
+refusal is a script the model relays, so a name written into one is a name the
+user hears -- and `sunday` is the package, not what it calls itself. See note
+83: the name lives in `[assistant] name` and nowhere else.
 """
 
 from __future__ import annotations
@@ -21,8 +26,8 @@ from sunday.tools import Tool, register
 #: The sentence itself. `refused()` is what a tool actually returns -- it adds
 #: the folders that *are* allowed, which is the part that changes behaviour.
 REFUSED = (
-    "refused: that path is outside the folders Sunday may open. Tell the user "
-    "this folder is not one Sunday is allowed into, and that they can add it "
+    "refused: that path is outside the folders you may open. Tell the user "
+    "this folder is not one you are allowed into, and that they can add it "
     "to config.toml under [files] roots. Do not guess at another reason."
 )
 
@@ -51,15 +56,15 @@ def nearest_root(attempted: str) -> Path | None:
 def no_such_folder(parent) -> str:
     """The refusal for a destination whose folder does not exist.
 
-    Shared by every tool that writes, because the rule is about Sunday and not
-    about one tool: asked to put a file in "the documents folder", the model
-    invented `E:/Work/Sunday/documents` three separate ways, and each time the
-    file ended up somewhere the next turn could not find it. A missing folder
-    is a question for the user, not a gap to fill.
+    Shared by every tool that writes, because the rule is about the assistant
+    and not about one tool: asked to put a file in "the documents folder", the
+    model invented `E:/Work/Sunday/documents` three separate ways, and each
+    time the file ended up somewhere the next turn could not find it. A missing
+    folder is a question for the user, not a gap to fill.
     """
     listed = ", ".join(config.get().files.paths())
     return (
-        f"error: there is no folder at {parent}, and Sunday does not create "
+        f"error: there is no folder at {parent}, and you do not create "
         f"folders. The folders that exist for this are: {listed}. Use one of "
         f"those exactly, or ask the user which they meant."
     )
@@ -81,7 +86,7 @@ def refused(attempted: str = "") -> str:
     near = nearest_root(attempted) if attempted else None
     if near is not None:
         return (
-            f"{REFUSED} The folder Sunday can open there is {near} -- if that "
+            f"{REFUSED} The folder you can open there is {near} -- if that "
             f"is what the user meant, call the tool again with that exact path "
             f"(or a file inside it) and change nothing else."
         )
@@ -89,7 +94,7 @@ def refused(attempted: str = "") -> str:
     if not listed:
         return REFUSED
     return (
-        f"{REFUSED} The only folders Sunday may open are: {listed}. Use one of "
+        f"{REFUSED} The only folders you may open are: {listed}. Use one of "
         f"those paths exactly as written, or tell the user plainly."
     )
 
@@ -231,8 +236,8 @@ def write_file(path: str, text: str) -> str:
         return refused(path)
     if is_credential_path(target):
         return (
-            "refused: that is a credential file and Sunday will not write over "
-            "one, whatever it was asked. Tell the user plainly that the file "
+            "refused: that is a credential file and you may not write over "
+            "one, whatever you were asked. Tell the user plainly that the file "
             "was left as it was, and do not try another path for it."
         )
     if target.is_dir():
@@ -266,13 +271,13 @@ def delete_file(path: str) -> str:
         return refused(path)
     if is_credential_path(target):
         return (
-            "refused: that is a credential file and Sunday will not delete "
+            "refused: that is a credential file and you may not delete "
             "one. Tell the user plainly that it is still there, and that this "
             "is a rule rather than a mistake."
         )
     if target.is_dir():
         return (
-            f"error: {path} is a folder, and Sunday only deletes single files. "
+            f"error: {path} is a folder, and you only delete single files. "
             "Tell the user to remove folders themselves."
         )
     if not target.exists():
@@ -331,7 +336,7 @@ def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | st
         return f"error: no such file: {source}"
     if src.is_dir():
         return (
-            f"error: {source} is a folder, and Sunday only {verb}s one file at "
+            f"error: {source} is a folder, and you only {verb} one file at "
             f"a time. Tell the user to {verb} folders themselves."
         )
     if is_credential_path(src):
@@ -348,7 +353,7 @@ def _prepare(source: str, destination: str, verb: str) -> tuple[Path, Path] | st
         return no_such_folder(dst.parent)
     if is_credential_path(dst):
         return (
-            f"refused: the destination is a credential file and Sunday will "
+            f"refused: the destination is a credential file and you may "
             f"not {verb} anything onto one. Tell the user plainly that nothing "
             f"was changed, and pick a different name if they want it there."
         )

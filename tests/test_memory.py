@@ -334,6 +334,33 @@ def test_asking_the_same_question_again_recalls_no_noise(cfg):
     assert state["context"] == ""
 
 
+def test_the_speaker_prefix_is_read_from_config_not_written_down(cfg):
+    """Note 83 again, in the comparison rather than in the split.
+
+    `_normalise` drops a leading speaker word so a recalled question compares
+    equal to the one just asked. It held the literal "sunday" for a milestone
+    after the rename -- which compiles, passes, and quietly stops matching. It
+    matters because the wake phrase is the assistant's own name and the
+    transcriber renders the tail of it: "Alexa how much is silver" is the
+    question, not a new one.
+    """
+    cfg.assistant.name = "Alexa"
+    memory = FakeMemory(
+        [
+            store.Recalled(
+                text="You: how much is silver\nAlexa: $65.16",
+                distance=0.05,
+                ts=time.time(),
+                session_id="old",
+                provenance="public",
+                kind="turn",
+            )
+        ]
+    )
+    state = _runtime(cfg, memory).run_turn("Alexa how much is silver")
+    assert state["context"] == ""
+
+
 def test_what_is_already_in_the_recent_block_is_not_retrieved_twice(cfg):
     """The stored document is deliberately written under the *old* name here.
 

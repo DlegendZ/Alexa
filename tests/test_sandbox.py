@@ -53,13 +53,13 @@ def test_read_is_truncated_at_the_cap(sandbox):
 
 
 def test_write_refuses_a_folder_that_does_not_exist(sandbox):
-    """This test used to assert the opposite, and pinned the one place Sunday
-    still built folders on a guess. Copy and move already refused; write did
-    not, so the rule held for two tools out of three."""
+    """This test used to assert the opposite, and pinned the one place the
+    assistant still built folders on a guess. Copy and move already refused;
+    write did not, so the rule held for two tools out of three."""
     target = sandbox / "deep" / "new.txt"
     out = files.write_file(str(target), "hello")
     assert out.startswith("error: there is no folder at")
-    assert "does not create folders" in out
+    assert "do not create" in out
     assert not (sandbox / "deep").exists()
 
 
@@ -129,20 +129,64 @@ def test_a_relative_path_to_a_file_that_does_not_exist_yet_still_writes(sandbox)
     assert (sandbox / "fresh" / "new.txt").read_text(encoding="utf-8") == "hello"
 
 
-def test_every_refusal_tells_the_model_what_to_say(sandbox):
+def every_refusal(sandbox, tmp_path):
+    """Every string in files.py that starts with `refused:`, produced by
+    actually taking the path that produces it.
+
+    Enumerated from the rule rather than from the bug reports. The list used to
+    be four incidents long, and the one it happened to leave out was the
+    credential *source* -- the one refusal in this file that exists because
+    taint cannot fix a laundered copy after the fact.
+    """
+    (sandbox / ".env").write_text("KEY=1", encoding="utf-8")
+    (sandbox / "junk.txt").write_text("junk", encoding="utf-8")
+    (sandbox / "near").mkdir(exist_ok=True)
+    (tmp_path / "outside.txt").write_text("not yours", encoding="utf-8")
+
+    return {
+        # the sandbox, both shapes of the refusal it hands back
+        "outside a root": files.read_file(str(tmp_path / "outside.txt")),
+        "one level above a root": files.list_dir(str(sandbox.parent)),
+        "traversal": files.read_file(str(sandbox / ".." / "outside.txt")),
+        # credential paths, at each of the four ends that can name one
+        "write over a credential": files.write_file(str(sandbox / ".env"), "K=2"),
+        "delete a credential": files.delete_file(str(sandbox / ".env")),
+        "copy from a credential": files.copy_file(
+            str(sandbox / ".env"), str(sandbox / "leak.txt")
+        ),
+        "move from a credential": files.move_file(
+            str(sandbox / ".env"), str(sandbox / "leak.txt")
+        ),
+        "copy onto a credential": files.copy_file(
+            str(sandbox / "junk.txt"), str(sandbox / ".env")
+        ),
+        "move onto a credential": files.move_file(
+            str(sandbox / "junk.txt"), str(sandbox / ".env")
+        ),
+    }
+
+
+def test_every_refusal_tells_the_model_what_to_say(sandbox, tmp_path):
     """A refusal string is a script, not a status code. Two of them were bare
     status -- "will not write over a credential file" -- and a bare refusal is
     how `path is outside the configured roots` once got relayed to the user as
     "C: isn't mounted"."""
-    (sandbox / ".env").write_text("KEY=1", encoding="utf-8")
-    (sandbox / "junk.txt").write_text("junk", encoding="utf-8")
+    for why, out in every_refusal(sandbox, tmp_path).items():
+        assert out.startswith("refused:"), (why, out)
+        assert "tell the user" in out.lower(), (why, out)
 
-    refusals = [
-        files.write_file(str(sandbox / ".env"), "KEY=2"),
-        files.delete_file(str(sandbox / ".env")),
-        files.copy_file(str(sandbox / "junk.txt"), str(sandbox / ".env")),
-        files.read_file(str(sandbox / ".." / "outside.txt")),
-    ]
-    for out in refusals:
-        assert out.startswith("refused:"), out
-        assert "tell the user" in out.lower(), out
+
+def test_no_refusal_writes_down_a_name(sandbox, tmp_path):
+    """Note 83: the assistant is called whatever `[assistant] name` says, and
+    nothing may hard-code it.
+
+    These strings are scripts the model relays, and the 2b relays the wording
+    it was handed -- so "Sunday is not allowed into that folder" is a sentence
+    the user hears in a voice that calls itself Alexa. They are written in the
+    second person instead, which cannot go stale because there is no name in
+    it. The temp root has no "sunday" in its path, so a hit here is prose and
+    not an interpolated path.
+    """
+    assert "sunday" not in str(sandbox).lower()
+    for why, out in every_refusal(sandbox, tmp_path).items():
+        assert "sunday" not in out.lower(), (why, out)

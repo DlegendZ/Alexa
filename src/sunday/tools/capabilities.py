@@ -13,8 +13,13 @@ the answer is read off the registry rather than recalled from a hunch. The
 fast path in `sunday.fastpaths` fires it before the model gets a vote, for the
 same reason the weather one exists.
 
-Labelled `private`, because the list of folders Sunday may open is a map of
-your machine and has no business in an outgoing search query.
+Labelled `private`, because the list of folders it may open is a map of your
+machine and has no business in an outgoing search query.
+
+Written in the second person throughout, and with no name in it. The result is
+a script the model relays, and a name written down here is a name that
+disagrees with `[assistant] name` the day that changes -- note 83's rule, in
+the one tool whose whole output is prose about itself.
 """
 
 from __future__ import annotations
@@ -42,7 +47,7 @@ def list_capabilities() -> str:
     # shape of whatever it read last, so a list of dashes here comes back as a
     # reply full of dashes -- in a reply that may be read aloud, where every
     # one of them gets spoken. Same trap as the retrieved-memory framing.
-    lines = ["These are the tools Sunday has, read from the registry."]
+    lines = ["These are the tools you have, read from the registry."]
     for tool in sorted(all_tools(), key=lambda t: t.name):
         where = "leaves this machine" if tool.scope == "external" else "on this machine"
         first = tool.description.split(". ")[0].rstrip(".")
@@ -53,7 +58,7 @@ def list_capabilities() -> str:
             f"{root.label} ({root.path})" for root in cfg.files.entries()
         )
         lines.append(
-            f"The folders it can read, write and delete inside are {listed}. "
+            f"The folders you can read, write and delete inside are {listed}. "
             f"Any other path is refused before the disk is touched, and the "
             f"user can add folders under [files] roots in config.toml."
         )
@@ -64,7 +69,7 @@ def list_capabilities() -> str:
         )
 
     lines.append(
-        f"It will make at most {cfg.limits.tool_calls} tool calls in one turn "
+        f"You will make at most {cfg.limits.tool_calls} tool calls in one turn "
         f"and at most {cfg.external.max_hops} web lookups."
     )
     lines.append(

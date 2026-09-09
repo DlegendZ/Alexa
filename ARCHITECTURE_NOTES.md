@@ -3,10 +3,13 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–90 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–92 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
+
+An entry can be overtaken by a later one, and where it has been the earlier entry says
+so on its own line rather than leaving a superseded number to be read as current.
 
 Two of the applied entries are decisions, not fixes, and remain open in the document's
 own Open decisions list: **#10**, the intent hint the agent writes, and **#21**, the
@@ -37,6 +40,10 @@ Each entry: what the doc says, what the code does, why.
 **Code:** `[limits] tool_calls = 5`.
 **Why:** it is the single counter the whole bounded-loop argument rests on; it belongs
 where the other thresholds are.
+
+> **Superseded by note 45 on the number, not on the key.** The cap is **8**. Five was
+> sized for a turn that meant one lookup; a turn that picks the wrong tool, reads the
+> refusal and tries again needs room for the recovery as well as the mistake.
 
 ## 4. `thinking_budget` is a reservation, not an API cap
 
@@ -1668,3 +1675,69 @@ reader thread became unconditional in note 73 and the race came with it.
 want what arrives on it, the reader routes — it does not fork. `main.py` had no tests at
 all before this, on the grounds that it is a printing loop; the one piece of it that was
 not printing is the piece that broke.
+
+## 91. The name was written down in four more places than note 83 counted
+
+**Doc:** note 83 — "what a user sees is three strings, and they now come from one place:
+the system prompt, the rendering of a past exchange, and the terminal banner."
+**Code, as written:** four more, all of them literals. `list_capabilities` opened with
+"These are the tools Sunday has"; nine of the sandbox's refusal strings said Sunday
+("that path is outside the folders Sunday may open", "Sunday will not delete one",
+"Sunday only deletes single files"); and `runtime._normalise` held the set
+`{"you", "sunday"}` to strip a speaker prefix.
+**Code, now:** no name in any of them. The tool result and the refusals are written in
+the second person, and `_normalise` reads `[assistant] name` from config.
+**Why:** note 83 counted the places the name is *printed* and missed the places it is
+*spoken*, which is a larger set the moment a 2b is doing the speaking.
+
+Three different failures, and it is worth separating them because the fixes are not the
+same shape.
+
+**The capability list and the refusals are scripts.** They exist to be relayed —
+`list_capabilities` literally ends "Relay this in plain sentences", and every refusal in
+`files.py` ends by telling the model what to say. This codebase's oldest observation is
+that the 2b copies whatever wording is nearest, so a name in a script is a name the user
+hears. "Sunday is not allowed into that folder", in a voice that answers to Alexa.
+
+The fix is not to interpolate the configured name into them. It is to take the name out:
+these are sentences addressed *to* the assistant about itself, and the second person is
+both shorter and incapable of going stale. `refused: that path is outside the folders you
+may open` needs no configuration to stay true.
+
+**`_normalise` is a comparison, and that one is note 83's exact failure.** It strips a
+leading speaker word so a recalled question compares equal to the question just asked. The
+literal `"sunday"` compiled, passed every test, and silently stopped matching on the day
+of the rename — the same shape as the `"\nSunday:"` split note 83 was written about, in a
+function nobody thought to look at twice. It reads the configured name now.
+
+It matters more than it looks, because the wake phrase *is* the assistant's name and the
+transcriber renders the tail of it: note 78 measured Parakeet turning the pre-roll into
+`"Surface what's the weather in Jakarta?"`. "Alexa how much is silver" is the same
+question as "how much is silver", and the deduplication has to see that.
+
+**The rule:** the name appears in prose that reaches a model or a person exactly once, in
+`[assistant] name`. Anywhere else, write the second person. Two tests enumerate the paths
+rather than the incidents — every refusal `files.py` can produce, and the capability list —
+and both assert the word does not appear at all, on roots chosen so that a hit is prose
+and not an interpolated path. The first of those shares its helper with note 92.
+
+## 92. The refusal-wording test listed four incidents and not the rule
+
+**Doc:** the convention this repository states about itself — "a test written from the
+incident checks the incident; write it from the rule".
+**Code, as written:** `test_every_refusal_tells_the_model_what_to_say` produced four
+refusals and checked those.
+**Code, now:** it produces every refusal `files.py` can return, from a shared helper, and
+two tests read it — the wording rule and the no-name rule from note 91.
+**Why:** the four were the four from the bug reports, and the one the list left out is the
+one that matters most.
+
+`copy_file(".env", "notes.txt")` — the credential *source* — is the single refusal in this
+file that exists because taint cannot fix a laundering after the fact. It was covered
+behaviourally in `test_transfer.py` and not by the wording rule, which is exactly the gap
+note 60 found in the fast paths: a rule guarding two call sites out of three, for a whole
+milestone, with a green suite the entire time.
+
+The helper now enumerates nine paths: outside a root, one level above a root, a traversal,
+and a credential at each of the six ends that can name one. When a rule says *never*, the
+test walks the paths.
