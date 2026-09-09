@@ -4,16 +4,24 @@
 
 A generator rather than a checked-in binary, for the same reason a measured
 number lives in one place: an icon nobody can regenerate is an icon nobody can
-change. No Pillow -- this is polygons and lines, and a PNG encoder for that is
-thirty lines, fewer than the argument for adding a dependency.
+change. No Pillow -- this is five convex polygons and a PNG encoder, and the
+encoder is thirty lines, fewer than the argument for adding a dependency.
 
 **The mark is not the orb, and that is deliberate.** It used to be: 34 points
 and the lines between them, the same lattice the window draws. It read as a
 smudge at 16 pixels, which is the size the taskbar and the alt-tab strip
 actually use, and no amount of tuning fixes a mesh whose links are thinner than
 a pixel. So the icon is the same idea reduced to what survives: a solid seen
-down its corner, three faces, six edges and a centre. Vertices and the lines
-between them, still -- just few enough to read at any size.
+down its long diagonal, which is a hexagon with a Y in it -- three faces, six
+edges, one centre. Vertices and the lines between them, still.
+
+**Everything is one supersampled rasteriser**, which is what the first version
+of this got wrong. It drew the faces by testing four points per pixel and the
+lines by stamping soft dots along them, so the edges were four-level and the
+strokes were fuzzy -- pixelated in the literal sense, quantised rather than
+antialiased. Now every shape is a polygon, they are rasterised together at four
+samples each way by scanline, and the result is averaged down. One code path,
+sixteen levels of coverage per pixel, and the strokes have actual edges.
 
 White on nothing, like the orb. Colour in this program means something is
 happening -- teal off the machine, red refused -- and an icon cannot be in one
@@ -32,13 +40,26 @@ HERE = Path(__file__).resolve().parent
 #: The one colour. `--text` from the stylesheet, byte for byte.
 WHITE = (255, 252, 247)
 
-#: How much of the tile the solid fills. Enough air around it that the mark is
-#: never touching the edges at a size Windows composites it into.
-RADIUS = 0.34
+#: How much of the tile the solid fills, as a fraction of its width. Big enough
+#: to read at 16 pixels, with enough air that the mark is never touching the
+#: edges of whatever Windows composites it into.
+RADIUS = 0.385
 
-#: Alpha per face. The top catches the light and the two sides fall away from
-#: it, which is the whole reason a cube reads as a cube rather than a hexagon.
-TOP, RIGHT, LEFT = 0.34, 0.17, 0.085
+#: Stroke width, proportional with a floor: below about 1.1 pixels a line stops
+#: being a line and becomes a grey smear, whatever the antialiasing.
+STROKE = 0.034
+STROKE_MIN = 1.15
+
+#: Alpha per surface. The top catches the light and the two sides fall away
+#: from it, which is the whole reason a cube reads as a cube and not a hexagon.
+#: The edges are near-solid; the spokes are the inside of the solid and sit a
+#: little back, or three bright lines meeting at a point become a blob.
+TOP, RIGHT, LEFT = 0.30, 0.15, 0.075
+EDGE, SPOKE = 0.98, 0.62
+
+#: Samples each way. Sixteen levels of coverage is enough that a diagonal at 16
+#: pixels reads as a straight line rather than a staircase.
+SAMPLES = 4
 
 SIZES = {
     "32x32.png": 32,
@@ -51,109 +72,142 @@ SIZES = {
 ICO_SIZES = (16, 32, 48, 64, 128, 256)
 
 
-def corners(size: int):
-    """The centre and the six silhouette vertices, in screen coordinates.
-
-    A cube seen down its long diagonal is a regular hexagon with a Y in it. The
-    vertices sit every 60 degrees; the three spokes go to every other one.
-    """
-    centre = ((size - 1) / 2, (size - 1) / 2)
-    radius = size * RADIUS
-    points = []
+def hexagon(cx: float, cy: float, radius: float) -> list[tuple[float, float]]:
+    """Six points every sixty degrees, flat-topped-corner up."""
+    out = []
     for i in range(6):
         angle = math.radians(30 + 60 * i)
-        points.append(
-            (centre[0] + radius * math.cos(angle), centre[1] - radius * math.sin(angle))
-        )
-    return centre, points
+        out.append((cx + radius * math.cos(angle), cy - radius * math.sin(angle)))
+    return out
 
 
-def inside(poly, x: float, y: float) -> bool:
-    """Crossing test. Convex quads only, so the cheap one is right."""
-    hit = False
+def bar(a, b, width: float) -> list[tuple[float, float]]:
+    """A line as a rectangle, which is how a line gets antialiased properly."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy) or 1.0
+    nx, ny = -dy / length * width / 2, dx / length * width / 2
+    return [
+        (a[0] + nx, a[1] + ny),
+        (b[0] + nx, b[1] + ny),
+        (b[0] - nx, b[1] - ny),
+        (a[0] - nx, a[1] - ny),
+    ]
+
+
+def span(poly, y: float):
+    """Where a horizontal line at `y` enters and leaves a convex polygon."""
+    lo = hi = None
     n = len(poly)
     for i in range(n):
         ax, ay = poly[i]
         bx, by = poly[(i + 1) % n]
-        if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
-            hit = not hit
-    return hit
+        if (ay > y) != (by > y):
+            x = ax + (bx - ax) * (y - ay) / (by - ay)
+            if lo is None or x < lo:
+                lo = x
+            if hi is None or x > hi:
+                hi = x
+    return None if lo is None or hi is None or hi <= lo else (lo, hi)
+
+
+def shapes(size: int):
+    """The whole drawing: convex polygons with an alpha each, back to front.
+
+    Returned as `(polygon, hole, alpha)`. The outline is the only one with a
+    hole -- a ring is an outer hexagon minus an inner one, which mitres its own
+    corners for free and is why the six edges are not six rectangles.
+    """
+    cx = cy = (size - 1) / 2
+    radius = size * RADIUS
+    width = max(STROKE_MIN, size * STROKE)
+    v = hexagon(cx, cy, radius)
+    centre = (cx, cy)
+
+    out = [
+        ([centre, v[0], v[1], v[2]], None, TOP),
+        ([centre, v[4], v[5], v[0]], None, RIGHT),
+        ([centre, v[2], v[3], v[4]], None, LEFT),
+    ]
+    for i in (0, 2, 4):
+        out.append((bar(centre, v[i], width * 0.88), None, SPOKE))
+    out.append((hexagon(cx, cy, radius + width / 2), hexagon(cx, cy, radius - width / 2), EDGE))
+    return out
 
 
 def light(size: int) -> list[float]:
     """One greyscale buffer: how much light reaches each pixel.
 
-    Everything is drawn into this and coloured afterwards, so an edge crossing
-    a face adds to it rather than painting over it.
+    Shapes are combined by taking the brighter of the two rather than by
+    adding. Adding is what makes an edge crossing a face read as a third,
+    brighter thing, and there is no third thing here.
     """
-    centre, v = corners(size)
-    buffer = [0.0] * (size * size)
+    polys = shapes(size)
+    ss = SAMPLES
+    wide = size * ss
+    row = [0.0] * wide
+    out = [0.0] * (size * size)
 
-    # The three faces, brightest first. Two samples each way, which is enough
-    # antialiasing for an edge that also has a line drawn along it.
-    faces = (
-        ([centre, v[0], v[1], v[2]], TOP),
-        ([centre, v[4], v[5], v[0]], RIGHT),
-        ([centre, v[2], v[3], v[4]], LEFT),
-    )
-    for poly, alpha in faces:
-        lo_x = max(0, int(min(p[0] for p in poly)) - 1)
-        hi_x = min(size, int(max(p[0] for p in poly)) + 2)
-        lo_y = max(0, int(min(p[1] for p in poly)) - 1)
-        hi_y = min(size, int(max(p[1] for p in poly)) + 2)
-        for y in range(lo_y, hi_y):
-            row = y * size
-            for x in range(lo_x, hi_x):
-                hits = 0
-                for dy in (0.25, 0.75):
-                    for dx in (0.25, 0.75):
-                        if inside(poly, x + dx, y + dy):
-                            hits += 1
-                if hits:
-                    buffer[row + x] += alpha * hits / 4
-
-    def splat(px: float, py: float, r: float, weight: float) -> None:
-        lo_x, hi_x = int(px - r - 1), int(px + r + 2)
-        lo_y, hi_y = int(py - r - 1), int(py + r + 2)
-        for y in range(max(0, lo_y), min(size, hi_y)):
-            row = y * size
-            dy = y - py
-            for x in range(max(0, lo_x), min(size, hi_x)):
-                dx = x - px
-                d = math.sqrt(dx * dx + dy * dy)
-                if d > r:
-                    continue
-                fall = 1.0 - d / r
-                buffer[row + x] += weight * fall * fall
-
-    def line(a, b, width: float, weight: float) -> None:
-        steps = max(2, int(math.dist(a, b) * 2))
-        for s in range(steps + 1):
-            t = s / steps
-            splat(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, width, weight)
-
-    # Six edges around, three spokes in. The spokes are softer on purpose: they
-    # are the inside of the solid, and at 16 pixels three bright lines meeting
-    # at a point turn into a blob.
-    width = max(0.75, size * 0.026)
-    for i in range(6):
-        line(v[i], v[(i + 1) % 6], width, 0.5)
-    for i in (0, 2, 4):
-        line(centre, v[i], width * 0.85, 0.32)
-
-    # The bloom. A flat mark on a transparent square reads as a diagram; the
-    # glow is what makes it read as light, which is what the window is made of.
-    bloom = size * 0.52
     for y in range(size):
-        row = y * size
-        dy = y - centre[1]
+        touched_lo, touched_hi = wide, 0
+        acc = [0.0] * size
+        for sub in range(ss):
+            sy = y + (sub + 0.5) / ss
+            lo_here, hi_here = wide, 0
+            for poly, hole, alpha in polys:
+                found = span(poly, sy)
+                if found is None:
+                    continue
+                inner = span(hole, sy) if hole else None
+                pieces = []
+                if inner is None:
+                    pieces.append(found)
+                else:
+                    if found[0] < inner[0]:
+                        pieces.append((found[0], inner[0]))
+                    if inner[1] < found[1]:
+                        pieces.append((inner[1], found[1]))
+                for x0, x1 in pieces:
+                    i0 = max(0, math.ceil(x0 * ss - 0.5))
+                    i1 = min(wide - 1, math.floor(x1 * ss - 0.5))
+                    if i1 < i0:
+                        continue
+                    for i in range(i0, i1 + 1):
+                        if row[i] < alpha:
+                            row[i] = alpha
+                    if i0 < lo_here:
+                        lo_here = i0
+                    if i1 > hi_here:
+                        hi_here = i1
+            if lo_here <= hi_here:
+                for i in range(lo_here, hi_here + 1):
+                    value = row[i]
+                    if value:
+                        acc[i // ss] += value
+                        row[i] = 0.0
+                if lo_here < touched_lo:
+                    touched_lo = lo_here
+                if hi_here > touched_hi:
+                    touched_hi = hi_here
+        if touched_lo <= touched_hi:
+            base = y * size
+            for x in range(touched_lo // ss, touched_hi // ss + 1):
+                out[base + x] = acc[x] / (ss * ss)
+
+    # The bloom, added at full-pixel resolution because it is smooth by nature
+    # and gains nothing from sampling. A flat mark on a transparent square reads
+    # as a diagram; the glow is what makes it read as light, which is what the
+    # window is made of.
+    cx = cy = (size - 1) / 2
+    bloom = size * 0.54
+    for y in range(size):
+        base = y * size
+        dy = y - cy
         for x in range(size):
-            dx = x - centre[0]
+            dx = x - cx
             d = math.sqrt(dx * dx + dy * dy)
             if d < bloom:
-                buffer[row + x] += (1.0 - d / bloom) ** 2.6 * 0.1
-
-    return buffer
+                out[base + x] = min(1.0, out[base + x] + (1.0 - d / bloom) ** 2.8 * 0.09)
+    return out
 
 
 def pixels(size: int) -> bytes:
@@ -164,11 +218,11 @@ def pixels(size: int) -> bytes:
         row = bytearray()
         base = y * size
         for x in range(size):
-            alpha = min(1.0, buffer[base + x])
+            alpha = buffer[base + x]
             if alpha <= 0.004:
                 row += bytes(4)
                 continue
-            row += bytes(WHITE) + bytes((round(alpha * 255),))
+            row += bytes(WHITE) + bytes((round(min(1.0, alpha) * 255),))
         rows.append(bytes(row))
     # Each PNG scanline carries a filter byte; zero means "none".
     return b"".join(bytes(1) + row for row in rows)

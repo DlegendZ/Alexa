@@ -2924,3 +2924,46 @@ expensive thing to be given twice: it explains the evidence, so nobody looks fur
 separated them was a timestamp -- the executable was two minutes *older* than the icon, which
 meant the rebuild had happened and had not helped. **When the same symptom survives its own
 fix, stop re-applying the fix and go and read the thing that does the work.**
+
+## 139. Quantised is not antialiased
+
+**Reported:** the icon looks pixelated, and could be a bit bigger.
+
+The first cube was drawn two ways at once. The faces were filled by testing four sample points
+per pixel, which gives an edge exactly five levels of coverage -- 0, ¼, ½, ¾, 1 -- and five
+levels on a 30-degree diagonal is a staircase with soft treads. The strokes were stamped as
+overlapping round dots along each segment, which is fuzzy in a different way: no edge at all,
+just a gradient with no idea where the line stops.
+
+Now there is one rasteriser and everything goes through it. Every part of the mark is a convex
+polygon -- the three faces, three spokes as rectangles, and the outline as an outer hexagon
+minus an inner one, which mitres its own corners for free and is why the six edges are not six
+separate bars. They are scanline-filled at four samples each way and averaged down: sixteen
+levels of coverage, and strokes that have edges because they *are* edges.
+
+Shapes combine by taking the brighter, not by adding. Adding is what made a stroke crossing a
+face read as a third, brighter thing, and there is no third thing here.
+
+`RADIUS` went 0.34 → 0.385, and the stroke has a floor of 1.15 pixels: below about one pixel a
+line stops being a line and becomes a grey smear, whatever the antialiasing does. Checked at
+16, 24, 32, 48 and 256 rather than drawn at 512 and hoped for.
+
+## 140. A console script that was never installed
+
+**Asked:** how do I connect the calendar and the mailbox?
+
+The answer was `.venv\Scripts\sunday-google.exe`, in the README and in `google.py`'s own
+docstring and in the refusal both tools hand back. It does not exist. Neither does
+`sunday-models.exe` nor `sunday-mic.exe`.
+
+`[project.scripts]` in `pyproject.toml` names five entry points, and console scripts are
+written **at install time**. This `.venv` was created before three of them were added, so `pip`
+never wrote them, and nothing since has needed one -- the two that exist, `sunday` and
+`sunday-sidecar`, are the two that predate the others. The instruction has been wrong for two
+milestones and reads as correct, which is the exact shape of the bash-syntax-in-PowerShell
+lesson: **the one command nobody runs is the one in the documentation.**
+
+Two halves to the fix. `google.py` had no `if __name__ == "__main__"` guard -- the only one of
+the five without one -- so `python -m sunday.tools.google` did nothing either. It has one now,
+which makes the module route work in any venv and cannot go stale, and that is what the README
+leads with. The reinstall that writes all five scripts is the line under it.
