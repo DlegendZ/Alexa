@@ -63,7 +63,16 @@ Then sign in once. This opens a browser, and the code comes back to a socket on
 this machine rather than through your clipboard:
 
 ```powershell
-.venv\Scripts\sunday-google.exe
+.venv\Scripts\python.exe -m sunday.tools.google
+```
+
+`sunday-google.exe` does the same thing, but console scripts are written at
+install time -- a `.venv` created before that entry point existed does not have
+one, and neither `sunday-models` nor `sunday-mic`. One reinstall writes all
+five, and the module above works without it:
+
+```powershell
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
 The refresh token lands in `%LOCALAPPDATA%\Sunday\google_token.json`, which is

@@ -417,6 +417,10 @@ def main() -> int:
     return authorise()
 
 
+if __name__ == "__main__":  # pragma: no cover - an entry point, not a branch
+    raise SystemExit(main())
+
+
 # -- registration ---------------------------------------------------------
 
 register(
