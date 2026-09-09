@@ -103,6 +103,13 @@ const BLOCKED_MS = 900;
  */
 const NODES = 34;
 
+/** The size the node radii and line widths were tuned at, in CSS pixels of
+ *  half the canvas. Everything drawn in absolute pixels is scaled off this, or
+ *  the same web is chunky in the compact window and wispy in a wide one --
+ *  which is what happens when a drawing has one hard-coded size in it and the
+ *  box around it does not. */
+const TUNED_UNIT = 95;
+
 const rgba = ([r, g, b], a) => `rgba(${r},${g},${b},${a})`;
 
 /** Move `from` toward `to` at a rate that is frame-rate independent.
@@ -241,8 +248,15 @@ export class Orb {
     const box = this.canvas.getBoundingClientRect();
     const w = Math.max(1, Math.round(box.width));
     const h = Math.max(1, Math.round(box.height));
-    this.canvas.width = Math.round(w * dpr);
-    this.canvas.height = Math.round(h * dpr);
+    const width = Math.round(w * dpr);
+    const height = Math.round(h * dpr);
+    /* Assigning `canvas.width` wipes the bitmap even when the number does not
+     * change, and a ResizeObserver notifies once as soon as it starts
+     * observing -- so an unguarded resize throws away the frame that had just
+     * been drawn. Harmless sixty times a second and very visible once. */
+    if (this.canvas.width === width && this.canvas.height === height && this.w === w && this.h === h) return;
+    this.canvas.width = width;
+    this.canvas.height = height;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.w = w;
     this.h = h;
@@ -371,6 +385,9 @@ export class Orb {
      * the same thing at two sizes. */
     const unit = Math.min(this.w, this.h) / 2;
     const base = unit * 0.62;
+    /* Bounded, because at very small sizes a proportional node disappears and
+     * at very large ones the web turns into plumbing. */
+    const scale = Math.max(0.55, Math.min(1.9, unit / TUNED_UNIT));
     const state = this.state;
     const still = this.reduced;
     const rgb = this._rgb.map(Math.round);
@@ -470,8 +487,8 @@ export class Orb {
     ctx.fillStyle = bloom;
     ctx.fillRect(0, 0, this.w, this.h);
 
-    this.project(cx, cy, r, still ? 0 : jitter, glow, state, wake);
-    this.drawLinks(rgb, glow, wake);
+    this.project(cx, cy, r, still ? 0 : jitter, glow, state, wake, scale);
+    this.drawLinks(rgb, glow, wake, scale);
     this.drawNodes(rgb, glow);
     this.drawCore(cx, cy, r, rgb, glow);
   }
@@ -482,7 +499,7 @@ export class Orb {
    *  horizontal bands, which reads as a carousel; a second, slower roll is
    *  what makes it read as a sphere being turned over.
    */
-  project(cx, cy, r, jitter, glow, state, wake) {
+  project(cx, cy, r, jitter, glow, state, wake, scale) {
     const yaw = this._spin;
     const roll = this._roll;
     const cosY = Math.cos(yaw);
@@ -513,7 +530,7 @@ export class Orb {
        * a perspective divide on a sphere this small buys nothing you can
        * see and costs a branch per node for the points behind the camera. */
       const near = (z2 + 1) / 2;
-      p.size = (0.9 + near * 2.1) * (1 + wake * 0.7);
+      p.size = (0.9 + near * 2.1) * scale * (1 + wake * 0.7);
       p.alpha = (0.18 + near * 0.62) * glow * this.nodeWave(p, state);
     }
   }
@@ -538,14 +555,14 @@ export class Orb {
    *  web knits itself tight, `idle` -- which now means the ear is shut --
    *  drops it far enough that most of the lines go and what is left drifts.
    */
-  drawLinks(rgb, glow, wake = 0) {
+  drawLinks(rgb, glow, wake = 0, scale = 1) {
     const ctx = this.ctx;
     /* The wake pulse widens the threshold rather than drawing anything new:
      * for a third of a second every link the lattice could have exists. */
     const limit = this._link + wake * 0.55;
     if (limit <= 0.01) return;
     const nodes = this._nodes;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = scale;
     for (let i = 0; i < nodes.length; i += 1) {
       const a = nodes[i];
       for (let j = i + 1; j < nodes.length; j += 1) {

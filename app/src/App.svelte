@@ -351,10 +351,15 @@
   /* -- left: the orb ---------------------------------------------------- */
   .side {
     display: grid;
-    grid-template-rows: auto auto auto 1fr;
+    /* Centred as a group rather than stacked from the top. The panel is a
+       third of the window and the orb is the only thing in it that matters;
+       hanging it off the ceiling with a column of air underneath made the
+       whole side read as a toolbar that had run out of tools. */
+    grid-template-rows: repeat(4, auto);
+    align-content: center;
     justify-items: center;
     gap: 4px;
-    padding: 22px 22px 20px;
+    padding: 24px 22px;
     /* A rule between the columns, which is not the hairline note 118 removed:
        that one ran down the side of the orb itself and was, in the end, half a
        device pixel the canvas never cleared. This one divides three panels,
@@ -362,9 +367,13 @@
     border-right: 1px solid var(--line-soft);
     text-align: center;
   }
+  /* Sized to the panel, not to a number. The columns are fractions now, so a
+     wider window gives the orb the room rather than giving it to a transcript
+     that is capped at a reading measure anyway. The cap stops it becoming a
+     wall on a very wide screen. */
   .orb {
-    width: 190px;
-    height: 190px;
+    width: min(300px, 84%);
+    aspect-ratio: 1;
   }
   h1 {
     font-size: 27px;
@@ -378,8 +387,7 @@
     color: var(--dim);
   }
   .controls {
-    align-self: start;
-    margin-top: 26px;
+    margin-top: 28px;
     display: flex;
     justify-content: center;
     gap: 10px;
@@ -550,13 +558,8 @@
     background: none;
   }
 
-  /* The columns are fractions, so they give ground on their own. What does
-     not is the orb, which is a fixed square and the first thing to overflow
-     a narrow panel. */
-  @media (max-width: 1120px) {
-    .orb {
-      width: 150px;
-      height: 150px;
-    }
-  }
+  /* No breakpoint. The columns are fractions and the orb is a fraction of its
+     column, so both give ground on their own -- which is the whole reason the
+     one that was here could go. Positional and width-counting CSS is wrong the
+     first time something else is rendered; a ratio is not. */
 </style>

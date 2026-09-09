@@ -2796,3 +2796,31 @@ There was never much information in the words: the line under the orb already sa
 *listening* or *microphone off*, so **Voice on** underneath it said the same thing twice and
 took the wall the orb had been given on purpose. The state is in the glyph -- a slash across
 the microphone when it is shut -- and the sentence is in the `title`.
+
+## 134. The orb is a fraction of its panel, and the drawing scales with it
+
+**Asked for:** a bigger orb, now that the panel is wider, sitting nearer the middle of it.
+
+Both are the same correction as note 133 and were left half done there. The columns became
+fractions; the orb stayed 190 pixels, hanging off the top of the panel with a column of air
+underneath, which made the whole left side read as a toolbar that had run out of tools.
+
+It is `min(300px, 84%)` of its own column now, with `aspect-ratio: 1`, and the side panel
+centres its four rows as a group instead of stacking them from the ceiling. 260px at a
+1180-wide window, 99px of air above and below the group -- measured, not guessed. The
+breakpoint that used to shrink the orb at 1120px is gone: a ratio gives ground on its own,
+and width-counting CSS is wrong the first time something else is rendered.
+
+**The part that was not asked for and had to happen anyway.** Every absolute number in the
+drawing -- node radius 0.9 to 3, link width 1 -- was tuned at 190 pixels, so the same web was
+chunky in the compact window and wispy in a wide one. They are scaled off `unit / 95` now,
+bounded to [0.55, 1.9], so 130px and 300px are one object at two sizes rather than two
+different drawings. A drawing with one hard-coded size in it and a box that no longer has one
+is a thing that only looks wrong at the sizes nobody tested.
+
+**And a real bug, found by the check rather than by looking.** Assigning `canvas.width` wipes
+the bitmap *even when the number does not change* -- and a `ResizeObserver` notifies once as
+soon as it starts observing. So the observer added in note 131 was throwing away the frame
+that had just been drawn. Sixty times a second that is invisible; once, on a canvas that is
+being stepped by hand, it is a blank orb, which is how it was found. `resize()` returns early
+when nothing has changed.
