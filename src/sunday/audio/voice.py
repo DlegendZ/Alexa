@@ -93,22 +93,6 @@ class Ear:
             thread.join(timeout=3)
         self.ready = False
 
-    # -- what the app can change while it runs --------------------------
-
-    def set_muted(self, muted: bool) -> None:
-        """Muted stops the capture stream, not just the decisions about it."""
-        if self._listener is not None:
-            self._listener.muted = muted
-        if muted:
-            if self._mic is not None:
-                self._mic.stop()
-                self._mic = None
-            self._say(state="muted")
-        elif self._thread is not None and self._mic is None:
-            self._stop.clear()
-            self._thread = None
-            self.start()
-
     # -- the mouth ------------------------------------------------------
 
     def say(self, sentence: str) -> None:
@@ -146,12 +130,6 @@ class Ear:
         if self._aec is not None:
             self._aec.played(block)
 
-    def trigger(self) -> None:
-        """Push to talk: the global hotkey and the mic button both land here."""
-        if self._listener is not None and self._listener.phase == "sleeping":
-            self._listener.open()
-            self._say(state="listening")
-
     def abandon(self) -> None:
         if self._listener is not None:
             self._listener.abandon()
@@ -162,6 +140,11 @@ class Ear:
         If Sunday is still talking, this waits: the window has to start when
         the reply ends, not when the model stopped writing it, or most of it
         is spent listening to the speaker.
+
+        It is also what puts the orb back into `listening` after a reply, and
+        the reason the socket no longer says `idle` at the end of a turn. The
+        two facts are the same fact: the door opening and the microphone being
+        the thing you are looking at.
         """
         if self._listener is None:
             return
@@ -188,7 +171,7 @@ class Ear:
             return
 
         self.ready = True
-        self._say(state="idle")
+        self._say(state="listening")
         assert self._mic is not None and self._listener is not None
         for frame in self._mic.frames():
             if self._stop.is_set():
@@ -254,7 +237,7 @@ class Ear:
             # listener already knows which; throwing that away here is the
             # same bug as a trace line that is written and never emitted.
             self._emit({"type": "notice", "text": f"heard nothing usable: {event.why}"})
-            self._emit({"type": "state", "value": "idle"})
+            self._emit({"type": "state", "value": "listening"})
         elif event.kind == "follow_up":
             self._emit({"type": "state", "value": "listening"})
         elif event.kind == "barge_in":
@@ -277,7 +260,7 @@ class Ear:
             text = self._stt.transcribe(clip.audio)
         except Exception as exc:
             self._emit({"type": "error", "text": f"could not transcribe that: {exc}"})
-            self._say(state="idle")
+            self._say(state="listening")
             return
 
         if not text:
@@ -288,7 +271,7 @@ class Ear:
                 "type": "notice",
                 "text": f"transcribed {clip.speech_ms} ms of speech as nothing",
             })
-            self._say(state="idle")
+            self._say(state="listening")
             return
 
         # Layer 3, and only for a clip that could possibly hold an echo.
@@ -316,7 +299,7 @@ class Ear:
                     "type": "notice",
                     "text": "ignored what sounded like my own voice coming back",
                 })
-                self._say(state="idle")
+                self._say(state="listening")
                 return
 
         self._deliver(text)
@@ -340,7 +323,7 @@ class Ear:
         if self._on_transcript is not None:
             self._on_transcript(text)
         else:
-            self._say(state="idle")
+            self._say(state="listening")
 
     def _device_trouble(self, text: str) -> None:
         self._emit({"type": "error", "text": text})

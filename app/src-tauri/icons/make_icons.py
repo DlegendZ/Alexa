@@ -1,34 +1,45 @@
 """Draw the application icon.
 
 The icon is the orb, because the orb is what the app is, and because deriving
-it from the same three numbers means it cannot drift away from the window it
-sits above. A generator rather than a checked-in binary for the same reason a
-measured number lives in one place: an icon nobody can regenerate is an icon
+it from the same handful of numbers means it cannot drift away from the window
+it sits above. A generator rather than a checked-in binary for the same reason
+a measured number lives in one place: an icon nobody can regenerate is an icon
 nobody can change.
 
     python app/src-tauri/icons/make_icons.py
 
-No Pillow. This is a circle with a gradient in it, and a PNG encoder for that
-is thirty lines -- fewer than the argument for adding a dependency.
+No Pillow. This is a lattice of points, the lines between the near ones, and a
+bloom behind them; a PNG encoder for that is thirty lines -- fewer than the
+argument for adding a dependency.
+
+The geometry is `app/src/lib/orb.js`, held still. Same golden-angle lattice,
+same link threshold, same white. What it cannot share is the code, because one
+of them is a canvas at sixty frames a second and the other is a bytes object,
+so the numbers are repeated here on purpose and are the thing to keep in step.
 """
 
 from __future__ import annotations
 
+import math
 import struct
 import zlib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-#: The orb at rest, in the window's own coral. The icon is the orb because the
-#: orb is what the app is, and deriving it from the same handful of numbers
-#: means it cannot drift away from the thing it sits above.
-CORE = (247, 186, 150)
-MID = (217, 119, 87)
-EDGE = (108, 52, 30)
-#: The bloom around it. A flat disc reads as a bullet point at 16 pixels; the
-#: glow is what makes it read as light, which is the whole idea of the orb.
-GLOW = (217, 119, 87)
+#: The web, in the white the orb is at rest. Colour in this program means a
+#: tool is running -- amber on this machine, teal off it -- and an icon cannot
+#: be in one of those states, so it is the resting one.
+WHITE = (255, 252, 247)
+
+#: How far apart two points can be and still be joined. Wider than the orb's
+#: own 0.62, and deliberately: the orb turns, so a chord that is hidden this
+#: frame arrives in the next one. A still picture has one frame, and at 0.62
+#: the projection reads as a ring of dots with nothing between them.
+LINK = 0.82
+#: Held at an angle where the lattice reads as a sphere rather than as a ring.
+YAW = 0.9
+ROLL = 0.45
 
 SIZES = {
     "32x32.png": 32,
@@ -41,56 +52,126 @@ SIZES = {
 ICO_SIZES = (16, 32, 48, 64, 128, 256)
 
 
-def pixels(size: int) -> bytes:
-    """One RGBA image: a lit sphere inside a soft bloom.
+def lattice(count: int) -> list[tuple[float, float, float]]:
+    """Points spread evenly over a sphere, by the golden angle, then turned.
 
-    Three layers, the same three the canvas draws -- bloom, body, highlight --
-    because an icon that is a flat filled circle looks like a status dot and
-    the orb is meant to look like a light. There is deliberately no outline:
-    an edge is what made the first version of the orb itself look like a
-    widget.
+    Evenly is the whole requirement: random points clump, and a clump in a
+    particle web is a bright blob that reads as a fault in the drawing.
     """
+    golden = math.pi * (3 - math.sqrt(5))
+    points = []
+    cos_y, sin_y = math.cos(YAW), math.sin(YAW)
+    cos_r, sin_r = math.cos(ROLL), math.sin(ROLL)
+    for i in range(count):
+        y = 1 - (i / (count - 1)) * 2
+        ring = math.sqrt(max(0.0, 1 - y * y))
+        theta = golden * i
+        x, z = math.cos(theta) * ring, math.sin(theta) * ring
+        x1 = x * cos_y + z * sin_y
+        z1 = z * cos_y - x * sin_y
+        y2 = y * cos_r - z1 * sin_r
+        z2 = z1 * cos_r + y * sin_r
+        points.append((x1, y2, z2))
+    return points
+
+
+def light(size: int) -> list[float]:
+    """One greyscale buffer: how much light reaches each pixel.
+
+    Everything is drawn into this and coloured afterwards, which is what keeps
+    the layers from seaming -- a link crossing a node adds to it rather than
+    painting over it.
+    """
+    # Below about 96 pixels a web is not a thing a screen can draw: the links
+    # are thinner than a pixel and the nodes land on top of each other. So the
+    # small sizes are the same object with fewer points, drawn heavier and
+    # brighter -- a lit constellation rather than a diagram of one. This is
+    # what an icon set is for; a 16-pixel copy of the 512 is a smudge.
+    small = size < 96
+    count = 14 if small else 26
+    points = lattice(count)
     centre = (size - 1) / 2
-    body = size * 0.34
+    radius = size * (0.30 if small else 0.33)
+
+    buffer = [0.0] * (size * size)
+
+    def splat(px: float, py: float, r: float, weight: float) -> None:
+        """One soft dot. Everything here is made of these."""
+        lo_x, hi_x = int(px - r - 1), int(px + r + 2)
+        lo_y, hi_y = int(py - r - 1), int(py + r + 2)
+        for y in range(max(0, lo_y), min(size, hi_y)):
+            row = y * size
+            dy = y - py
+            for x in range(max(0, lo_x), min(size, hi_x)):
+                dx = x - px
+                d = math.sqrt(dx * dx + dy * dy)
+                if d > r:
+                    continue
+                fall = 1.0 - d / r
+                buffer[row + x] += weight * fall * fall
+
+    # The bloom, first and underneath. A flat web on a transparent square reads
+    # as a diagram; the glow is what makes it read as light, which is the whole
+    # idea of the orb.
     bloom = size * 0.5
+    halo = 0.3 if small else 0.13
+    for y in range(size):
+        row = y * size
+        dy = y - centre
+        for x in range(size):
+            dx = x - centre
+            d = math.sqrt(dx * dx + dy * dy)
+            if d < bloom:
+                buffer[row + x] += (1.0 - d / bloom) ** 2.6 * halo
+
+    # The core: a small light inside the web, or the thing is a hollow shell
+    # and the eye has nowhere to rest.
+    splat(centre, centre, radius * (0.9 if small else 0.5), 0.62 if small else 0.34)
+
+    screen = [(centre + x * radius, centre + y * radius, z) for x, y, z in points]
+
+    # The links. Drawn by walking each one and splatting, rather than by
+    # measuring every pixel against every segment -- that is 147 million
+    # distance checks at 512 and this is about twenty thousand.
+    width = max(0.75, size * (0.02 if small else 0.009))
+    for i in range(count):
+        ax, ay, az = screen[i]
+        for j in range(i + 1, count):
+            bx, by, bz = screen[j]
+            d = math.dist(points[i], points[j])
+            if d > LINK:
+                continue
+            close = 1 - d / LINK
+            depth = (az + bz + 2) / 4
+            weight = close * close * (0.3 + depth * 0.6)
+            steps = max(2, int(math.dist((ax, ay), (bx, by)) * 2))
+            for s in range(steps + 1):
+                t = s / steps
+                splat(ax + (bx - ax) * t, ay + (by - ay) * t, width, weight / 2.6)
+
+    # The nodes, last, so they sit on top of their own lines.
+    for x, y, z in screen:
+        near = (z + 1) / 2
+        spread = size * (0.05 if small else 0.015)
+        splat(x, y, max(1.0, spread) * (0.65 + near * 0.6), (0.8 if small else 0.5) + near * 0.45)
+
+    return buffer
+
+
+def pixels(size: int) -> bytes:
+    """The buffer, coloured white and turned into PNG scanlines."""
+    buffer = light(size)
     rows = []
     for y in range(size):
         row = bytearray()
+        base = y * size
         for x in range(size):
-            dx = x - centre
-            dy = y - centre
-            d = (dx * dx + dy * dy) ** 0.5
-
-            # The bloom: falls off to nothing well before the edge, so the
-            # icon has air around it at every size.
-            halo = max(0.0, 1.0 - d / bloom) ** 2.2 * 0.55
-
-            if d <= body:
-                # Anti-aliased by distance; a hard edge at 16 px reads square.
-                solid = min(1.0, (body - d) * 1.6)
-                # The highlight sits up and to the left, as it does on canvas.
-                hx = (x - size * 0.36) / body
-                hy = (y - size * 0.34) / body
-                lit = max(0.0, 1.0 - ((hx * hx + hy * hy) ** 0.5)) ** 1.5
-                # Core to mid across the sphere, mid to edge at the rim.
-                rim = (d / body) ** 2
-                channels = []
-                for i in range(3):
-                    base = MID[i] + (EDGE[i] - MID[i]) * rim
-                    channels.append(round(base + (CORE[i] - base) * lit))
-                alpha = max(solid, halo)
-                # Where the bloom is stronger than the body edge, blend toward
-                # the glow colour so the two layers meet without a seam.
-                if halo > solid:
-                    channels = [
-                        round(c + (GLOW[i] - c) * (halo - solid))
-                        for i, c in enumerate(channels)
-                    ]
-                row += bytes(channels) + bytes((round(min(1.0, alpha) * 255),))
-            elif halo > 0.004:
-                row += bytes(GLOW) + bytes((round(halo * 255),))
-            else:
+            value = buffer[base + x]
+            alpha = min(1.0, value)
+            if alpha <= 0.004:
                 row += bytes(4)
+                continue
+            row += bytes(WHITE) + bytes((round(alpha * 255),))
         rows.append(bytes(row))
     # Each PNG scanline carries a filter byte; zero means "none".
     return b"".join(bytes(1) + row for row in rows)

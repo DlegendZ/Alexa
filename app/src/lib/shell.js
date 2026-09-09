@@ -44,8 +44,18 @@ export const quit = () => invoke('quit');
 
 export const minimise = () => invoke('minimise');
 
-/** Events the shell pushes at the window -- the tray menu and the global
- *  hotkey both arrive this way, because they happen where there is no DOM. */
+/** The other two window controls. They exist here because the title bar is
+ *  drawn by the page now: Windows will not let you keep its caption buttons
+ *  and drop the icon and the title beside them. */
+export const toggleMaximise = () => invoke('toggle_maximise');
+
+/** Close means hide to the tray, which is what the native close did -- the
+ *  thing is meant to keep listening. Quitting is `exit` in the box or the
+ *  tray menu, both of which flush the session summary first. */
+export const close = () => invoke('hide_window');
+
+/** Events the shell pushes at the window -- the tray menu arrives this way,
+ *  because it happens where there is no DOM. */
 export async function onShellEvent(name, handler) {
   const api = tauri();
   if (!api?.event?.listen) return () => {};

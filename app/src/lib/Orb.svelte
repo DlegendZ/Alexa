@@ -2,8 +2,7 @@
   import { onMount } from 'svelte';
   import { Orb } from './orb.js';
 
-  let { state = 'idle', muted = false, mic = 0, out = 0, fps = { focused: 60, blurred: 10 } } =
-    $props();
+  let { state = 'idle', mic = 0, out = 0, fps = { focused: 60, blurred: 10 } } = $props();
 
   let canvas;
   let orb;
@@ -18,9 +17,6 @@
    * every frame the socket sends one; the state only when it changes. */
   $effect(() => {
     orb?.setState(state);
-  });
-  $effect(() => {
-    if (orb) orb.muted = muted;
   });
   $effect(() => {
     orb?.setLevels({ mic, out });

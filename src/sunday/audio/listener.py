@@ -117,9 +117,6 @@ class Listener:
         #: playing, so there is no echo to tell apart -- this is the one part
         #: of a turn where loud speech can only be a person.
         self.busy = False
-        #: Muted means the capture stream is stopped upstream; this is the
-        #: belt to that pair of braces.
-        self.muted = False
 
         self._preroll: deque[np.ndarray] = deque(
             maxlen=max(1, self._ms_to_frames(audio.preroll_ms))
@@ -204,7 +201,7 @@ class Listener:
     def frame(self, samples: np.ndarray) -> list[VoiceEvent]:
         """One 20 ms frame of float32 mono. Returns what it decided."""
         block = np.asarray(samples, dtype=np.float32).reshape(-1)
-        if self.muted or block.size == 0:
+        if block.size == 0:
             return []
 
         events: list[VoiceEvent] = []

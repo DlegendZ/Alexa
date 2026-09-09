@@ -248,14 +248,6 @@ def test_one_phrase_cannot_open_two_turns(cfg):
     assert "wake" in kinds(drive(listener, 80, QUIET))
 
 
-def test_muted_decides_nothing(cfg):
-    wake = FakeWake(at=1)
-    listener = Listener(cfg, wake=wake, vad=LevelVad())
-    listener.muted = True
-    assert drive(listener, 100) == []
-    assert wake.chunks == 0
-
-
 def test_level_is_throttled_and_real(cfg):
     listener = Listener(cfg, wake=None, vad=None)
     events = [e for e in drive(listener, 50, level=0.5) if e.kind == "level"]
@@ -274,7 +266,10 @@ def test_speaking_raises_the_bar(cfg):
     assert listener._threshold() > cfg.audio.vad_threshold
 
 
-def test_push_to_talk_needs_no_phrase(cfg):
+def test_the_door_can_be_opened_without_a_phrase(cfg):
+    """The follow-up window, which is the one caller left after push to talk
+    was removed: a turn has just ended, so the next question needs no wake
+    word."""
     listener = Listener(cfg, wake=None, vad=LevelVad())
     drive(listener, 40, QUIET)
     assert listener.phase == "sleeping"

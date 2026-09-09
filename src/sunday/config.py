@@ -135,7 +135,7 @@ class Audio:
     #: start the question before they finish the trigger.
     preroll_ms: int = 500
     #: Open the microphone as soon as the sidecar comes up, rather than
-    #: waiting for a client to ask for voice mode.
+    #: waiting for a client to turn voice on.
     #:
     #: This is what makes the app answer its name from a cold start: the shell
     #: launches at login, the sidecar comes up with it, and the wake word is

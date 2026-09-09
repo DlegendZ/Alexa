@@ -13,15 +13,12 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
-use tauri_plugin_global_shortcut::{
-    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
-};
 
 use sidecar::{Handshake, Sidecar};
 
-/// Compact mode: a frameless always-on-top window with nothing in it but the
-/// orb. One window resized rather than a second one, so there is nothing to
-/// keep in step.
+/// Compact mode: a small always-on-top window with nothing in it but the orb.
+/// One window resized rather than a second one, so there is nothing to keep in
+/// step. The frame is off in both sizes now -- see `titlebar`.
 const COMPACT: (f64, f64) = (200.0, 240.0);
 const FULL: (f64, f64) = (960.0, 700.0);
 
@@ -30,16 +27,6 @@ struct Shell {
     /// What the orb is showing. The window is the only thing that knows, and
     /// the tray is the only thing that needs telling.
     state: Mutex<String>,
-    /// Which push-to-talk shortcut actually bound, and why none did.
-    ///
-    /// Another program can already own the one we want, and on this machine
-    /// one owned `Ctrl+Alt+Space`. Refusing to start over that would be worse
-    /// than having no hotkey -- but so is printing it to a console a packaged
-    /// app does not have, and so is a window that never says which keys work.
-    /// Both facts reach the window, which is the only place the person who
-    /// pressed them is looking.
-    hotkey: Mutex<Option<String>>,
-    hotkey_error: Mutex<Option<String>>,
 }
 
 /// The `[ui]` block, read once and handed to the window.
@@ -54,13 +41,6 @@ struct Settings {
     start_minimised: bool,
     autostart: bool,
     trace: bool,
-    /// The shortcut that actually bound, so the window can show it rather than
-    /// leaving the user to guess which keys do anything.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hotkey: Option<String>,
-    /// None when one of them registered. Some(reason) when none did.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hotkey_error: Option<String>,
 }
 
 impl Default for Settings {
@@ -71,8 +51,6 @@ impl Default for Settings {
             start_minimised: false,
             autostart: false,
             trace: true,
-            hotkey: None,
-            hotkey_error: None,
         }
     }
 }
@@ -105,8 +83,6 @@ fn read_settings() -> Settings {
             start_minimised: flag("start_minimised", false),
             autostart: flag("autostart", false),
             trace: flag("trace", true),
-            hotkey: None,
-            hotkey_error: None,
         };
         break;
     }
@@ -135,11 +111,8 @@ fn connection(shell: State<'_, Shell>) -> Result<Handshake, String> {
 }
 
 #[tauri::command]
-fn settings(shell: State<'_, Shell>) -> Settings {
-    let mut out = read_settings();
-    out.hotkey = shell.hotkey.lock().ok().and_then(|held| held.clone());
-    out.hotkey_error = shell.hotkey_error.lock().ok().and_then(|held| held.clone());
-    out
+fn settings() -> Settings {
+    read_settings()
 }
 
 /// The window telling the shell what the orb is showing, so the tray can be
@@ -162,21 +135,35 @@ fn set_state(app: AppHandle, shell: State<'_, Shell>, state: String) {
 fn set_compact(app: AppHandle, compact: bool) {
     let Some(window) = app.get_webview_window("main") else { return };
     let (w, h) = if compact { COMPACT } else { FULL };
-    // Compact is the frameless one; the full window keeps the title bar
-    // Windows gives it. That is the split the design asks for, and the window
-    // must not grow its own copy of those controls to sit beside them -- one
-    // close button that hides and another that quits, a centimetre apart, is
-    // worse than either on its own.
-    let _ = window.set_decorations(!compact);
+    // Both sizes are frameless now, so there are no decorations to toggle and
+    // no new frame to repaint on the way back. What compact still changes is
+    // the size and whether it floats over everything else.
     let _ = window.set_always_on_top(compact);
-    let _ = window.set_size(LogicalSize::new(w, h));
     if !compact {
-        // Turning decorations back on gives the window a brand new frame,
-        // painted in the system colour. Without this, coming back from
-        // compact is how the light title bar reappears.
-        if let Ok(handle) = window.hwnd() {
-            titlebar::match_the_app(handle.0 as isize);
-        }
+        let _ = window.unmaximize();
+    }
+    let _ = window.set_size(LogicalSize::new(w, h));
+}
+
+/// Maximise, or put it back. The title bar belongs to the page now, so the
+/// two halves of the native button are one command with the state in it.
+#[tauri::command]
+fn toggle_maximise(app: AppHandle) {
+    let Some(window) = app.get_webview_window("main") else { return };
+    if window.is_maximized().unwrap_or(false) {
+        let _ = window.unmaximize();
+    } else {
+        let _ = window.maximize();
+    }
+}
+
+/// The close button, which hides rather than quits -- the same thing the
+/// native one did, because the app is meant to keep listening. Quitting is
+/// `exit` in the box, or the tray menu.
+#[tauri::command]
+fn hide_window(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
     }
 }
 
@@ -294,8 +281,6 @@ fn main() {
         .manage(Shell {
             sidecar: Mutex::new(Sidecar::default()),
             state: Mutex::new("connecting".to_string()),
-            hotkey: Mutex::new(None),
-            hotkey_error: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             connection,
@@ -304,6 +289,8 @@ fn main() {
             set_state,
             set_compact,
             minimise,
+            toggle_maximise,
+            hide_window,
             set_autostart,
             autostart_enabled,
             quit,
@@ -311,9 +298,9 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // The bar belongs to Windows, so CSS cannot reach it. Painted
-            // once here and again whenever the window is shown, because
-            // leaving and re-entering compact mode rebuilds the frame.
+            // The window has no frame, so the only thing Windows still
+            // draws around it is the border. Painted here, or a dark window
+            // has no edge at all against a dark desktop.
             if let Some(window) = app.get_webview_window("main") {
                 if let Ok(handle) = window.hwnd() {
                     titlebar::match_the_app(handle.0 as isize);
@@ -323,11 +310,12 @@ fn main() {
             let show_item = MenuItemBuilder::with_id("show", "Show Alexa").build(app)?;
             let expand_item =
                 MenuItemBuilder::with_id("expand", "Leave compact mode").build(app)?;
-            let mute_item = MenuItemBuilder::with_id("mute", "Mute").build(app)?;
-            let mode_item = MenuItemBuilder::with_id("mode", "Voice / text").build(app)?;
+            // One voice item rather than a mute and a mode. They were two
+            // switches for one fact, and no combination of them was useful.
+            let voice_item = MenuItemBuilder::with_id("voice", "Voice on / off").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit Alexa").build(app)?;
             let menu = MenuBuilder::new(app)
-                .items(&[&show_item, &expand_item, &mute_item, &mode_item])
+                .items(&[&show_item, &expand_item, &voice_item])
                 .separator()
                 .items(&[&quit_item])
                 .build()?;
@@ -339,13 +327,10 @@ fn main() {
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show(app),
                     "expand" => expand(app.clone()),
-                    // Mute and mode are the window's to change, because the
-                    // window is what holds the socket. The tray only asks.
-                    "mute" => {
-                        let _ = app.emit("toggle-mute", ());
-                    }
-                    "mode" => {
-                        let _ = app.emit("toggle-mode", ());
+                    // Voice is the window's to change, because the window
+                    // is what holds the socket. The tray only asks.
+                    "voice" => {
+                        let _ = app.emit("toggle-voice", ());
                     }
                     "quit" => quit_politely(app),
                     _ => {}
@@ -368,67 +353,6 @@ fn main() {
                     }
                 })
                 .build(app)?;
-
-            // Push to talk. It reaches the sidecar as `listen`, which is one
-            // event rather than a standing mode -- the wake word is the usual
-            // way in, and this is for when you would rather not say it.
-            //
-            // A list rather than one shortcut, because the obvious choice was
-            // already owned by something else on the first machine this ran
-            // on. Whichever binds first wins and the window is told which, so
-            // "the hotkey" is a thing you can read rather than guess at.
-            app.handle().plugin(
-                tauri_plugin_global_shortcut::Builder::new()
-                    .with_handler(move |app, _shortcut, event| {
-                        if event.state() != ShortcutState::Pressed {
-                            return;
-                        }
-                        show(app);
-                        let _ = app.emit("listen", ());
-                    })
-                    .build(),
-            )?;
-
-            let candidates = [
-                ("Ctrl+Alt+A", Modifiers::CONTROL | Modifiers::ALT, Code::KeyA),
-                ("Ctrl+Shift+Space", Modifiers::CONTROL | Modifiers::SHIFT, Code::Space),
-                ("Ctrl+Alt+Space", Modifiers::CONTROL | Modifiers::ALT, Code::Space),
-                ("Ctrl+Alt+J", Modifiers::CONTROL | Modifiers::ALT, Code::KeyJ),
-            ];
-            let mut bound: Option<&str> = None;
-            let mut last_error = String::new();
-            for (label, mods, code) in candidates {
-                match app.global_shortcut().register(Shortcut::new(Some(mods), code)) {
-                    Ok(()) => {
-                        bound = Some(label);
-                        break;
-                    }
-                    Err(why) => last_error = why.to_string(),
-                }
-            }
-            if let Some(shell) = app.try_state::<Shell>() {
-                match bound {
-                    Some(label) => {
-                        if let Ok(mut held) = shell.hotkey.lock() {
-                            *held = Some(label.to_string());
-                        }
-                    }
-                    // Carry on -- a window that refuses to start over a
-                    // keyboard shortcut is worse than a window without one --
-                    // but say so where it can be read. A shortcut that quietly
-                    // does nothing is the failure this codebase keeps
-                    // relearning.
-                    None => {
-                        let told = format!(
-                            "No push-to-talk shortcut could be registered; every one tried is already taken by another program ({last_error}). The microphone button still works."
-                        );
-                        eprintln!("{told}");
-                        if let Ok(mut held) = shell.hotkey_error.lock() {
-                            *held = Some(told);
-                        }
-                    }
-                }
-            }
 
             // Spawning it here rather than on the window's first request means
             // the models start loading while the WebView is still painting.

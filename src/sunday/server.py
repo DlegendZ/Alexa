@@ -95,18 +95,23 @@ class Sidecar:
         self.host = host
         self.port = port
         self.token = token or secrets.token_urlsafe(24)
-        self.mode = "text"
-        self.muted = False
+        #: One switch, not two. "Voice mode" and "the microphone is live" and
+        #: "it speaks its replies" were three controls for one fact, and no
+        #: combination of them was useful: a live microphone in text mode
+        #: heard you and answered in silence, and voice mode muted was an ear
+        #: with its stream stopped. On means the ear is open, the wake word is
+        #: listening and replies are spoken; off means the window is a text
+        #: box. Typing works either way, which is why this is not a mode.
+        self.voice = False
         self._turn_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._clients: set[ServerConnection] = set()
         self._pending: dict[str, _Pending] = {}
         self._turns: set[asyncio.Task] = set()
         self._relays: set[asyncio.Task] = set()
-        #: Built the first time voice mode is asked for, and kept afterwards.
-        #: Its models are a quarter of a gigabyte, so it is neither made at
-        #: startup -- a text-only session should not pay for them -- nor thrown
-        #: away when the mode goes back to text.
+        #: Built the first time voice is switched on. Its models are a quarter
+        #: of a gigabyte, so a session that never turns voice on never pays
+        #: for them.
         self._ear: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
         #: True while the first-run download is running. One at a time, for the
@@ -123,12 +128,12 @@ class Sidecar:
             Handshake(port=bound, token=self.token).write()
             if self.runtime.cfg.audio.listen_on_start:
                 # The ear before the first client. Starting it here rather
-                # than on a `set_mode` is what lets the app answer its name
+                # than on a `set_voice` is what lets the app answer its name
                 # from a cold start -- the window may not be open yet, and
                 # the whole point of a wake word is that it does not need to
                 # be. The models load on the ear's own thread, so this does
                 # not delay the socket.
-                self.mode = "voice"
+                self.voice = True
                 self._set_listening(True)
             print(f"sidecar listening on ws://{self.host}:{bound}")
             print(f"handshake written to {config.HANDSHAKE_PATH}")
@@ -150,7 +155,11 @@ class Sidecar:
 
         self._clients.add(websocket)
         await self._send(websocket, self._ready())
-        await self._send(websocket, {"type": "state", "value": "idle"})
+        # The resting state, not a fixed one. A window that attaches to a
+        # sidecar which has been listening since boot must not be told the
+        # microphone is shut -- `listen_on_start` means the ear is usually
+        # already up by the time anybody opens the window.
+        await self._send(websocket, {"type": "state", "value": self._resting()})
         try:
             async for raw in websocket:
                 await self._on_message(websocket, raw)
@@ -170,8 +179,7 @@ class Sidecar:
         return {
             "type": "ready",
             "protocol": PROTOCOL_VERSION,
-            "mode": self.mode,
-            "muted": self.muted,
+            "voice": self.voice,
             "model": self.runtime.cfg.models.agent,
             # The window puts this above the transcript, so it travels rather
             # than being written down there. `[assistant] name` is the one
@@ -214,26 +222,17 @@ class Sidecar:
             text = str(message.get("text") or "").strip()
             if text:
                 self._start_turn(text, modality="voice")
-        elif kind == "set_mode":
-            self.mode = "voice" if message.get("mode") == "voice" else "text"
-            await self._broadcast({"type": "mode", "value": self.mode})
-            self._set_listening(self.mode == "voice")
-        elif kind == "listen":
-            # Push to talk. The wake word is the usual way in; this is the mic
-            # button and, later, the global hotkey.
-            if self._ear is None:
-                self._set_listening(True)
-            elif self._ear.ready:
-                self._ear.trigger()
-        elif kind == "set_mute":
-            self.muted = bool(message.get("muted"))
-            if self._ear is not None:
-                self._ear.set_muted(self.muted)
-            await self._broadcast(
-                {"type": "state", "value": "muted" if self.muted else "idle"}
-            )
-        elif kind == "setup":
-            await self._send(websocket, self._ready())
+        elif kind == "set_voice":
+            self.voice = bool(message.get("on"))
+            await self._broadcast({"type": "voice", "value": self.voice})
+            self._set_listening(self.voice)
+            if not self.voice:
+                # An ear that has just been shut has no state to report from
+                # its own thread, so the resting state is said here. `idle`
+                # means the microphone is closed, and it is the only thing
+                # that means it: with the ear open the turn ends in
+                # `listening`.
+                await self._broadcast({"type": "state", "value": "idle"})
         elif kind == "fetch_models":
             self._start_fetch()
         elif kind == "confirm_response":
@@ -348,8 +347,19 @@ class Sidecar:
 
     # -- the ear --------------------------------------------------------
 
+    def _resting(self) -> str:
+        """What the orb shows between turns.
+
+        Two states, and the difference between them is the microphone: with
+        the ear open the app is genuinely listening, so it says so and the orb
+        rides the level. `idle` is the closed microphone, and it is the only
+        thing that means that now the mute switch is gone.
+        """
+        ear = self._ear
+        return "listening" if ear is not None and ear.ready else "idle"
+
     def _set_listening(self, on: bool) -> None:
-        """Voice mode opens the microphone; text mode closes it again.
+        """Voice on opens the microphone; voice off closes it again.
 
         The models load on the ear's own thread, so this returns immediately
         and the socket stays answerable while a quarter of a gigabyte of ONNX
@@ -360,7 +370,6 @@ class Sidecar:
             self._close_ear()
             return
         if self._ear is not None:
-            self._ear.set_muted(self.muted)
             return
 
         factory = self._ear_factory
@@ -375,7 +384,6 @@ class Sidecar:
             on_transcript=self._heard,
             on_barge_in=self._barged_in,
         )
-        self._ear.set_muted(self.muted)
         self._ear.start()
 
     def _close_ear(self) -> None:
@@ -537,10 +545,17 @@ class Sidecar:
             await task
             # The door stays open for a moment, so the next question needs no
             # wake word. The ear waits for the reply to finish being spoken
-            # before it starts counting.
-            if self._ear is not None:
-                self._ear.follow_up()
-            await self._broadcast({"type": "state", "value": "idle"})
+            # before it starts counting, and *it* says `listening` when the
+            # room is quiet again -- which is the whole reason the state is
+            # not broadcast from here as well. Saying `idle` at the end of the
+            # turn was saying it while Kokoro still had four sentences queued,
+            # so the orb dropped out of `speaking` the moment the model
+            # stopped writing rather than when the reply stopped being heard.
+            ear = self._ear
+            if ear is not None and ear.ready:
+                ear.follow_up()
+            else:
+                await self._broadcast({"type": "state", "value": "idle"})
 
     # -- sending --------------------------------------------------------
 

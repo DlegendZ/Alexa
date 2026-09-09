@@ -5,41 +5,47 @@
   import Backstage from './lib/Backstage.svelte';
   import Setup from './lib/Setup.svelte';
   import { Session } from './lib/session.svelte.js';
-  import { onShellEvent, quit, setCompact, setState, settings } from './lib/shell.js';
+  import {
+    close,
+    minimise,
+    onShellEvent,
+    quit,
+    setCompact,
+    setState,
+    settings,
+    toggleMaximise,
+  } from './lib/shell.js';
 
   const session = new Session();
 
   let text = $state('');
   let compact = $state(new URLSearchParams(location.search).has('compact'));
-  let showBackstage = $state(true);
   let fps = $state({ focused: 60, blurred: 10 });
-  let hotkey = $state('');
   /* Skipping only ever hides the screen. It cannot hide a `blocked` one,
      because there is nothing behind it to use. */
   let skippedSetup = $state(false);
+
+  /* What a person types to leave. There is no Quit button any more: the title
+     bar has a close, and this is the other way out. Handled here rather than
+     as a tool, because quitting is a thing the window does and not a thing the
+     model should be able to decide to do. */
+  const LEAVING = /^\s*(exit|quit|bye|goodbye|keluar)\s*[.!]?\s*$/i;
 
   onMount(() => {
     session.connect();
     settings().then((s) => {
       if (!s) return;
       fps = { focused: s.fps_focused, blurred: s.fps_blurred };
-      hotkey = s.hotkey || '';
       if (s.start_minimised) toggleCompact(true);
-      /* A shortcut every candidate for which is already taken is the quietest
-       * possible failure: you press keys and nothing at all happens, with no
-       * console in a packaged app to explain it. */
-      if (s.hotkey_error) session.notice(s.hotkey_error);
     });
 
-    /* The tray menu and the global hotkey happen where there is no DOM, so
-     * they arrive as events rather than clicks. */
+    /* The tray menu happens where there is no DOM, so it arrives as an event
+     * rather than a click. */
     const off = [
-      onShellEvent('listen', () => session.listen()),
-      onShellEvent('toggle-mute', () => toggleMute()),
-      onShellEvent('toggle-mode', () => toggleMode()),
+      onShellEvent('toggle-voice', () => toggleVoice()),
       onShellEvent('shutdown', () => session.shutdown()),
       /* The tray can pull the window out of compact, because compact is
-       * exactly the state in which the window may be hard to click. */
+         exactly the state in which the window may be hard to click. */
       onShellEvent('expanded', () => (compact = false)),
       onShellEvent('sidecar-restarted', (handshake) => session.open(handshake)),
       onShellEvent('sidecar-lost', (why) => session.lost(why)),
@@ -50,7 +56,7 @@
   /* The tray is tinted with whatever the orb is showing, which is what keeps
    * "something is leaving this machine" visible when the window is not. */
   $effect(() => {
-    setState(session.muted ? 'muted' : session.state);
+    setState(session.state);
   });
 
   $effect(() => {
@@ -61,7 +67,13 @@
 
   function submit(event) {
     event?.preventDefault();
-    /* Typing does not switch modes. Typing *is* the switch, for this turn. */
+    if (LEAVING.test(text)) {
+      text = '';
+      sayGoodbye();
+      return;
+    }
+    /* Typing does not switch anything. Typing works whether or not the
+     * microphone is open, which is the point of there being one switch. */
     if (session.ask(text)) text = '';
   }
 
@@ -74,13 +86,8 @@
     submit();
   }
 
-  function toggleMute() {
-    session.setMuted(!session.muted);
-    session.muted = !session.muted;
-  }
-
-  function toggleMode() {
-    session.setMode(session.mode === 'voice' ? 'text' : 'voice');
+  function toggleVoice() {
+    session.setVoice(!session.voice);
   }
 
   function toggleCompact(value = !compact) {
@@ -105,12 +112,19 @@
     'tool.external': 'reaching the web',
     blocked: 'refused that',
     speaking: 'speaking',
-    muted: 'muted',
-    idle: 'ready',
+    idle: 'microphone off',
   };
   const saying = $derived(
-    session.connected ? (SAYING[session.muted ? 'muted' : session.state] ?? '') : session.status,
+    session.connected ? (SAYING[session.state] ?? '') : session.status,
   );
+
+  /* The newest backstage line, in the place a person is already looking.
+   *
+   * It is the same text the panel shows, deliberately: a second wording for
+   * the same fact is a second thing to keep true. Before the first line
+   * arrives there is still something honest to say -- the turn has started
+   * and nothing has been looked at yet. */
+  const doingNow = $derived(session.trace.at(-1)?.text || 'starting the turn');
 </script>
 
 <main class:compact>
@@ -131,112 +145,124 @@
       title="back to the full window"
       onclick={() => toggleCompact(false)}
     >
-      <Orb
-        state={session.state}
-        muted={session.muted}
-        mic={session.micLevel}
-        out={session.outLevel}
-        {fps}
-      />
+      <Orb state={session.state} mic={session.micLevel} out={session.outLevel} {fps} />
     </button>
-  {:else if session.blocked || session.fetching || (session.needsSetup && !skippedSetup)}
-    <Setup
-      setup={session.setup}
-      fetching={session.fetching}
-      error={session.fetchError}
-      onfetch={() => session.fetchModels()}
-      onskip={session.blocked ? null : () => (skippedSetup = true)}
-    />
   {:else}
-    <div class="body" class:withpanel={showBackstage}>
-      <!-- Left: the orb, big, with nothing competing with it. It is the whole
-           status display, so it gets a wall rather than a corner. -->
-      <aside class="side">
-        <div class="orb">
-          <Orb
-            state={session.state}
-            muted={session.muted}
-            mic={session.micLevel}
-            out={session.outLevel}
-            {fps}
-          />
-        </div>
-        <h1>{session.name}</h1>
-        <p class="saying">{saying}</p>
+    <!-- The title bar, drawn here rather than by Windows.
+         Windows will not let you keep its caption buttons and drop the icon
+         and the title, and it draws all three at a size chosen for a file
+         manager. So the frame is off and this is the whole bar: nothing on
+         the left but somewhere to drag, and three controls on the right at a
+         size you can hit. -->
+    <div class="titlebar drag">
+      <div class="grip"></div>
+      <div class="windowbuttons nodrag">
+        <button type="button" title="Minimise" aria-label="minimise" onclick={() => minimise()}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
+        </button>
+        <button type="button" title="Maximise" aria-label="maximise" onclick={() => toggleMaximise()}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="5.5" width="13" height="13" rx="1.5" /></svg>
+        </button>
+        <!-- Hides to the tray, the way the native close did. Quitting is
+             `exit` in the box, or the tray menu. -->
+        <button class="shut" type="button" title="Close to tray" aria-label="close" onclick={() => close()}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+    </div>
 
-        <div class="controls">
-          <button type="button" class:on={session.mode === 'voice'} onclick={toggleMode} disabled={!session.connected}>
-            <span class="glyph">{session.mode === 'voice' ? '◉' : '○'}</span>
-            {session.mode === 'voice' ? 'Voice on' : 'Voice off'}
-          </button>
-          <button type="button" class:on={session.muted} onclick={toggleMute} disabled={!session.connected}>
-            <span class="glyph">{session.muted ? '⊘' : '⏺'}</span>
-            {session.muted ? 'Muted' : 'Mic live'}
-          </button>
-          <button type="button" class:on={showBackstage} onclick={() => (showBackstage = !showBackstage)}>
-            <span class="glyph">☰</span> Backstage
-          </button>
-          <button type="button" onclick={() => toggleCompact(true)}>
-            <span class="glyph">⤡</span> Compact
-          </button>
-        </div>
+    {#if session.blocked || session.fetching || (session.needsSetup && !skippedSetup)}
+      <Setup
+        setup={session.setup}
+        fetching={session.fetching}
+        error={session.fetchError}
+        onfetch={() => session.fetchModels()}
+        onskip={session.blocked ? null : () => (skippedSetup = true)}
+      />
+    {:else}
+      <div class="body">
+        <!-- Left: the orb, big, with nothing competing with it. It is the whole
+             status display, so it gets a wall rather than a corner, and no rule
+             down the side of it -- a hairline beside a thing made of light is
+             the one edge the orb spent a milestone getting rid of. -->
+        <aside class="side">
+          <div class="orb">
+            <Orb state={session.state} mic={session.micLevel} out={session.outLevel} {fps} />
+          </div>
+          <h1>{session.name}</h1>
+          <p class="saying">{saying}</p>
 
-        <div class="foot">
-          {#if hotkey}
-            <p class="hint">Push to talk anywhere: <b>{hotkey}</b></p>
-          {/if}
-          <!-- Distinct from the window's close, which hides to the tray. This
-               is the one that stops the sidecar, and it says so. -->
-          <button class="quit" type="button" onclick={sayGoodbye}>Quit Alexa</button>
-        </div>
-      </aside>
-
-      <!-- Middle: the conversation. -->
-      <section class="stage">
-        <Transcript entries={session.entries} onanswer={(id, ok) => session.answer(id, ok)} />
-
-        <form onsubmit={submit}>
-          <div class="field">
-            <input
-              bind:value={text}
-              onkeydown={onKey}
-              placeholder="Say something…"
-              autocomplete="off"
-              disabled={!session.connected}
-            />
+          <div class="controls">
+            <!-- One switch. On means the microphone is open, the wake word is
+                 listening and replies are spoken; off means this is a text
+                 box. They used to be two toggles and a hotkey, and no
+                 combination of them was useful. -->
             <button
-              class="icon"
               type="button"
-              title={hotkey ? `Push to talk (${hotkey})` : 'Push to talk'}
-              aria-label="push to talk"
-              onclick={() => session.listen()}
+              class:on={session.voice}
+              onclick={toggleVoice}
               disabled={!session.connected}
             >
-              ◎
+              <span class="glyph">{session.voice ? '◉' : '○'}</span>
+              {session.voice ? 'Voice on' : 'Voice off'}
             </button>
-            {#if session.busy}
-              <button class="icon stop" type="button" title="Stop" aria-label="stop" onclick={() => session.cancel()}>
-                ■
-              </button>
-            {:else}
-              <button
-                class="icon send"
-                type="submit"
-                title="Send"
-                aria-label="send"
-                disabled={!session.connected || !text.trim()}
-              >
-                ↑
-              </button>
-            {/if}
+            <button type="button" onclick={() => toggleCompact(true)}>
+              <span class="glyph">⤡</span> Compact
+            </button>
           </div>
-        </form>
-      </section>
+        </aside>
 
-      {#if showBackstage}
-        <Backstage trace={session.trace} />
-      {/if}
-    </div>
+        <!-- Middle: the conversation. -->
+        <section class="stage">
+          <Transcript entries={session.entries} onanswer={(id, ok) => session.answer(id, ok)} />
+
+          <!-- What it is doing, while it is doing it. The backstage panel says
+               the same thing at length; this is the one line of it that
+               belongs where the person is already looking. Waiting with no
+               idea what is being waited on is the thing this removes. -->
+          {#if session.busy}
+            <div class="working">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="what">{doingNow}</span>
+            </div>
+          {/if}
+
+          <form onsubmit={submit}>
+            <div class="field">
+              <input
+                bind:value={text}
+                onkeydown={onKey}
+                placeholder="Say something…"
+                autocomplete="off"
+                disabled={!session.connected}
+              />
+              {#if session.busy}
+                <button class="icon stop" type="button" title="Stop" aria-label="stop" onclick={() => session.cancel()}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
+                </button>
+              {:else}
+                <button
+                  class="icon send"
+                  type="submit"
+                  title="Send"
+                  aria-label="send"
+                  disabled={!session.connected || !text.trim()}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 19V6M12 5.5l-6.2 6.2M12 5.5l6.2 6.2" />
+                  </svg>
+                </button>
+              {/if}
+            </div>
+          </form>
+        </section>
+
+        <!-- Right: the backstage, always. It was behind a toggle, and a panel
+             that answers "is it stuck or is it reading" is no use to anybody
+             who has to decide to open it first. -->
+        <Backstage trace={session.trace} busy={session.busy} />
+      </div>
+    {/if}
   {/if}
 </main>
 
@@ -244,33 +270,74 @@
   main {
     height: 100vh;
     display: grid;
+    grid-template-rows: 38px minmax(0, 1fr);
   }
   main.compact {
     grid-template-rows: 28px minmax(0, 1fr);
   }
 
+  /* -- the title bar ----------------------------------------------------- */
+  .titlebar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+    background: var(--bg);
+  }
+  .grip {
+    min-width: 0;
+  }
+  .windowbuttons {
+    display: flex;
+  }
+  .windowbuttons button {
+    width: 48px;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    color: var(--dim);
+  }
+  .windowbuttons svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .windowbuttons button:hover:not(:disabled) {
+    background: var(--raised);
+    color: var(--text);
+  }
+  .windowbuttons .shut:hover:not(:disabled) {
+    background: var(--stop);
+    color: #1d1408;
+  }
+
   .body {
     display: grid;
-    grid-template-columns: 250px minmax(0, 1fr);
+    /* Wider than they were, both of them. The orb needs room to move and the
+       backstage is a column of prose; the transcript is the one column that
+       reads perfectly well narrower, because it is already capped at a
+       reading measure and was only ever centring itself in the slack. */
+    grid-template-columns: 300px minmax(0, 1fr) 390px;
     overflow: hidden;
-  }
-  .body.withpanel {
-    grid-template-columns: 250px minmax(0, 1fr) 340px;
   }
 
   /* -- left: the orb ---------------------------------------------------- */
   .side {
     display: grid;
-    grid-template-rows: auto auto auto 1fr auto;
+    grid-template-rows: auto auto auto 1fr;
     justify-items: center;
     gap: 4px;
-    padding: 28px 20px 20px;
-    border-right: 1px solid var(--line-soft);
+    padding: 22px 22px 20px;
     text-align: center;
   }
   .orb {
-    width: 150px;
-    height: 150px;
+    width: 190px;
+    height: 190px;
   }
   h1 {
     font-size: 27px;
@@ -309,36 +376,43 @@
     text-align: center;
     flex: none;
   }
-  .foot {
-    width: 100%;
-    display: grid;
-    gap: 10px;
-  }
-  .hint {
-    margin: 0;
-    font-size: 13px;
-    color: var(--faint);
-    line-height: 1.45;
-  }
-  .hint b {
-    color: var(--dim);
-    font-weight: 600;
-  }
-  .quit {
-    border: 1px solid var(--line);
-    width: 100%;
-  }
-  .quit:hover {
-    border-color: var(--stop);
-    color: var(--stop);
-    background: var(--stop-soft);
-  }
 
   /* -- middle: the conversation ----------------------------------------- */
   .stage {
     display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto auto;
     overflow: hidden;
+  }
+  .working {
+    max-width: 720px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 6px 30px 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    color: var(--dim);
+  }
+  .working .what {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* One mote going round, in the same white the orb is at rest. A bar would
+     be a progress bar, and there is no progress to report. */
+  .spinner {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 50% 12%, var(--text) 0 2.4px, transparent 2.6px);
+    animation: orbit 900ms linear infinite;
+  }
+  @keyframes orbit {
+    to {
+      transform: rotate(360deg);
+    }
   }
   form {
     padding: 12px 28px 26px;
@@ -374,19 +448,28 @@
   }
   .icon {
     flex: none;
-    width: 44px;
-    height: 44px;
+    width: 46px;
+    height: 46px;
     padding: 0;
     display: grid;
     place-items: center;
     border-radius: 50%;
-    font-size: 19px;
-    line-height: 1;
+  }
+  /* Big enough to hit and heavy enough to read. The arrow used to be a text
+     glyph at whatever weight the serif drew it, which at 19px was a hairline
+     in a 44px circle. */
+  .icon svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .icon.send {
     background: var(--local);
     color: #1d1408;
-    font-weight: 700;
   }
   .icon.send:hover:not(:disabled) {
     background: #e0855f;
@@ -399,7 +482,10 @@
   .icon.stop {
     background: var(--stop-soft);
     color: var(--stop);
-    font-size: 13px;
+  }
+  .icon.stop svg {
+    fill: currentColor;
+    stroke: none;
   }
 
   /* -- compact ---------------------------------------------------------- */
@@ -427,9 +513,16 @@
     background: none;
   }
 
-  @media (max-width: 1000px) {
-    .body.withpanel {
-      grid-template-columns: 250px minmax(0, 1fr);
+  /* The backstage is not behind a toggle any more, so it cannot be dropped
+     at a narrow width either -- it would leave a three-column grid with
+     something in a fourth row. Both side panels give ground instead. */
+  @media (max-width: 1120px) {
+    .body {
+      grid-template-columns: 240px minmax(0, 1fr) 310px;
+    }
+    .orb {
+      width: 150px;
+      height: 150px;
     }
   }
 </style>

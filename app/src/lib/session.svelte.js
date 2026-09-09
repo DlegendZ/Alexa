@@ -41,8 +41,10 @@ export class Session {
   /** What it calls itself. From `[assistant] name` by way of `ready` -- never
    *  written down in the window, which would go stale the day it is renamed. */
   name = $state('');
-  mode = $state('text');
-  muted = $state(false);
+  /** One switch for the whole voice half: the microphone is open, the wake
+   *  word is listening, and replies are spoken. Off is a text box. Typing
+   *  works either way, which is why this is not a mode. */
+  voice = $state(false);
   busy = $state(false);
 
   micLevel = $state(0);
@@ -155,20 +157,12 @@ export class Session {
     return this.send({ type: 'text_input', text: said });
   }
 
-  listen() {
-    this.send({ type: 'listen' });
-  }
-
   cancel() {
     this.send({ type: 'cancel' });
   }
 
-  setMode(mode) {
-    this.send({ type: 'set_mode', mode });
-  }
-
-  setMuted(muted) {
-    this.send({ type: 'set_mute', muted });
+  setVoice(on) {
+    this.send({ type: 'set_voice', on });
   }
 
   shutdown() {
@@ -264,10 +258,8 @@ export class Session {
         this.connected = true;
         this.model = message.model;
         this.name = message.name || '';
-        this.mode = message.mode;
-        this.muted = message.muted;
+        this.voice = Boolean(message.voice);
         this.setup = message.setup ?? null;
-        this.state = message.muted ? 'muted' : 'idle';
         this.status = message.model;
         this.#startPinging();
         break;
@@ -303,8 +295,8 @@ export class Session {
         this.outLevel = message.out ?? 0;
         break;
 
-      case 'mode':
-        this.mode = message.value;
+      case 'voice':
+        this.voice = Boolean(message.value);
         break;
 
       case 'partial':

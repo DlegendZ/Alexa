@@ -16,9 +16,10 @@
         "title": "Alexa",
         "width": 1180,
         "height": 760,
-        "minWidth": 560,
-        "minHeight": 420,
+        "minWidth": 900,
+        "minHeight": 480,
         "resizable": true,
+        "decorations": false,
         "center": true,
         "theme": "Dark"
       }

@@ -20,6 +20,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 ORB = REPO / "app" / "src" / "lib" / "orb.js"
+SESSION = REPO / "app" / "src" / "lib" / "session.svelte.js"
 PACKAGE = REPO / "src" / "sunday"
 
 #: States the shell owns and the sidecar never sends. The window is in this one
@@ -132,6 +133,99 @@ def test_the_output_level_reaches_the_socket():
     """Measured is not emitted. This is the step that was missing."""
     source = (PACKAGE / "audio" / "voice.py").read_text(encoding="utf-8")
     assert '"out": event.out' in source
+
+# -- the protocol has two ends and they are edited separately ---------------
+
+#: Messages the window sends that the sidecar deliberately does not handle.
+#: Empty, and meant to stay that way; it exists so that adding one is a
+#: decision somebody writes down rather than a typo that goes quiet.
+WINDOW_ONLY: set[str] = set()
+
+#: Messages the sidecar accepts that no window sends. `voice_input` is the
+#: seam voice arrives through when something other than this window is driving
+#: the socket -- `web/debug.html`, or a test. `setup` used to be on this list
+#: and was deleted instead: nothing had ever sent it.
+SIDECAR_ONLY = {"voice_input"}
+
+
+def window_sends() -> set[str]:
+    """Every `type` the window puts on the wire."""
+    source = SESSION.read_text(encoding="utf-8")
+    return set(re.findall(r"type: '([a-z_]+)'", source))
+
+
+def sidecar_accepts() -> set[str]:
+    """Every `type` the socket's read loop has a branch for, plus the one the
+    handshake checks before the loop starts."""
+    source = (PACKAGE / "server.py").read_text(encoding="utf-8")
+    return set(re.findall(r'kind == "([a-z_]+)"', source)) | {"hello"}
+
+
+def window_handles() -> set[str]:
+    """Every `type` the window has a case for."""
+    source = SESSION.read_text(encoding="utf-8")
+    return set(re.findall(r"case '([a-z_]+)':", source))
+
+
+def sidecar_sends() -> set[str]:
+    """Every `type` the package can put on the socket, in both spellings.
+
+    The dict-literal spelling is read only from the two files that talk to the
+    socket, because `"type": "string"` is also how a JSON schema describes a
+    tool argument and every tool has several. The runtime's keyword form has
+    no such collision, so it is read everywhere.
+    """
+    found: set[str] = set()
+    for name in ("server.py", "audio/voice.py"):
+        source = (PACKAGE / name).read_text(encoding="utf-8")
+        found.update(re.findall(r'"type": "([a-z_]+)"', source))
+    for path in PACKAGE.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        found.update(re.findall(r'type="([a-z_]+)"', source))
+    return found
+
+
+def test_the_window_only_sends_messages_the_sidecar_answers():
+    """Renaming a message renames it at one end first.
+
+    `set_mode`, `set_mute` and `listen` became one `set_voice`, and the window
+    and the sidecar are two files in two languages -- so a half-done rename is
+    a button that does nothing and an error the user never sees, because the
+    sidecar's reply to an unknown message is one line in a transcript.
+    """
+    unanswered = window_sends() - sidecar_accepts() - WINDOW_ONLY
+    assert not unanswered, (
+        f"the window sends {sorted(unanswered)} and the sidecar has no branch "
+        "for it, so pressing that control does nothing but log an error"
+    )
+
+
+def test_the_window_has_a_case_for_everything_the_sidecar_sends():
+    """The other direction, and the one that fails silently.
+
+    An unhandled `case` is a `switch` that falls through: no error, no line in
+    the transcript, just a fact the window never learned. `mode` became
+    `voice`, and a window still switching on `mode` would have shown the voice
+    control stuck on whatever it started as.
+    """
+    unheard = sidecar_sends() - window_handles()
+    assert not unheard, (
+        f"the sidecar sends {sorted(unheard)} and the window ignores it -- an "
+        "unhandled case is silent, which is the whole problem"
+    )
+
+
+def test_no_message_is_accepted_that_nothing_can_send():
+    """A branch nothing reaches is the `trace.query_left` bug in the protocol.
+
+    `listen` outlived push to talk by exactly as long as it took to notice.
+    """
+    unreachable = sidecar_accepts() - window_sends() - SIDECAR_ONLY
+    assert not unreachable, (
+        f"the sidecar accepts {sorted(unreachable)} and nothing sends it; "
+        "delete the branch or say here which client does"
+    )
+
 
 # -- one fact, one producer ------------------------------------------------
 

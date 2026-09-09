@@ -11,6 +11,14 @@
     stuck = box.scrollHeight - box.scrollTop - box.clientHeight < 48;
   };
 
+  /* The other half of that rule. Not following you down is right; leaving you
+   * to drag a scrollbar back to a reply that is still being written is not.
+   * The button only exists while it has somewhere to go. */
+  const toBottom = () => {
+    box?.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+    stuck = true;
+  };
+
   $effect(() => {
     entries.length;
     entries.at(-1)?.text?.length;
@@ -18,42 +26,58 @@
   });
 </script>
 
-<div class="transcript" bind:this={box} onscroll={onScroll}>
-  <div class="column">
-    {#each entries as entry (entry.id)}
-      {#if entry.kind === 'you'}
-        <div class="said you">{entry.text}</div>
-      {:else if entry.kind === 'sunday'}
-        <div class="said them">{entry.text}</div>
-      {:else if entry.kind === 'note'}
-        <!-- One quiet line, in the place it happened. A redaction shown in a
-             side panel is a redaction nobody reads at the moment it matters. -->
-        <div class="note {entry.tone}"><span class="dot"></span>{entry.text}</div>
-      {:else if entry.kind === 'confirm'}
-        <div class="confirm">
-          <div class="ask">{entry.text}</div>
-          {#if entry.answered}
-            <div class="answered">{entry.answered}</div>
-          {:else}
-            <div class="buttons">
-              <!-- Keeping it is the safe half, so it comes first and a stray
-                   Return does nothing. Nothing is written or destroyed until
-                   somebody says so. -->
-              <button type="button" onclick={() => onanswer(entry.id, false)}>
-                {entry.action === 'delete' ? 'Keep it' : 'Leave it'}
-              </button>
-              <button class="primary" type="button" onclick={() => onanswer(entry.id, true)}>
-                {entry.action === 'delete' ? 'Delete' : 'Overwrite'}
-              </button>
-            </div>
-          {/if}
-        </div>
-      {/if}
-    {/each}
+<div class="pane">
+  <div class="transcript" bind:this={box} onscroll={onScroll}>
+    <div class="column">
+      {#each entries as entry (entry.id)}
+        {#if entry.kind === 'you'}
+          <div class="said you">{entry.text}</div>
+        {:else if entry.kind === 'sunday'}
+          <div class="said them">{entry.text}</div>
+        {:else if entry.kind === 'note'}
+          <!-- One quiet line, in the place it happened. A redaction shown in a
+               side panel is a redaction nobody reads at the moment it matters. -->
+          <div class="note {entry.tone}"><span class="dot"></span>{entry.text}</div>
+        {:else if entry.kind === 'confirm'}
+          <div class="confirm">
+            <div class="ask">{entry.text}</div>
+            {#if entry.answered}
+              <div class="answered">{entry.answered}</div>
+            {:else}
+              <div class="buttons">
+                <!-- Keeping it is the safe half, so it comes first and a stray
+                     Return does nothing. Nothing is written or destroyed until
+                     somebody says so. -->
+                <button type="button" onclick={() => onanswer(entry.id, false)}>
+                  {entry.action === 'delete' ? 'Keep it' : 'Leave it'}
+                </button>
+                <button class="primary" type="button" onclick={() => onanswer(entry.id, true)}>
+                  {entry.action === 'delete' ? 'Delete' : 'Overwrite'}
+                </button>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      {/each}
+    </div>
   </div>
+
+  {#if !stuck}
+    <button class="jump" type="button" title="Back to the newest message" onclick={toBottom}>
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v13M12 18.5l-6.2-6.2M12 18.5l6.2-6.2" />
+      </svg>
+      <span>Newest</span>
+    </button>
+  {/if}
 </div>
 
 <style>
+  .pane {
+    position: relative;
+    min-height: 0;
+    display: grid;
+  }
   .transcript {
     overflow-y: auto;
     padding: 28px 28px 8px;
@@ -66,6 +90,37 @@
     display: grid;
     gap: 26px;
     align-content: start;
+  }
+
+  /* Floats over the transcript rather than sitting under it, because the row
+     it would otherwise take is a row the conversation is using. */
+  .jump {
+    position: absolute;
+    left: 50%;
+    bottom: 14px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 15px 7px 12px;
+    font-size: 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--raised);
+    color: var(--text);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  }
+  .jump:hover {
+    background: var(--line);
+  }
+  .jump svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   .said {

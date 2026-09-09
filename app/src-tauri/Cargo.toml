@@ -11,7 +11,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
-tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -26,10 +25,10 @@ strip = true
 panic = "abort"
 codegen-units = 1
 
-# The title bar is painted by Windows, not by the WebView, so matching it to
-# the app's background needs DWM rather than CSS. Windows 11 only; on anything
-# older the call fails and the bar stays default, which is why it is ignored
-# rather than checked.
+# The window is frameless, but the border around it is still Windows', and no
+# stylesheet reaches it. Matching it to the app needs DWM. Windows 11 only; on
+# anything older the call fails and the border stays default, which is why it
+# is ignored rather than checked.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
   "Win32_Foundation",

@@ -1,48 +1,65 @@
 /* The orb.
  *
- * One glowing core, drawn on a 2D canvas, and it is the whole status display.
- * It answers two questions at a glance: what is it doing, and -- because teal
- * means external and nothing else is ever teal -- is anything leaving this
- * machine right now.
+ * A web of particles, drawn on a 2D canvas, and it is the whole status
+ * display. It answers two questions at a glance: what is it doing, and --
+ * because teal means external and nothing else is ever teal -- is anything
+ * leaving this machine right now.
  *
  * Never WebGL. That card is holding the models; a scene graph would compete
- * for the exact memory the agent needs. Layered radial gradients, a small
- * particle array and a few arcs cost nothing next to that.
+ * for the exact memory the agent needs. Thirty-four points on a sphere, the
+ * lines between the near ones, and a bloom behind the lot cost nothing next
+ * to that. The pair loop is 561 distance checks a frame, which is less work
+ * than one of the radial gradients the previous version drew three of.
  *
- * The first version of this looked like a status LED from 1998, and the reason
- * was structural rather than a matter of taste: it had a hard one-pixel stroke
- * around a single gradient, and every animated quantity was one sine wave. A
- * circle with a crisp edge reads as a widget. Something with no edge at all --
- * light falling off into the background over forty pixels -- reads as a light.
- * So there is no stroke anywhere in here now, and nothing moves on one
- * frequency: the breathing is three sines with incommensurate periods, which
- * never quite repeats and is what makes it feel alive rather than clocked.
+ * It used to be a single glowing sphere. The web says two things the sphere
+ * could not. A mesh has *structure*, so a state can change how connected it
+ * is rather than only how bright it is -- thinking is a dense web churning,
+ * transcribing is the same web pulled in tight, and a closed microphone is
+ * a web with most of its lines gone. And a mesh has direction, so speaking
+ * can be a wave that travels through it rather than a ring that leaves it.
+ *
+ * White at rest, on purpose. Colour is now reserved for the three facts that
+ * are worth interrupting somebody for: amber while a tool is running on this
+ * machine, teal while one is reaching off it, red for a refusal. A white orb
+ * that turns teal is a stronger signal than an amber one that turns teal.
  */
 
-/* Warmed to match the window, and the meanings are untouched: amber is work
- * on this machine, teal is something leaving it, red is a refusal. */
+/* Amber is a tool running on this machine, teal is one leaving it, red is a
+ * refusal. Everything else -- thinking, listening, speaking, idle -- is
+ * white, which is what makes the three that are not white mean something. */
 const AMBER = [217, 119, 87];
 const TEAL = [108, 171, 156];
 const RED = [204, 123, 114];
-const NEUTRAL = [168, 164, 155];
-const WHITE = [255, 250, 244];
+const WHITE = [255, 252, 247];
+const DIM = [198, 194, 186];
 
 /** What each state looks like before anything moves.
  *
- *  `bright` is the core's opacity floor; motion is added per state in draw().
+ *  `bright` is the web's opacity floor; `link` is how far apart two nodes can
+ *  be and still be joined, which is the quantity a sphere did not have; motion
+ *  is added per state in draw().
+ *
+ *  The `link` numbers are calibrated, not chosen. Thirty-four points spread
+ *  over a unit sphere sit about 0.68 apart, so anything under that draws no
+ *  lines at all -- the first set of these ran from 0.4 to 0.9 and produced a
+ *  cloud of dots with one link in it, which is not a web and did not look
+ *  like one. Read them against 0.68: 0.7 is a handful, 0.9 is a mesh, 1.05
+ *  knits the thing shut.
  */
 const LOOKS = {
-  connecting: { rgb: NEUTRAL, bright: 0.18 },
-  idle: { rgb: NEUTRAL, bright: 0.24 },
-  listening: { rgb: NEUTRAL, bright: 0.85 },
-  transcribing: { rgb: NEUTRAL, bright: 0.55 },
-  thinking: { rgb: AMBER, bright: 0.78 },
-  'tool.local': { rgb: AMBER, bright: 0.84 },
-  'tool.external': { rgb: TEAL, bright: 0.92 },
-  blocked: { rgb: RED, bright: 0.95 },
-  speaking: { rgb: AMBER, bright: 0.88 },
-  muted: { rgb: NEUTRAL, bright: 0.2 },
-  error: { rgb: RED, bright: 0.7 },
+  connecting: { rgb: DIM, bright: 0.3, link: 0.66 },
+  /* Voice off, and the only state in which it is: with the ear open the
+     resting state is `listening`, so an idle web is a closed microphone. It
+     is drawn asleep -- dim, drifting, and with most of the links gone. */
+  idle: { rgb: DIM, bright: 0.34, link: 0.7 },
+  listening: { rgb: WHITE, bright: 0.95, link: 0.92 },
+  transcribing: { rgb: WHITE, bright: 0.7, link: 1.05 },
+  thinking: { rgb: WHITE, bright: 0.85, link: 0.86 },
+  'tool.local': { rgb: AMBER, bright: 0.92, link: 0.86 },
+  'tool.external': { rgb: TEAL, bright: 1, link: 0.82 },
+  blocked: { rgb: RED, bright: 1, link: 0.74 },
+  speaking: { rgb: WHITE, bright: 0.95, link: 0.9 },
+  error: { rgb: RED, bright: 0.75, link: 0.62 },
 };
 
 /** States that are an event rather than a place. They flash over whatever is
@@ -63,6 +80,16 @@ const WAKE_MS = 180;
 /** How long `blocked` stutters before the state underneath shows again. */
 const BLOCKED_MS = 900;
 
+/** How many points are in the web.
+ *
+ *  Every pair is measured every frame, so this is quadratic: 34 is 561 pairs,
+ *  48 would be 1128. Thirty-four is the number at which the mesh still reads
+ *  as a mesh at 44 pixels -- the compact window and the title bar draw the
+ *  same object at a fifth of the size -- and does not turn into a solid disc
+ *  at 150.
+ */
+const NODES = 34;
+
 const rgba = ([r, g, b], a) => `rgba(${r},${g},${b},${a})`;
 
 /** Move `from` toward `to` at a rate that is frame-rate independent.
@@ -77,6 +104,39 @@ const ease = (from, to, rate, dt) => from + (to - from) * (1 - Math.exp(-rate * 
 const organic = (t, base) =>
   Math.sin(t * base) * 0.6 + Math.sin(t * base * 1.73 + 1.1) * 0.28 + Math.sin(t * base * 2.61 + 2.7) * 0.12;
 
+/** Points spread evenly over a sphere, by the golden angle.
+ *
+ *  Evenly is the whole requirement: random points clump, and a clump in a
+ *  particle web is a bright blob that reads as a fault in the drawing rather
+ *  than as noise.
+ */
+function lattice(count) {
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  return Array.from({ length: count }, (_, i) => {
+    const y = 1 - (i / (count - 1)) * 2;
+    const ring = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = golden * i;
+    return {
+      /* Where it sits when nothing is happening. */
+      base: [Math.cos(theta) * ring, y, Math.sin(theta) * ring],
+      /* Its own drift, so the web breathes unevenly. Derived from the index
+       * rather than random, so two runs of the app look the same. */
+      phase: (i * 1.7) % (Math.PI * 2),
+      rate: 0.6 + ((i * 5) % 7) / 8,
+      /* Filled in every frame; kept on the object so the frame allocates
+       * nothing. Sixty frames a second of 34 fresh arrays is garbage the
+       * collector has to chase while a model is generating. */
+      x: 0,
+      y: 0,
+      z: 0,
+      sx: 0,
+      sy: 0,
+      alpha: 0,
+      size: 0,
+    };
+  });
+}
+
 export class Orb {
   /**
    * @param {HTMLCanvasElement} canvas
@@ -89,11 +149,10 @@ export class Orb {
     this.fpsBlurred = options.fpsBlurred ?? 10;
 
     this.state = 'connecting';
-    this.muted = false;
 
     /* Two amplitudes, both measured rather than invented: the microphone's,
      * and the level of what is actually coming out of the speaker. The second
-     * is what the speaking ripples move with -- ripples on a timer would look
+     * is what the speaking wave moves with -- a wave on a timer would look
      * the same and mean nothing. */
     this.micLevel = 0;
     this.outLevel = 0;
@@ -110,22 +169,16 @@ export class Orb {
 
     this._bright = 0;
     this._radius = 1; // multiplier the states pull around
-    this._spin = 0; // one accumulating angle for every arc
+    this._link = 0.6; // how connected the web is, eased like everything else
+    this._spin = 0; // yaw, accumulating
+    this._roll = 0; // a second axis, so it is a sphere and not a carousel
     /* The colour is eased as well as the brightness, so a state change is a
      * hue drifting rather than a lamp being swapped. Teal arriving is the one
      * transition a person has to notice, and it still does -- it is a large
      * change over 200 ms rather than an instant one. */
-    this._rgb = [...NEUTRAL];
+    this._rgb = [...DIM];
 
-    this._particles = Array.from({ length: 18 }, (_, i) => ({
-      angle: (i / 18) * Math.PI * 2,
-      orbit: 0.3 + ((i * 7) % 11) / 22,
-      speed: 0.45 + ((i * 5) % 7) / 9,
-      /* A depth, so they pass in front of and behind the core instead of
-       * sliding around a flat ring. Size and opacity follow it. */
-      tilt: 0.5 + ((i * 3) % 5) / 10,
-      phase: (i * 1.7) % (Math.PI * 2),
-    }));
+    this._nodes = lattice(NODES);
 
     this._motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
     this.reduced = this._motionQuery.matches;
@@ -235,16 +288,45 @@ export class Orb {
       this.state = this._blockedUnder;
     }
 
-    const look = LOOKS[this.muted ? 'muted' : this.state] ?? LOOKS.idle;
+    const look = LOOKS[this.state] ?? LOOKS.idle;
     this._mic = ease(this._mic, Math.min(1, this.micLevel * 4), 14, dt);
     this._out = ease(this._out, Math.min(1, this.outLevel * 4), 18, dt);
     for (let i = 0; i < 3; i += 1) {
       this._rgb[i] = ease(this._rgb[i], look.rgb[i], 9, dt);
     }
+    this._link = ease(this._link, look.link, 7, dt);
 
-    if (!this.reduced) this._spin += dt * (this.state === 'tool.external' ? 0.9 : 0.55);
+    if (!this.reduced) {
+      this._spin += dt * this.spinRate();
+      this._roll += dt * this.spinRate() * 0.37;
+    }
 
     this.draw(look, dt);
+  }
+
+  /** How fast the web turns, per state.
+   *
+   *  Speed is a channel of its own, and it is the one that reads at a glance
+   *  from across a room: external is faster than local, and thinking is
+   *  faster than either, because thinking is the state you are waiting out.
+   */
+  spinRate() {
+    switch (this.state) {
+      case 'thinking':
+        return 1.15;
+      case 'tool.external':
+        return 0.95;
+      case 'tool.local':
+        return 0.7;
+      case 'transcribing':
+        return 0.15;
+      case 'idle':
+        return 0.08;
+      case 'listening':
+        return 0.3;
+      default:
+        return 0.22;
+    }
   }
 
   draw(look, dt) {
@@ -254,54 +336,69 @@ export class Orb {
     /* Sized off the shorter edge, so the compact window and the full one draw
      * the same thing at two sizes. */
     const unit = Math.min(this.w, this.h) / 2;
-    const base = unit * 0.38;
-    const state = this.muted ? 'muted' : this.state;
-    const still = this.reduced || state === 'muted';
+    const base = unit * 0.62;
+    const state = this.state;
+    const still = this.reduced;
     const rgb = this._rgb.map(Math.round);
 
     ctx.clearRect(0, 0, this.w, this.h);
 
     let target = look.bright;
     let radius = 1;
+    /* How far a node wanders off its lattice point. The web is a solid on
+     * every state except the two that are meant to look unsettled. */
+    let jitter = 0.02;
 
     if (!still) {
       switch (state) {
         case 'idle':
           /* ~0.2 Hz, but not on one wave. Nothing else moves. */
-          target = look.bright * (0.72 + 0.28 * (0.5 + 0.5 * organic(this._t, 1.25)));
-          radius = 1 + 0.045 * organic(this._t, 1.25);
+          target = look.bright * (0.74 + 0.26 * (0.5 + 0.5 * organic(this._t, 1.25)));
+          radius = 1 + 0.05 * organic(this._t, 1.25);
           break;
         case 'connecting':
-          target = look.bright * (0.5 + 0.5 * (0.5 + 0.5 * Math.sin(this._t * 2.2)));
+          target = look.bright * (0.45 + 0.55 * (0.5 + 0.5 * Math.sin(this._t * 2.2)));
+          radius = 0.88 + 0.06 * Math.sin(this._t * 2.2);
+          jitter = 0.09;
           break;
         case 'listening':
-          radius = 1 + this._mic * 0.14 + 0.02 * organic(this._t, 2.4);
+          /* The web opens with your voice. Flat means nothing is bound. */
+          radius = 1 + this._mic * 0.22 + 0.02 * organic(this._t, 2.4);
           break;
         case 'transcribing':
-          /* Collapse inward and hold. Usually under a second, so it reads as
-           * the pause between hearing and answering. */
-          radius = 0.7;
+          /* Collapse inward and hold, with the links pulled tight. Usually
+           * under a second, so it reads as the pause between hearing and
+           * answering. */
+          radius = 0.66;
           break;
         case 'thinking':
-          /* The shell stays still on purpose: effort, not progress. A moving
-           * shell reads as a progress bar, and there is no progress to
-           * report -- the model is either done or it is not. */
-          radius = 1 + 0.02 * organic(this._t, 3.1);
+          /* The one state where the nodes leave their lattice points. Effort,
+           * not progress: a web churning has no direction to read as a
+           * progress bar, because the model is either done or it is not. */
+          radius = 1 + 0.03 * organic(this._t, 3.1);
+          jitter = 0.16;
+          break;
+        case 'tool.local':
+        case 'tool.external':
+          radius = 1 + 0.04 * Math.sin(this._t * 3.4);
+          jitter = 0.06;
           break;
         case 'speaking':
-          radius = 1 + this._out * 0.14;
-          target = look.bright * (0.78 + 0.22 * this._out);
+          /* The wave itself is in nodeAlpha(); this is the swell under it. */
+          radius = 1 + this._out * 0.2;
+          target = look.bright * (0.72 + 0.28 * this._out);
           break;
         case 'error':
           target = look.bright * (0.4 + 0.6 * (0.5 + 0.5 * Math.sin(this._t * 2.4)));
+          jitter = 0.12;
           break;
         case 'blocked': {
           /* Flash and stutter. The stutter is a square wave, not a sine -- a
            * smooth pulse reads as breathing, which is the idle state. */
           const age = this._t - this._blockedAt;
           const on = Math.sin(age * 30) > 0;
-          target = look.bright * (on ? 1 : 0.4);
-          radius = 1 + (on ? 0.05 : 0);
+          target = look.bright * (on ? 1 : 0.35);
+          radius = 1 + (on ? 0.06 : 0);
           break;
         }
       }
@@ -312,156 +409,144 @@ export class Orb {
     const r = base * this._radius;
     const glow = Math.max(0.05, this._bright);
 
-    if (!still) {
-      if (state === 'speaking') this.drawRipples(cx, cy, r, rgb);
-      else if (state === 'listening') this.drawListeningRing(cx, cy, r, rgb);
-      else if (state === 'connecting') this.drawConnectingArc(cx, cy, r, rgb);
-      else if (state === 'tool.local') this.drawArcs(cx, cy, r, rgb, 1);
-      else if (state === 'tool.external') this.drawArcs(cx, cy, r, rgb, 2);
-    }
-
-    /* Three layers of light, and the reason there is no outline anywhere: an
-     * edge is what made the first version look like a button. The bloom falls
-     * off over most of the canvas, the body carries the colour, and a small
-     * offset highlight gives it somewhere for the light to be coming from. */
-    const bloom = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, unit * 1.05);
-    bloom.addColorStop(0, rgba(rgb, 0.3 * glow));
-    bloom.addColorStop(0.45, rgba(rgb, 0.09 * glow));
+    /* The bloom. There is no outline anywhere in here for the same reason
+     * there never was: an edge is what makes a drawing read as a widget. The
+     * light falls off over most of the canvas, and the web sits inside it. */
+    const bloom = ctx.createRadialGradient(cx, cy, r * 0.1, cx, cy, unit * 1.05);
+    bloom.addColorStop(0, rgba(rgb, 0.2 * glow));
+    bloom.addColorStop(0.5, rgba(rgb, 0.07 * glow));
     bloom.addColorStop(1, rgba(rgb, 0));
     ctx.fillStyle = bloom;
     ctx.fillRect(0, 0, this.w, this.h);
 
-    if (state === 'thinking' && !still) this.drawParticles(cx, cy, r, rgb, dt, true);
-
-    const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 1.15);
-    body.addColorStop(0, rgba(rgb, Math.min(1, 0.55 + glow * 0.45)));
-    body.addColorStop(0.55, rgba(rgb, 0.55 * glow + 0.12));
-    body.addColorStop(0.82, rgba(rgb, 0.22 * glow));
-    body.addColorStop(1, rgba(rgb, 0));
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 1.15, 0, Math.PI * 2);
-    ctx.fill();
-
-    const hx = cx - r * 0.32;
-    const hy = cy - r * 0.36;
-    const shine = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * 0.95);
-    shine.addColorStop(0, rgba(WHITE, 0.28 * glow));
-    shine.addColorStop(1, rgba(WHITE, 0));
-    ctx.fillStyle = shine;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 1.1, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (state === 'thinking' && !still) this.drawParticles(cx, cy, r, rgb, dt, false);
-    if (this.muted) this.drawSlash(cx, cy, r, rgb);
+    this.project(cx, cy, r, still ? 0 : jitter, glow, state);
+    this.drawLinks(rgb, glow);
+    this.drawNodes(rgb, glow);
+    this.drawCore(cx, cy, r, rgb, glow);
 
     this.drawWakeFlash(cx, cy, base);
   }
 
-  /** Ripples leaving the core, moving with what is actually being played. */
-  drawRipples(cx, cy, r, rgb) {
-    const ctx = this.ctx;
-    for (let i = 0; i < 3; i += 1) {
-      const phase = (this._t * 0.55 + i / 3) % 1;
-      const radius = r * (1 + phase * 1.5);
-      const alpha = (1 - phase) * (1 - phase) * (0.1 + this._out * 0.45);
-      const ring = ctx.createRadialGradient(cx, cy, radius * 0.86, cx, cy, radius);
-      ring.addColorStop(0, rgba(rgb, 0));
-      ring.addColorStop(0.6, rgba(rgb, alpha));
-      ring.addColorStop(1, rgba(rgb, 0));
-      ctx.fillStyle = ring;
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  /** The halo whose radius is the microphone. Flat means nothing is bound. */
-  drawListeningRing(cx, cy, r, rgb) {
-    const ctx = this.ctx;
-    const radius = r * (1.5 + this._mic * 0.55);
-    const ring = ctx.createRadialGradient(cx, cy, radius * 0.78, cx, cy, radius * 1.08);
-    ring.addColorStop(0, rgba(rgb, 0));
-    ring.addColorStop(0.55, rgba(rgb, 0.16 + this._mic * 0.4));
-    ring.addColorStop(1, rgba(rgb, 0));
-    ctx.fillStyle = ring;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius * 1.08, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawConnectingArc(cx, cy, r, rgb) {
-    this.softArc(cx, cy, r * 1.55, this._spin, Math.PI * 0.55, rgb, 0.4, 2);
-  }
-
-  /** One arc for a local call; two counter-rotating for an external one.
+  /** Rotate the lattice, jitter it, and put every node on the screen.
    *
-   *  Two is not decoration. External is the one state a person has to notice
-   *  without being told, so it moves differently as well as being teal.
+   *  Two axes rather than one. A single yaw makes the points travel in
+   *  horizontal bands, which reads as a carousel; a second, slower roll is
+   *  what makes it read as a sphere being turned over.
    */
-  drawArcs(cx, cy, r, rgb, count) {
-    for (let i = 0; i < count; i += 1) {
-      const direction = i % 2 === 0 ? 1 : -1;
-      const start = this._spin * 2.2 * direction + i * Math.PI;
-      this.softArc(cx, cy, r * 1.5, start, Math.PI * 0.5, rgb, 0.8, 3.5);
+  project(cx, cy, r, jitter, glow, state) {
+    const yaw = this._spin;
+    const roll = this._roll;
+    const cosY = Math.cos(yaw);
+    const sinY = Math.sin(yaw);
+    const cosR = Math.cos(roll);
+    const sinR = Math.sin(roll);
+
+    for (const p of this._nodes) {
+      const wobble = jitter ? Math.sin(this._t * p.rate * 2.1 + p.phase) * jitter : 0;
+      const scale = 1 + wobble;
+      const bx = p.base[0] * scale;
+      const by = p.base[1] * scale;
+      const bz = p.base[2] * scale;
+
+      // yaw about Y
+      const x1 = bx * cosY + bz * sinY;
+      const z1 = bz * cosY - bx * sinY;
+      // roll about X
+      const y2 = by * cosR - z1 * sinR;
+      const z2 = z1 * cosR + by * sinR;
+
+      p.x = x1;
+      p.y = y2;
+      p.z = z2;
+      p.sx = cx + x1 * r;
+      p.sy = cy + y2 * r;
+      /* Depth, cheaply: nearer is bigger and brighter. Orthographic, because
+       * a perspective divide on a sphere this small buys nothing you can
+       * see and costs a branch per node for the points behind the camera. */
+      const near = (z2 + 1) / 2;
+      p.size = 0.9 + near * 2.1;
+      p.alpha = (0.18 + near * 0.62) * glow * this.nodeWave(p, state);
     }
   }
 
-  /** An arc that fades out at both ends, so it reads as a sweep of light
-   *  rather than a drawn stroke with two cut ends. */
-  softArc(cx, cy, radius, start, span, rgb, alpha, width) {
-    const ctx = this.ctx;
-    const steps = 18;
-    ctx.lineWidth = width;
-    ctx.lineCap = 'round';
-    for (let i = 0; i < steps; i += 1) {
-      const a0 = start + (span * i) / steps;
-      const a1 = start + (span * (i + 1)) / steps;
-      /* Brightest in the middle of the sweep, gone at both ends. */
-      const along = (i + 0.5) / steps;
-      const fade = Math.sin(along * Math.PI);
-      ctx.strokeStyle = rgba(rgb, alpha * fade);
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, a0, a1 + 0.01);
-      ctx.stroke();
-    }
-    ctx.lineCap = 'butt';
+  /** The per-node modulation that is not depth.
+   *
+   *  Only speaking uses it, and it is the reason the web is a web: a wave
+   *  travelling front-to-back through the mesh, moving with what is actually
+   *  coming out of the speaker. A ring leaving a sphere says "something
+   *  happened"; a wave through a mesh says "it is still talking".
+   */
+  nodeWave(p, state) {
+    if (state !== 'speaking') return 1;
+    const wave = Math.sin(this._t * 6.5 - p.z * 3.2);
+    return 0.55 + 0.45 * (0.5 + 0.5 * wave) * (0.4 + this._out * 0.6) * 2;
   }
 
-  /** Motes orbiting inside the core. Drawn in two passes -- the ones behind
-   *  the body before it, the ones in front after -- so they have depth
-   *  instead of sliding around a flat ring. */
-  drawParticles(cx, cy, r, rgb, dt, behind) {
+  /** Every pair close enough to be joined, faded by how close.
+   *
+   *  This is the quadratic half and the whole character of the thing. The
+   *  threshold is a state's own quantity: `transcribing` pulls it up so the
+   *  web knits itself tight, `idle` -- which now means the ear is shut --
+   *  drops it far enough that most of the lines go and what is left drifts.
+   */
+  drawLinks(rgb, glow) {
     const ctx = this.ctx;
-    for (const p of this._particles) {
-      if (behind) p.angle += dt * p.speed * 1.5;
-      const depth = Math.sin(p.angle + p.phase);
-      if (behind !== depth < 0) continue;
-      const radius = r * p.orbit * 1.5;
-      const x = cx + Math.cos(p.angle) * radius;
-      const y = cy + Math.sin(p.angle) * radius * p.tilt;
-      const near = (depth + 1) / 2;
-      const size = 0.9 + near * 1.9;
-      ctx.fillStyle = rgba(rgb, 0.25 + near * 0.55);
+    const limit = this._link;
+    if (limit <= 0.01) return;
+    const nodes = this._nodes;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < nodes.length; i += 1) {
+      const a = nodes[i];
+      for (let j = i + 1; j < nodes.length; j += 1) {
+        const b = nodes[j];
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dz = a.z - b.z;
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (d > limit) continue;
+        /* Brightest when the two are nearly touching, gone at the threshold,
+         * so links appear and disappear by fading rather than by popping. */
+        const close = 1 - d / limit;
+        const depth = (a.z + b.z + 2) / 4;
+        const alpha = close * (0.18 + depth * 0.45) * glow;
+        if (alpha < 0.006) continue;
+        ctx.strokeStyle = rgba(rgb, alpha);
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.stroke();
+      }
+    }
+  }
+
+  drawNodes(rgb, glow) {
+    const ctx = this.ctx;
+    for (const p of this._nodes) {
+      const alpha = Math.min(1, p.alpha);
+      if (alpha < 0.01) continue;
+      ctx.fillStyle = rgba(rgb, alpha);
       ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.arc(p.sx, p.sy, p.size, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 
-  /** Muted is not a dimmer setting. The capture stream is stopped, so the orb
-   *  should be unmistakably off rather than quietly quiet. */
-  drawSlash(cx, cy, r, rgb) {
+  /** A small light at the middle of the web.
+   *
+   *  Without it the thing is a hollow shell and the eye has nowhere to rest;
+   *  with it, the mesh reads as something *around* a light rather than as a
+   *  diagram of a molecule.
+   */
+  drawCore(cx, cy, r, rgb, glow) {
     const ctx = this.ctx;
-    ctx.strokeStyle = rgba(rgb, 0.75);
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = 'round';
+    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.5);
+    core.addColorStop(0, rgba(rgb, Math.min(1, 0.35 + glow * 0.5)));
+    core.addColorStop(0.5, rgba(rgb, 0.16 * glow));
+    core.addColorStop(1, rgba(rgb, 0));
+    ctx.fillStyle = core;
     ctx.beginPath();
-    ctx.moveTo(cx - r * 0.66, cy - r * 0.66);
-    ctx.lineTo(cx + r * 0.66, cy + r * 0.66);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
+    ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   drawWakeFlash(cx, cy, base) {
@@ -469,7 +554,7 @@ export class Orb {
     if (age < 0 || age > WAKE_MS / 1000) return;
     const phase = age / (WAKE_MS / 1000);
     const ctx = this.ctx;
-    const radius = base * (1 + phase * 1.9);
+    const radius = base * (1 + phase * 1.4);
     const ring = ctx.createRadialGradient(cx, cy, radius * 0.8, cx, cy, radius);
     ring.addColorStop(0, rgba(WHITE, 0));
     ring.addColorStop(0.7, rgba(WHITE, (1 - phase) * 0.55));

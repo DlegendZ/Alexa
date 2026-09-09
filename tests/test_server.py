@@ -73,8 +73,6 @@ class FakeEar:
         self.ready = True
         self.started = False
         self.stopped = False
-        self.muted = False
-        self.triggered = 0
         self.said: list[str] = []
         self.hushed = 0
         self.follow_ups = 0
@@ -85,12 +83,6 @@ class FakeEar:
 
     def stop(self):
         self.stopped = True
-
-    def set_muted(self, muted):
-        self.muted = muted
-
-    def trigger(self):
-        self.triggered += 1
 
     def say(self, sentence):
         self.said.append(sentence)
@@ -225,18 +217,25 @@ async def test_ping_answers_pong(sidecar):
 
 
 @pytest.mark.asyncio
-async def test_mode_and_mute_are_reported_back(sidecar):
+async def test_voice_is_one_switch_and_it_is_reported_back(sidecar):
+    """It used to be two, and no combination of them was useful.
+
+    Voice mode with the microphone muted was an ear with its stream stopped;
+    a live microphone in text mode heard you and answered in silence.
+    """
     side, handshake = sidecar
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
-    assert json.loads(await ws.recv()) == {"type": "mode", "value": "voice"}
-    assert side.mode == "voice"
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
+    assert json.loads(await ws.recv()) == {"type": "voice", "value": True}
+    assert side.voice is True
 
-    await ws.send(json.dumps({"type": "set_mute", "muted": True}))
-    assert json.loads(await ws.recv()) == {"type": "state", "value": "muted"}
-    assert side.muted is True
+    await ws.send(json.dumps({"type": "set_voice", "on": False}))
+    assert json.loads(await ws.recv()) == {"type": "voice", "value": False}
+    # Voice off closes the microphone, and `idle` is what says so.
+    assert json.loads(await ws.recv()) == {"type": "state", "value": "idle"}
+    assert side.voice is False
     await ws.close()
 
 
@@ -457,18 +456,18 @@ async def test_the_backstage_trace_crosses_the_socket(sidecar):
 
 
 @pytest.mark.asyncio
-async def test_voice_mode_opens_the_ear_and_text_mode_closes_it(sidecar):
+async def test_voice_on_opens_the_ear_and_voice_off_closes_it(sidecar):
     side, handshake = sidecar
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
-    assert await _recv(ws) == {"type": "mode", "value": "voice"}
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
+    assert await _recv(ws) == {"type": "voice", "value": True}
     assert len(FakeEar.made) == 1
     assert FakeEar.made[0].started is True
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "text"}))
-    assert await _recv(ws) == {"type": "mode", "value": "text"}
+    await ws.send(json.dumps({"type": "set_voice", "on": False}))
+    assert await _recv(ws) == {"type": "voice", "value": False}
     assert FakeEar.made[0].stopped is True
     assert side._ear is None
     await ws.close()
@@ -482,7 +481,7 @@ async def test_a_transcript_starts_a_turn_as_if_it_had_been_typed(sidecar):
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
     await _recv(ws)
     ear = FakeEar.made[0]
 
@@ -503,7 +502,7 @@ async def test_the_ear_can_talk_to_the_socket_from_its_own_thread(sidecar):
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
     await _recv(ws)
     ear = FakeEar.made[0]
 
@@ -513,38 +512,27 @@ async def test_the_ear_can_talk_to_the_socket_from_its_own_thread(sidecar):
 
 
 @pytest.mark.asyncio
-async def test_push_to_talk_needs_no_wake_word(sidecar):
+async def test_a_turn_with_the_ear_open_ends_listening_and_not_idle(sidecar):
+    """The state after a reply is the microphone, not the clock.
+
+    It used to broadcast `idle` the moment the model stopped writing, which is
+    while the speaker still has sentences queued -- so the orb dropped out of
+    `speaking` before the reply had been heard. The ear says `listening` when
+    the room is actually quiet again, so the socket says nothing.
+    """
     _, handshake = sidecar
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    # The first `listen` on a text-mode session opens the ear rather than
-    # doing nothing: pressing the mic button is asking to be heard.
-    await ws.send(json.dumps({"type": "listen"}))
-    await ws.send(json.dumps({"type": "ping"}))
-    assert await _recv(ws) == {"type": "pong"}
-    assert len(FakeEar.made) == 1
-
-    await ws.send(json.dumps({"type": "listen"}))
-    await ws.send(json.dumps({"type": "ping"}))
-    assert await _recv(ws) == {"type": "pong"}
-    assert FakeEar.made[0].triggered == 1
-    await ws.close()
-
-
-@pytest.mark.asyncio
-async def test_muting_reaches_the_capture_stream(sidecar):
-    """Mute is a real toggle, not a modifier: muted means the stream is
-    stopped, not that its frames are ignored politely."""
-    _, handshake = sidecar
-    ws = await _connect(handshake)
-    await _drain(ws, until="state")
-
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
     await _recv(ws)
-    await ws.send(json.dumps({"type": "set_mute", "muted": True}))
-    assert await _recv(ws) == {"type": "state", "value": "muted"}
-    assert FakeEar.made[0].muted is True
+
+    await ws.send(json.dumps({"type": "text_input", "text": "say something"}))
+    await _drain(ws)
+    # One follow-up per turn, and no `idle` racing it.
+    await ws.send(json.dumps({"type": "ping"}))
+    assert await _recv(ws) == {"type": "pong"}
+    assert FakeEar.made[0].follow_ups == 1
     await ws.close()
 
 
@@ -559,7 +547,7 @@ async def test_sentences_reach_the_speaker_as_well_as_the_clients(sidecar):
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
     await _recv(ws)
     ear = FakeEar.made[0]
 
@@ -579,7 +567,7 @@ async def test_talking_over_it_stops_it_and_cancels_the_turn(sidecar):
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
     await _recv(ws)
     ear = FakeEar.made[0]
 
@@ -604,7 +592,7 @@ async def test_the_stop_button_also_stops_the_voice(sidecar):
     ws = await _connect(handshake)
     await _drain(ws, until="state")
 
-    await ws.send(json.dumps({"type": "set_mode", "mode": "voice"}))
+    await ws.send(json.dumps({"type": "set_voice", "on": True}))
     await _recv(ws)
 
     await ws.send(json.dumps({"type": "cancel"}))
