@@ -1789,3 +1789,159 @@ call site, and then it is a bug on the audio thread, at the first word anybody s
 The general form is the one note 62 keeps restating. A measured number has one home. A
 copy of it in a default argument is a second home that no measurement will ever update,
 and it does not have the decency to be wrong loudly.
+
+## 95. Two orb states were specified and had no producer
+
+**Doc:** Desktop 04's state table lists `wake` — "single sharp expansion, 180 ms, this is
+the 'I heard you' signal" — and `speaking`, "concentric rings pulse with output amplitude".
+**Code, as written:** the ear turned a wake event straight into `{"state":"listening"}`,
+and `level` carried the microphone and nothing else.
+**Code, now:** the ear emits `wake` and then `listening`; `level` carries `out` beside
+`rms`.
+**Why:** this is note 55 in a new place. A line that is written and never emitted looks
+exactly like a step that never happens, and both of these were in the document from the
+first draft with nothing on the other end.
+
+The wake flash is the one that costs something real. The whole argument for a wake word is
+that it answers *before* anything slow starts — and the first slow thing is loading a
+quarter of a gigabyte of transcriber. Emitting only `listening` meant the window said
+nothing until that was done, which is the interval a person is most likely to conclude the
+microphone is broken.
+
+The amplitude was already measured and thrown away. `Listener.reference_rms` is computed
+every frame for the barge-in floor; it is the level of what is actually coming out of the
+speaker. Rings driven by a timer would have looked identical and meant nothing, which is
+the distinction the level meter was added for in the first place — a state that says
+`listening` over a flat bar is a device that was never opened.
+
+The test is written from the rule and not from either bug: it reads the states the orb can
+draw off `orb.js`, reads the states the package can emit off the Python, and compares the
+two sets in both directions. A state nothing produces and a state the window cannot draw
+are the two ways this goes wrong; enumerating them is what will catch the third. Reading
+one spelling of the emission was itself the first failure — `thinking` is written
+`value="thinking"` in the runtime and `"value": "thinking"` on the socket, and a scanner
+that knew one of them reported a state that runs on every turn as unproduced.
+
+## 96. The window is one window, and the WebView never touches a file
+
+**Doc:** Desktop 01 — the sidecar writes `{port, token}` to `handshake.json` and "the shell
+reads it". Desktop 04 — compact mode is "a small frameless always-on-top window showing
+just the orb".
+**Code:** Rust reads the handshake and hands the port and token to the window through a
+`connection` command. Compact mode resizes, undecorates and pins *the same* window.
+**Why:** two readings of the document that would both have worked, and both are worse.
+
+A WebView that can read `handshake.json` can read everything next to it, including
+`google_token.json` and the Chroma store. So the file is read once, in Rust, and what
+crosses into the page is two values. In a browser — which is how this window was
+developed, because a reload is a tenth of a second and a Rust build is not — the same two
+come off the query string, exactly as `web/debug.html` takes them.
+
+Compact as a *second* window would be two orbs, two sockets and two things to keep in
+step, for a feature whose whole content is "the same orb, smaller". One window resized has
+no synchronisation problem to get wrong.
+
+The stale handshake is the trap in this area and it is worth writing down. The file is
+rewritten each launch, but the previous one is on disk until then — so a shell that reads
+it immediately after spawning finds the *old* port, and connects to nothing or, worse, to
+something else. The handshake only counts once its `started` is no older than the moment
+the child was spawned.
+
+## 97. Closing the window hides it; quit is the one that stops the sidecar
+
+**Doc:** Desktop 01's lifecycle covers start, health, crash and quit. It does not say what
+the close button does, and Desktop 05 puts *show* in the tray menu.
+**Code:** the close button hides the window; `Quit`, in the tray menu or the window's own
+control, sends `shutdown` and then waits.
+**Why:** a tray menu with *show* in it only makes sense if something can hide. And the
+ordering is the part that matters: `shutdown` is what flushes the session summary into
+Chroma, so a quit that kills the process first loses the conversation every time. The
+shell waits five seconds for the child to go and then stops being polite — the same number
+Desktop 01 already gives for the force-kill.
+
+That ordering has one consequence worth stating, because it is the same mistake as
+emitting notices after the sinks were cleared: the tray's quit cannot simply kill. It asks
+the window to say goodbye over the socket, waits, and only then stops waiting.
+
+## 98. Calendar and mail are `local`, and that is not a technicality
+
+**Doc:** Stage 04's tool table gives both a `private` provenance and does not name a scope.
+**Code:** `scope="local"` for both, with `provenance="private"`.
+**Why:** scope answers "is this the web door", not "does a packet leave this machine". The
+door exists because a *query composed here* can carry your private things out with it. The
+calendar is your own account, reached with your own token, and there is nothing to compose
+— the request is "the events between these two times".
+
+`private` is what does the actual work, and it is structural rather than careful:
+`AIRLOCK_VISIBLE` is `user` and `public`, so nothing either tool returns can reach the
+composer at all. Labelling them `external` would have put them behind the airlock, which
+would have been a category error in the other direction — the airlock's job is to compose a
+query out of cleared material, and there is no query here to clear.
+
+The test enumerates every tool that reads the user's own things — files, folders, calendar,
+mailbox — rather than naming the two new ones, so the next such tool is covered before it
+is written. This is note 92's lesson applied in advance for once, rather than after.
+
+## 99. New keys `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, and consent is not a tool
+
+**Doc:** Stage 04 — "OAuth desktop flow, once. Refresh token cached at
+`%LOCALAPPDATA%\Sunday\google_token.json`."
+**Code:** the *client* credentials are two new `.env` keys beside `DEEPSEEK_API_KEY`; the
+consent flow is a console script, `sunday-google`, and never a tool call.
+**Why:** the document says where the token ends up and not where the client comes from,
+and they are different secrets with different lifetimes — the token is per-user and
+earned, the client is per-installation and issued.
+
+Consent cannot happen inside a turn. It needs a browser window that may never open, on a
+machine that may have no browser, while a model waits on a tool result and the two-minute
+confirmation timeout runs. So a missing sign-in is a refusal that names the command to
+run — which is the rule that a refusal with no way to act on it is the same failure as a
+prompt with no way to answer it.
+
+The flow is a loopback redirect rather than a pasted code, so the authorisation code
+reaches a socket on this machine and never a clipboard or a shell history. `access_type`
+and `prompt` are both set, because without them Google returns no refresh token on a second
+consent and the whole point is that this happens once.
+
+Two smaller things the document did not have to say and the code had to decide. Message
+bodies go through the key-shape scrubber *before* the agent sees them, not after: mail is
+the commonest way a real credential arrives in a context window, and a key that has been
+read is a key that can be repeated. And event descriptions are dropped, as Stage 04 asks —
+it is the field most likely to hold something you would not want summarised aloud in a room
+with other people in it, and it is never the answer to "what is on today".
+
+## 100. `overhead_tokens` has moved a fourth time — 2400 to 2600
+
+**Doc:** Stage 02 says the reservation has moved three times, and gives 2400.
+**Code:** 2600, because calendar and mail cost 313 tokens of bound schema between them —
+1239 to 1552 — and the slack under 2400 had fallen to 102 tokens.
+**Why:** this is exactly what the reservation test exists to force, and it worked: the
+suite was still green at 102 tokens of headroom, and the number moved because the
+measurement was taken rather than because anything broke.
+
+The arithmetic, since it is checkable: 20480 of window, less 2600 of overhead and 768 for
+the reply, leaves 17112. The five slices come to 16384. 728 is slack, and every configured
+number is still the number in use — `scaled_to` does not fire, which is the property note
+82 asked to keep true.
+
+And note 93, once more, in the same pass and for the same reason: `2400` and `17312` and
+`928` and `1239` and `2260` were written down in seven places between the config default,
+two TOML files, two docstrings and a test's own prose. The grep is for the digits.
+
+## 101. Return sends explicitly rather than by implicit form submission
+
+**Doc:** Desktop 04 — "a text box that is always usable".
+**Code:** a real form with a real submit button, *and* a keydown handler on the input.
+**Why:** the markup alone is correct and a browser would submit on Return unaided. But
+"unaided" is behaviour no harness in this project can drive — a synthetic key event does
+not trigger implicit submission — and Return is the key a person actually presses.
+
+Belt and braces would not be worth an entry. The reason it is here is the rule it belongs
+to: the last thing in this repo that nobody could run was the command in the README, and
+it was wrong. A path that cannot be exercised is a path nobody checks, so the path was
+made exercisable rather than reasoned about.
+
+Found the same way and worth the same sentence: compact mode hid its controls with "all
+but the last two", which depended on how many buttons happened to be rendered — and
+outside the shell, where the window's own two do not exist, it hid the wrong two. The
+buttons that survive are marked now rather than counted.

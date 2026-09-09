@@ -3,6 +3,7 @@
   import Orb from './lib/Orb.svelte';
   import Transcript from './lib/Transcript.svelte';
   import Backstage from './lib/Backstage.svelte';
+  import Setup from './lib/Setup.svelte';
   import { Session } from './lib/session.svelte.js';
   import {
     inShell,
@@ -20,6 +21,9 @@
   let compact = $state(new URLSearchParams(location.search).has('compact'));
   let showBackstage = $state(true);
   let fps = $state({ focused: 60, blurred: 10 });
+  /* Skipping only ever hides the screen. It cannot hide a `blocked` one,
+     because there is nothing behind it to use. */
+  let skippedSetup = $state(false);
 
   onMount(() => {
     session.connect();
@@ -124,13 +128,25 @@
       </button>
       <button type="button" onclick={() => toggleCompact()}>Compact</button>
       {#if inShell()}
-        <button type="button" onclick={minimise}>&minus;</button>
-        <button type="button" onclick={sayGoodbye}>&times;</button>
+        <button class="always" type="button" onclick={minimise}>&minus;</button>
+        <button class="always" type="button" onclick={sayGoodbye}>&times;</button>
       {/if}
     </div>
   </header>
 
-  {#if compact}
+  {#if session.blocked || session.fetching || (session.needsSetup && !skippedSetup)}
+    <!-- A first run that has not finished. The window says which of the three
+         halves is missing rather than refusing questions silently -- a socket
+         that accepts a question it cannot answer is worse than one that says
+         what is short. -->
+    <Setup
+      setup={session.setup}
+      fetching={session.fetching}
+      error={session.fetchError}
+      onfetch={() => session.fetchModels()}
+      onskip={session.blocked ? null : () => (skippedSetup = true)}
+    />
+  {:else if compact}
     <!-- Just the orb. It is the whole status display, so a window with only
          the orb in it is still a window that tells you everything. -->
     <button
@@ -266,7 +282,11 @@
     border-bottom: 0;
     padding: 4px 6px;
   }
-  main.compact .controls button:not(:last-child):not(:nth-last-child(2)) {
+  /* Compact is just the orb, so the controls go -- except the window's own,
+     which are marked rather than counted. Written as "all but the last two"
+     it depended on how many buttons happened to exist, and in a browser,
+     where the shell's two are not rendered, it hid the wrong two. */
+  main.compact .controls button:not(.always) {
     display: none;
   }
   .orbonly {

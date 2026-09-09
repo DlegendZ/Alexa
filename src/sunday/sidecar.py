@@ -29,8 +29,15 @@ def main() -> int:
     try:
         runtime.preflight()
     except OllamaDown as exc:
+        # Not fatal, and this is the whole of what makes a first run possible.
+        # Refusing to start means the window can only say "the sidecar exited",
+        # which is true and useless: the model has not been pulled yet, and the
+        # thing that pulls it is on the other end of this socket. So it listens
+        # anyway, says on `ready` what is missing, and refuses turns until it
+        # is not.
         print(exc, file=sys.stderr)
-        return 1
+        print("listening anyway, so the app can finish setting itself up",
+              file=sys.stderr)
 
     sidecar = Sidecar(runtime)
     print(f"token: {sidecar.token}")

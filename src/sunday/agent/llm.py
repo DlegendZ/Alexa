@@ -9,7 +9,7 @@ dropped here, before the fork.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import ollama
 
@@ -62,6 +62,46 @@ class Agent:
                 f"Model {self.model!r} is not pulled. Get it with:  "
                 f"ollama pull {self.model}"
             )
+
+    def reachable(self) -> bool:
+        """Is Ollama answering at all?
+
+        Separate from `model_present` because they are two different jobs for
+        whoever reads the answer: one is "start Ollama", the other is "pull a
+        few gigabytes". `preflight` raises one exception for both, which is
+        right for a startup check and wrong for a first-run screen.
+        """
+        try:
+            self._client.list()
+        except Exception:  # noqa: BLE001 - any transport failure reads the same
+            return False
+        return True
+
+    def model_present(self) -> bool:
+        """Is the model pulled? Distinct from Ollama being up, because the
+        first-run screen has to say which of the two is missing -- they are one
+        exception here and two different jobs for whoever is reading."""
+        try:
+            listing = self._client.list()
+        except Exception:  # noqa: BLE001 - unreachable is not "not pulled"
+            return False
+        names = {m.model for m in listing.models if m.model}
+        return self.model in names or f"{self.model}:latest" in names
+
+    def pull(self, *, on_progress: Callable[[str, int, int], None] | None = None) -> None:
+        """Pull the model, reporting bytes as they land.
+
+        First run is a few gigabytes and the window is showing a progress
+        screen, so this streams. `ollama pull` reports the same numbers; the
+        difference is that these reach a person who is looking at the app
+        rather than at a terminal they never opened.
+        """
+        for update in self._client.pull(self.model, stream=True):
+            if on_progress is None:
+                continue
+            total = int(getattr(update, "total", 0) or 0)
+            done = int(getattr(update, "completed", 0) or 0)
+            on_progress(str(getattr(update, "status", "") or ""), done, total)
 
     # -- generation -----------------------------------------------------
 

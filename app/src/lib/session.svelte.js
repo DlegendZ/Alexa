@@ -45,6 +45,14 @@ export class Session {
   micLevel = $state(0);
   outLevel = $state(0);
 
+  /** What a first run is still short of: Ollama running, the model pulled,
+   *  the voice models downloaded. Three separate facts, because they are three
+   *  different jobs for whoever is reading. Null until `ready` says. */
+  setup = $state(null);
+  /** The download in flight, if there is one. */
+  fetching = $state(null);
+  fetchError = $state('');
+
   /** The conversation, in order. Notices and confirmations live in it too, so
    *  a redaction appears where it happened rather than in a side panel that
    *  nobody is looking at when it matters. */
@@ -165,6 +173,36 @@ export class Session {
     this.send({ type: 'shutdown' });
   }
 
+  /** Download whatever is missing. The sidecar does the work, because the
+   *  URLs, the sizes and the rule about which transcriber is wanted all live
+   *  there already -- a second downloader would be a second thing to keep in
+   *  step with the config. */
+  fetchModels() {
+    this.fetchError = '';
+    this.fetching = { what: '', status: 'starting', done: 0, total: 0 };
+    this.send({ type: 'fetch_models' });
+  }
+
+  /** True while the app cannot answer a question yet. The voice models are
+   *  deliberately not on this list: without them the ear refuses and says so,
+   *  and a question typed into the box still works. */
+  get blocked() {
+    return Boolean(this.setup) && (!this.setup.ollama || Boolean(this.setup.model));
+  }
+
+  /** True while anything at all is outstanding.
+   *
+   *  Wider than `blocked` on purpose. A machine with Ollama already running
+   *  and the model already pulled is still missing a quarter of a gigabyte of
+   *  voice on its first launch, and a first-run screen that only appears when
+   *  the app is broken would never show that -- the wake word would simply not
+   *  work, which is the failure voice spent a milestone learning to say out
+   *  loud instead. It can be skipped, because typing does not need any of it.
+   */
+  get needsSetup() {
+    return this.blocked || Boolean(this.setup?.models?.length);
+  }
+
   answer(id, approved) {
     this.send({ type: 'confirm_response', id, approved });
     this.confirms = this.confirms.filter((c) => c.id !== id);
@@ -217,9 +255,26 @@ export class Session {
         this.model = message.model;
         this.mode = message.mode;
         this.muted = message.muted;
+        this.setup = message.setup ?? null;
         this.state = message.muted ? 'muted' : 'idle';
         this.status = message.model;
         this.#startPinging();
+        break;
+
+      case 'fetch':
+        if (message.status === 'error') {
+          this.fetching = null;
+          this.fetchError = message.text || 'the download stopped';
+        } else if (message.status === 'done') {
+          this.fetching = null;
+        } else {
+          this.fetching = {
+            what: message.what || '',
+            status: message.status || '',
+            done: message.done || 0,
+            total: message.total || 0,
+          };
+        }
         break;
 
       case 'pong':

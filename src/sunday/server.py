@@ -109,6 +109,10 @@ class Sidecar:
         #: away when the mode goes back to text.
         self._ear: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        #: True while the first-run download is running. One at a time, for the
+        #: same reason one turn is: there is one network and one disk, and two
+        #: downloads of the same file would race for the same `.part`.
+        self._fetching = False
 
     # -- lifecycle ------------------------------------------------------
 
@@ -136,11 +140,7 @@ class Sidecar:
             return
 
         self._clients.add(websocket)
-        await self._send(
-            websocket,
-            {"type": "ready", "protocol": PROTOCOL_VERSION, "mode": self.mode,
-             "muted": self.muted, "model": self.runtime.cfg.models.agent},
-        )
+        await self._send(websocket, self._ready())
         await self._send(websocket, {"type": "state", "value": "idle"})
         try:
             async for raw in websocket:
@@ -149,6 +149,23 @@ class Sidecar:
             pass
         finally:
             self._clients.discard(websocket)
+
+    def _ready(self) -> dict:
+        """What the window needs before it can show anything.
+
+        `setup` is the first-run half, and it is on `ready` rather than behind
+        a request because the window has to know before it lets anybody type.
+        A socket that accepts a question it cannot answer is worse than one
+        that says what is missing.
+        """
+        return {
+            "type": "ready",
+            "protocol": PROTOCOL_VERSION,
+            "mode": self.mode,
+            "muted": self.muted,
+            "model": self.runtime.cfg.models.agent,
+            "setup": self.runtime.setup_needed(),
+        }
 
     async def _authenticate(self, websocket: ServerConnection) -> bool:
         """First message must present the token. A browser cannot set headers
@@ -201,6 +218,10 @@ class Sidecar:
             await self._broadcast(
                 {"type": "state", "value": "muted" if self.muted else "idle"}
             )
+        elif kind == "setup":
+            await self._send(websocket, self._ready())
+        elif kind == "fetch_models":
+            self._start_fetch()
         elif kind == "confirm_response":
             pending = self._pending.get(str(message.get("id", "")))
             if pending is not None:
@@ -221,6 +242,95 @@ class Sidecar:
             await self._send(
                 websocket, {"type": "error", "text": f"unknown message {kind!r}"}
             )
+
+    # -- the first run --------------------------------------------------
+
+    def _start_fetch(self) -> None:
+        """Download whatever is missing, saying so as it goes.
+
+        A few gigabytes on a first launch, so it reports bytes rather than
+        spinning: a progress screen that cannot say how far along it is reads
+        as a hang, and the honest answer is available the whole time.
+
+        It runs here rather than in the shell because the numbers, the URLs and
+        the rule about which transcriber is wanted all live on this side
+        already. A second downloader would be a second thing to keep in step.
+        """
+        if self._fetching:
+            return
+        self._fetching = True
+        task = asyncio.create_task(asyncio.to_thread(self._fetch))
+        self._turns.add(task)
+        task.add_done_callback(self._turns.discard)
+
+    def _fetch(self) -> None:
+        from sunday.audio import models
+
+        loop = self._loop
+
+        def say(event: dict) -> None:
+            if loop is None:
+                return
+            try:
+                loop.call_soon_threadsafe(
+                    lambda: self._relay(self._broadcast(event))
+                )
+            except RuntimeError:
+                pass
+
+        try:
+            need = self.runtime.setup_needed()
+            if not need["ollama"]:
+                say({
+                    "type": "fetch",
+                    "status": "error",
+                    "text": (
+                        "Ollama is not running. Start it and try again -- "
+                        "nothing here can install it for you."
+                    ),
+                })
+                return
+
+            if need["model"]:
+                say({"type": "fetch", "what": need["model"], "status": "starting"})
+                self.runtime.agent.pull(
+                    on_progress=lambda status, done, total: say({
+                        "type": "fetch",
+                        "what": need["model"],
+                        "status": status,
+                        "done": done,
+                        "total": total,
+                    })
+                )
+
+            for key in need["models"]:
+                say({"type": "fetch", "what": key, "status": "starting"})
+            models.fetch(
+                on_progress=lambda key, done, total: say({
+                    "type": "fetch",
+                    "what": key,
+                    "status": "downloading",
+                    "done": done,
+                    "total": total,
+                })
+            )
+            say({"type": "fetch", "status": "done"})
+            say(self._ready())
+        except Exception as exc:  # noqa: BLE001 - a failed download is a message
+            say({
+                "type": "fetch",
+                "status": "error",
+                "text": f"the download stopped: {type(exc).__name__}: {exc}",
+            })
+        finally:
+            self._fetching = False
+
+    def _relay(self, coroutine: Any) -> None:
+        """Keep a reference to a broadcast started from another thread, so it
+        is not garbage collected mid-send."""
+        task = asyncio.create_task(coroutine)
+        self._relays.add(task)
+        task.add_done_callback(self._relays.discard)
 
     # -- the ear --------------------------------------------------------
 
@@ -321,6 +431,22 @@ class Sidecar:
             await self._broadcast(
                 {"type": "notice", "text": "still working on the previous turn"}
             )
+            return
+
+        if not self.runtime.ready_to_answer():
+            # A first run that has not finished. Saying which half is missing
+            # is the difference between a screen somebody can act on and one
+            # that reads as the app being broken.
+            need = self.runtime.setup_needed()
+            await self._broadcast({
+                "type": "error",
+                "text": (
+                    "Ollama is not running -- start it, then try again."
+                    if not need["ollama"]
+                    else f"the model {need['model']} has not been pulled yet"
+                ),
+            })
+            await self._broadcast({"type": "done", "committed": False})
             return
 
         async with self._turn_lock:

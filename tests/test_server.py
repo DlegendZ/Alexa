@@ -15,6 +15,15 @@ from sunday.server import Handshake, Sidecar
 
 
 class Talker:
+    """A model that is always up and always pulled.
+
+    The last two are the first-run interface, and this double carries them for
+    the same reason `FakeEar` carries the ear's: a stand-in that does not track
+    the interface it stands in for stops testing the thing it replaced.
+    """
+
+    model = "test-model"
+
     def chat(self, messages, *, tools=None, think=False, max_tokens=None):
         return Reply(content="")
 
@@ -24,6 +33,12 @@ class Talker:
 
     def preflight(self):
         return None
+
+    def reachable(self):
+        return True
+
+    def model_present(self):
+        return True
 
 
 class NoMemory:
@@ -262,8 +277,13 @@ async def test_the_handshake_is_removed_on_shutdown(cfg, tmp_path, monkeypatch):
 # -- round 2, finding 1: the read loop must stay live during a turn --------
 
 
-class SlowTalker:
-    """A turn long enough to send something into the middle of it."""
+class SlowTalker(Talker):
+    """A turn long enough to send something into the middle of it.
+
+    Subclassing rather than copying: the two doubles differ in how long they
+    take, not in what they are, and the first-run interface written twice is
+    the first-run interface that gets updated once.
+    """
 
     def __init__(self, tool_calls=None):
         self.tool_calls = tool_calls or []
@@ -592,3 +612,122 @@ async def test_the_stop_button_also_stops_the_voice(sidecar):
     assert await _recv(ws) == {"type": "pong"}
     assert FakeEar.made[0].hushed == 1
     await ws.close()
+
+# -- the first run ---------------------------------------------------------
+
+
+class Absent(Talker):
+    """A model that is not there, in whichever of the two ways is asked for.
+
+    Two ways, not one, because they are two different jobs for whoever reads
+    the answer -- "start Ollama" and "pull a few gigabytes" -- and `preflight`
+    collapses them into a single exception, which is right for a startup check
+    and wrong for a screen somebody has to act on.
+    """
+
+    def __init__(self, *, up=True, pulled=False):
+        self.up = up
+        self.pulled = pulled
+
+    def reachable(self):
+        return self.up
+
+    def model_present(self):
+        return self.pulled
+
+
+@pytest.mark.asyncio
+async def test_ready_says_what_a_first_run_is_missing(cfg, tmp_path, monkeypatch):
+    """The window has to know before it lets anybody type. A socket that
+    accepts a question it cannot answer is worse than one that says what is
+    short."""
+    from sunday import config as config_module
+
+    monkeypatch.setattr(config_module, "HANDSHAKE_PATH", tmp_path / "handshake.json")
+    runtime = Runtime(cfg, agent=Absent(up=True, pulled=False), memory=NoMemory())  # type: ignore[arg-type]
+    side = Sidecar(runtime, port=0, token="t")
+    task = asyncio.create_task(side.serve())
+    for _ in range(200):
+        if (tmp_path / "handshake.json").exists():
+            break
+        await asyncio.sleep(0.01)
+
+    handshake = json.loads((tmp_path / "handshake.json").read_text(encoding="utf-8"))
+    async with websockets.connect(f"ws://127.0.0.1:{handshake['port']}") as socket:
+        await socket.send(json.dumps({"type": "hello", "token": "t"}))
+        ready = json.loads(await socket.recv())
+        assert ready["type"] == "ready"
+        assert ready["setup"]["ollama"] is True
+        # The name comes off the agent rather than the config, so what the
+        # screen tells you to pull is the model that will actually be asked
+        # for -- one source, not two that can disagree.
+        assert ready["setup"]["model"] == runtime.agent.model
+
+    await side.stop()
+    await asyncio.wait_for(task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_before_setup_is_finished_says_which_half(cfg, tmp_path, monkeypatch):
+    """Not a silent refusal and not a stack trace. Ollama being down and the
+    model being unpulled are two different sentences, because they are two
+    different things to go and do."""
+    from sunday import config as config_module
+
+    monkeypatch.setattr(config_module, "HANDSHAKE_PATH", tmp_path / "handshake.json")
+    runtime = Runtime(cfg, agent=Absent(up=False), memory=NoMemory())  # type: ignore[arg-type]
+    side = Sidecar(runtime, port=0, token="t")
+    task = asyncio.create_task(side.serve())
+    for _ in range(200):
+        if (tmp_path / "handshake.json").exists():
+            break
+        await asyncio.sleep(0.01)
+
+    handshake = json.loads((tmp_path / "handshake.json").read_text(encoding="utf-8"))
+    async with websockets.connect(f"ws://127.0.0.1:{handshake['port']}") as socket:
+        await socket.send(json.dumps({"type": "hello", "token": "t"}))
+        await socket.recv()  # ready
+        await socket.recv()  # state
+        await socket.send(json.dumps({"type": "text_input", "text": "hello"}))
+
+        seen = []
+        for _ in range(6):
+            message = json.loads(await asyncio.wait_for(socket.recv(), timeout=5))
+            seen.append(message)
+            if message["type"] == "done":
+                break
+
+    kinds = [m["type"] for m in seen]
+    assert "error" in kinds
+    assert "done" in kinds
+    error = next(m for m in seen if m["type"] == "error")
+    assert "Ollama" in error["text"]
+    # And nothing was remembered, because nothing happened.
+    assert next(m for m in seen if m["type"] == "done")["committed"] is False
+
+    await side.stop()
+    await asyncio.wait_for(task, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_a_second_fetch_does_not_start_a_second_download(cfg, tmp_path, monkeypatch):
+    """One network, one disk, and one `.part` file per model. Two downloads of
+    the same file would race for it, which is the failure the partial-write
+    rename exists to prevent -- and racing it from two clicks would defeat
+    that."""
+    from sunday import config as config_module
+
+    monkeypatch.setattr(config_module, "HANDSHAKE_PATH", tmp_path / "handshake.json")
+    runtime = Runtime(cfg, agent=Talker(), memory=NoMemory())  # type: ignore[arg-type]
+    side = Sidecar(runtime, port=0, token="t")
+
+    started = []
+    side._fetch = lambda: started.append(1)  # type: ignore[method-assign]
+    side._fetching = True
+    side._start_fetch()
+    assert started == []
+
+    side._fetching = False
+    side._start_fetch()
+    await asyncio.sleep(0.05)
+    assert started == [1]

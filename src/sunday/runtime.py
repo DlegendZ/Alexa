@@ -224,6 +224,35 @@ class Runtime:
     def preflight(self) -> None:
         self.agent.preflight()
 
+    def setup_needed(self) -> dict[str, Any]:
+        """What a first run is still short of, as three separate facts.
+
+        Ollama not running, the model not pulled and the voice models not
+        downloaded are one `OllamaDown` and one `ModelMissing` in the code, and
+        three different jobs for whoever is reading a first-run screen. So they
+        are reported apart rather than as "something is wrong".
+
+        The voice models are only missing if they are wanted: a text-only
+        install has no use for a quarter of a gigabyte of ONNX, and telling
+        somebody to download it would be telling them to fix a thing that is
+        not broken.
+        """
+        from sunday.audio import models
+
+        ollama_up = self.agent.reachable()
+        return {
+            "ollama": ollama_up,
+            "model": self.agent.model if ollama_up and not self.agent.model_present() else "",
+            "models": models.missing() if self.cfg.tts.enabled or self.cfg.wake.enabled else [],
+        }
+
+    def ready_to_answer(self) -> bool:
+        """Ollama up and the model pulled. The voice models are not on this
+        list: without them the ear refuses and says so, and a turn typed into
+        the box still works."""
+        need = self.setup_needed()
+        return bool(need["ollama"]) and not need["model"]
+
     def cancel(self) -> None:
         """Barge-in. The turn in flight stops and is never committed."""
         self._cancel.set()
