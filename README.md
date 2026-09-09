@@ -48,6 +48,29 @@ talk and prints what each piece made of it:
 .venv\Scripts\python.exe -m sunday.audio.check
 ```
 
+### Calendar and mail, if you want them
+
+Both are read-only and both need a Google **desktop** OAuth client. Create one
+in the Google Cloud console, enable the Calendar and Gmail APIs, and put the two
+values in `.env` at the repo root beside `DEEPSEEK_API_KEY`:
+
+```
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+```
+
+Then sign in once. This opens a browser, and the code comes back to a socket on
+this machine rather than through your clipboard:
+
+```powershell
+.venv\Scripts\sunday-google.exe
+```
+
+The refresh token lands in `%LOCALAPPDATA%\Sunday\google_token.json`, which is
+on the credential list — if the agent ever reads that file the web door shuts for
+the rest of the turn. Until you sign in, both tools refuse and say which command
+to run.
+
 ## Running it
 
 ```powershell
@@ -85,6 +108,35 @@ a WebSocket — and paste both in:
 .venv\Scripts\python.exe -m http.server 8777 --bind 127.0.0.1 --directory web
 ```
 
+### The window
+
+The desktop app is a Tauri 2 shell around the same socket. It needs Node and
+Rust — `winget install Rustlang.Rustup`, then a new terminal.
+
+```powershell
+cd app; npm install
+```
+
+```powershell
+npm run tauri dev
+```
+
+The shell spawns the sidecar itself, reads the handshake, restarts it up to three
+times a minute if it dies, and gives up honestly after that. Closing the window
+hides it to the tray; **Quit** is what stops the sidecar, because that is what
+flushes the session summary to memory. `Ctrl+Alt+Space` focuses the window and
+starts listening from anywhere.
+
+The window can also be run on its own, against a sidecar you started by hand,
+which is much faster to iterate on and is how it was built:
+
+```powershell
+cd app; npm run dev
+```
+
+Then open `http://localhost:5173/?port=PORT&token=TOKEN` with the two values from
+`handshake.json`.
+
 ### A note on shells
 
 These commands are written for **PowerShell**, which is what Windows gives you
@@ -102,7 +154,8 @@ Copy `config.example.toml` to `config.toml` at the repo root (development) or to
 
 `.env` at the repo root holds `DEEPSEEK_API_KEY`, used only by the airlock's
 summariser. Without it, the web pipeline degrades to returning raw snippets
-rather than failing.
+rather than failing. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` go there
+too, if you want the calendar and the mailbox.
 
 ## Layout
 
@@ -116,6 +169,7 @@ rather than failing.
 | `src/sunday/web.py` | search → decide → fetch → extract → summarise |
 | `src/sunday/memory/` | RAM session store, Chroma store, window budget |
 | `src/sunday/tools/` | weather, asset prices, files, `ask_external` |
+| `src/sunday/tools/google.py` | calendar and mail, read-only, and the one-time sign-in |
 | `src/sunday/stream.py` | the sentence splitter and the two sinks |
 | `src/sunday/fastpaths.py` | the three patterns answered in code, before the model |
 | `src/sunday/trace.py` | the backstage narration, one line per step |
@@ -124,12 +178,18 @@ rather than failing.
 | `src/sunday/audio/check.py` | measures your microphone and room against your own voice |
 | `src/sunday/server.py` | the sidecar's WebSocket protocol |
 | `web/debug.html` | a plain page that drives a whole turn |
+| `app/src/` | the window: the orb, the transcript, the backstage panel |
+| `app/src/lib/orb.js` | every state the orb draws, on a 2D canvas, never WebGL |
+| `app/src-tauri/` | the Rust shell: window, tray, hotkey, and the sidecar's life |
 
 ## Build progress
 
-**Milestones 1 to 10 of 13 are running.** Everything below the line is the
-desktop app; the assistant itself is complete and usable from the terminal or
-over the socket, by typing or out loud.
+**Twelve of the thirteen are running, and the thirteenth is written.** The
+assistant is usable from the terminal, from a browser page, and from the window
+itself served by Vite — by typing or out loud. What has *not* been run is the Rust
+shell that wraps that window: there is no toolchain on this machine yet, so
+`app/src-tauri/` has never been compiled. Everything it talks to has been driven
+against a real sidecar.
 
 | # | Milestone | State | What it means |
 | --- | --- | --- | --- |
@@ -143,9 +203,9 @@ over the socket, by typing or out loud.
 | 8 | Voice out + echo | done | Kokoro speaks a sentence while the model writes the next; all three echo layers |
 | 9 | Barge-in | done | Talking over it stops it in about 100 ms — including while it is thinking |
 | 10 | The socket | done | The sidecar protocol; `web/debug.html` drives a whole turn |
-| 11 | Tauri shell + orb | not started | A real window, with the orb wired to real events |
-| 12 | Windows integration | not started | Tray, hotkey, single instance, installer |
-| 13 | Calendar + mail | not started | OAuth once, read-only, token on the credential list |
+| 11 | Tauri shell + orb | window done, shell uncompiled | The orb is the whole status display and both amplitudes it moves to are measured. Driven against a real sidecar; the Rust wrapper around it has not been built |
+| 12 | Windows integration | written, uncompiled | Tray tinted with the state, `Ctrl+Alt+Space`, single instance, NSIS, autostart. The first-run screen is done and tested — it lives in the sidecar and the window, not in Rust |
+| 13 | Calendar + mail | done | OAuth once through `sunday-google`, read-only, token on the credential list |
 
 ## Tests
 

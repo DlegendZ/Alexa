@@ -1945,3 +1945,48 @@ Found the same way and worth the same sentence: compact mode hid its controls wi
 but the last two", which depended on how many buttons happened to be rendered — and
 outside the shell, where the window's own two do not exist, it hid the wrong two. The
 buttons that survive are marked now rather than counted.
+
+## 102. The sidecar listens even when it cannot answer, and that is what makes a first run possible
+
+**Doc:** Desktop 05 — "First launch downloads Parakeet, Kokoro, Silero and the wake word,
+and pulls `qwen3.5:4b` via Ollama — with a progress screen, because it is a few gigabytes."
+**Code, as written:** `sidecar.main` ran `runtime.preflight()` and returned 1 if it raised.
+**Code, now:** the failure is printed and the socket comes up anyway; `ready` carries a
+`setup` block, turns are refused with a message naming which half is missing, and two new
+messages — `fetch_models` in, `fetch` out — drive the download.
+**Why:** the two halves of that sentence contradicted each other. A first launch is
+precisely the launch on which the model has *not* been pulled, so preflight fails, so the
+process exits, so the shell reports "the sidecar exited before it was listening" — and the
+thing that would pull the model is on the other end of the socket that never opened.
+
+Three new protocol lines, and the shape of them is the point. `setup` rides on `ready`
+rather than sitting behind a request, because the window has to know before it lets anybody
+type: a socket that accepts a question it cannot answer is worse than one that says what is
+short. And it reports three separate facts — Ollama running, model pulled, voice models
+present — where the code had one `OllamaDown`. That collapse is right for a startup check
+and wrong for a screen: "start Ollama", "pull four gigabytes" and "download a quarter of a
+gigabyte of ONNX" are three different things to go and do, and only the first is one this
+app cannot do for you. So `Agent.reachable` and `Agent.model_present` are separate and
+public, and `preflight` is left alone.
+
+The download lives in the sidecar and not in the shell. The URLs, the sizes and the rule
+that only the *configured* transcriber is wanted — note 79, and 900 MB if you get it wrong —
+are all on that side already. A downloader in Rust would be a second copy of all of it,
+kept in step by hand.
+
+Two smaller decisions that the document does not settle and the build had to. The screen
+appears when the *voice* models are missing too, even though they never block a typed
+question — a first-run screen that only appeared when the app was broken would never mention
+them, and the wake word would simply not work, which is exactly the silent downward failure
+milestone 7 spent itself learning to say out loud. It is skippable in that case and not in
+the other, because there has to be something behind it to skip to. And the download is one
+at a time, guarded like a turn: there is one network, one disk and one `.part` file per
+model, and two clicks racing for it would defeat the rename-on-complete that exists so an
+interrupted fetch cannot leave a truncated model which loads and then produces nonsense.
+
+One thing the test doubles taught, which is the reason `reachable` is public rather than a
+call to `agent._client`. Written as private access across the boundary it worked, and broke
+six socket tests whose fake agent has no client — which is the right complaint from the
+right place. A stand-in that does not track the interface it stands in for stops testing the
+thing it replaced, so `Talker` grew both methods and `SlowTalker` now subclasses it instead
+of copying it.
