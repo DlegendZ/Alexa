@@ -134,7 +134,12 @@ class Aec:
 
         reference = self._take()
         if reference is None:
-            self.reference_rms = 0.0
+            # Deliberately *not* zeroed. Between two sentences of one reply the
+            # speaker stops producing reference for a moment while the next is
+            # synthesised, and `speaking` stays true across that gap on purpose.
+            # Zeroing here drops the barge-in floor to nothing exactly there,
+            # which opens the gate at the one moment residual echo is loudest.
+            # `silence()` is what says the reply has actually ended.
             return frame
         self.reference_rms = float(np.sqrt(np.mean(np.square(reference))))
 

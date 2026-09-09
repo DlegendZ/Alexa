@@ -67,6 +67,10 @@ class Clip:
     speech_ms: int
     total_ms: int
     forced: bool = False
+    #: Whether any of this clip was recorded while Sunday was talking. Only
+    #: such a clip can hold Sunday's voice, and only such a clip may be thrown
+    #: away for sounding like it -- see the transcript check.
+    while_speaking: bool = False
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,11 @@ class Listener:
         #: and the question is longer than the silence that ends a clip.
         self._live_speech = 0
         self._preroll_samples = 0
+        #: Set if any part of the clip was recorded while Sunday was talking.
+        #: The transcript check is the last echo layer and the only one that
+        #: can throw away a whole sentence, so it may only look at clips that
+        #: could possibly hold an echo at all.
+        self._overlapped_speech = False
         #: Consecutive speech windows heard while Sunday is talking, or while
         #: the follow-up window is open. Both want a sustained burst rather
         #: than a frame: residual echo is quiet and choppy, and so is a room.
@@ -277,6 +286,7 @@ class Listener:
         self._live_speech = 0
         self._preroll_samples = 0
         self._burst = 0
+        self._overlapped_speech = self.speaking
         self._vad_buffer = np.zeros(0, dtype=np.float32)
         self._cooldown_samples = self._samples(self.cfg.wake.cooldown_ms)
         if self._vad is not None:
@@ -313,6 +323,8 @@ class Listener:
         """
         self._clip.append(block)
         self._clip_samples += block.size
+        if self.speaking:
+            self._overlapped_speech = True
 
         self._vad_buffer = np.concatenate([self._vad_buffer, block])
         threshold = self._threshold()
@@ -370,13 +382,18 @@ class Listener:
         audio = self._trim(audio)
         speech_ms = self._ms(self._speech_samples)
         total_ms = self._ms(audio.size)
+        overlapped = self._overlapped_speech
         self._reset()
         if speech_ms < self.cfg.audio.min_clip_ms:
             return VoiceEvent(kind="dropped", why=f"only {speech_ms} ms of speech")
         return VoiceEvent(
             kind="clip",
             clip=Clip(
-                audio=audio, speech_ms=speech_ms, total_ms=total_ms, forced=forced
+                audio=audio,
+                speech_ms=speech_ms,
+                total_ms=total_ms,
+                forced=forced,
+                while_speaking=overlapped,
             ),
         )
 
@@ -410,6 +427,7 @@ class Listener:
         self._preroll_samples = 0
         self._burst = 0
         self._follow_up = 0
+        self._overlapped_speech = False
         self._vad_buffer = np.zeros(0, dtype=np.float32)
         self._wake_buffer = np.zeros(0, dtype=np.float32)
         self._preroll.clear()

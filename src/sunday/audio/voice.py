@@ -281,8 +281,23 @@ class Ear:
             self._say(state="idle")
             return
 
-        # Layer 3. Whatever survived the canceller and the raised bar still
-        # has to not be something Sunday said a moment ago.
+        # Layer 3, and only for a clip that could possibly hold an echo.
+        #
+        # It used to run on every transcript against the last few things said,
+        # which reads as reasonable and is not: a reply always contains its
+        # question's subject, so asking about that subject again scores as an
+        # echo of the answer. Measured on real wording -- "what is the weather
+        # in Jakarta" against the reply to it scores 0.67, and the follow-up
+        # "and the humidity" scores 1.00, because every word of it is in the
+        # answer. Both were being thrown away.
+        #
+        # The spec says to compare against the sentence Kokoro is *currently
+        # speaking*. A clip recorded while nothing was playing cannot contain
+        # Sunday's voice, whatever it sounds like.
+        if not clip.while_speaking:
+            self._deliver(text)
+            return
+
         for sentence in reversed(self._spoken):
             if echo_check.is_echo(
                 text, sentence, cutoff=self.cfg.echo.transcript_similarity_cutoff
@@ -294,6 +309,10 @@ class Ear:
                 self._say(state="idle")
                 return
 
+        self._deliver(text)
+
+    def _deliver(self, text: str) -> None:
+        """Hand the transcript over. From here it is a string like any other."""
         self._emit({"type": "partial", "text": text, "final": True})
         if self._on_transcript is not None:
             self._on_transcript(text)

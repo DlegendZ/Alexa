@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–79 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–81 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1368,3 +1368,66 @@ twenty cores hot long enough to starve the audio callback.
 The general shape: a setting that is a correctness requirement rather than a preference
 cannot live at the call sites, because the call sites you do not own will not have it.
 It lives in one function, and everything goes through that function.
+
+## 80. The transcript check threw away the questions it was written to protect
+
+**Doc:** Desktop 03, layer 3 — "compare the fresh transcript against the sentence
+Kokoro is *currently speaking*, normalise both, take token overlap, and discard above
+0.6 similarity."
+**Code, as written:** compared every transcript against the last three sentences ever
+spoken, whether or not anything was playing.
+**Code, now:** only a clip that was recorded while Sunday was actually talking is
+checked. `Clip.while_speaking` is set by the listener if any frame of the clip arrived
+with `speaking` true.
+**Why:** the widened version reads as more thorough and is unusable, and the reason is
+structural rather than a matter of tuning.
+
+**A reply always contains its question's subject.** So the next question about that
+subject overlaps the answer, and layer 3 is an overlap test. Measured on the real
+wording from a live session, against the reply it had just given:
+
+| said next | similarity | verdict at 0.6 |
+| --- | --- | --- |
+| "what is the weather in Jakarta" | 0.67 | **rejected** |
+| "and the humidity" | 1.00 | **rejected** |
+| "is it going to rain in Jakarta" | 0.33 | passes |
+
+The similarity is asymmetric on purpose — it asks how much of what was *heard* was
+already being said, because the microphone catches part of a sentence more often than
+all of it. That property, which is right, is exactly what makes a short follow-up score
+1.00: every word of "and the humidity" is in the answer.
+
+No cutoff fixes this. At 0.6 the follow-ups die; raising it far enough to save "and the
+humidity" is raising it past 1.0. The check is sound and was being asked a question it
+cannot answer, which is *whether Sunday was speaking* — and that is known for free.
+
+What the user saw was three turns in a row answered with "ignored what sounded like my
+own voice coming back", having said something perfectly ordinary into a silent room.
+Note 72 added that line so a discarded clip would say why; here it correctly reported a
+decision that should never have been taken.
+
+The general shape, and it is worth keeping: **widening a check beyond its specification
+is not free even when it looks conservative.** The spec said *currently speaking* and
+meant it. Three sentences of history with no time bound and no speaking bound is a
+different test wearing the same name.
+
+## 81. The barge-in floor dropped to zero between two sentences of one reply
+
+**Doc:** silent — the gap between sentences is an implementation detail of the speaker.
+**Code:** `Aec.process` no longer zeroes `reference_rms` when it has no aligned
+reference. Only `silence()` does, and that is called when playback actually ends.
+**Why:** the barge-in gate requires the residual to clear `barge_in_ratio` of what is
+being played. `reference_rms` is how it knows what is being played, and it was being set
+to zero on any frame with no reference to align — which made the floor zero, and the
+gate wide open.
+
+That happens every time between two sentences of one reply. The speaker deliberately
+holds `speaking` true across that gap, because dropping it would lower the VAD bar in
+the middle of Sunday talking (which is why the flag is kept). But playback stops
+producing reference for the length of a synthesis, so for a tenth of a second the gate
+had no floor at all — at the one moment residual echo is loudest, because the room is
+still ringing from the sentence that just ended.
+
+The distinction the code was missing: *no reference right now* and *the reply is over*
+are different facts, and only the second should reset the floor. `silence()` is the one
+that means the second.

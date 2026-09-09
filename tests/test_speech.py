@@ -18,7 +18,9 @@ from sunday.audio import echo
 from sunday.audio.aec import FRAME, Aec, erle, to_capture_rate
 from sunday.audio.listener import Listener
 from sunday.audio.speaker import BLOCK, Speaker
-from tests.test_voice import FakeWake, LevelVad, LOUD, QUIET, drive, kinds
+from tests.test_voice import (
+    FakeWake, LevelVad, LOUD, QUIET, drive, kinds, utterance,
+)
 
 
 class FakeSpeech:
@@ -393,3 +395,66 @@ def test_nothing_playing_means_nothing_to_be_louder_than(cfg):
     listener.expect_follow_up()
     assert listener.reference_rms == 0.0
     assert "follow_up" in kinds(drive(listener, 20, LOUD))
+
+
+# -- the transcript check only looks where an echo could be ---------------
+
+
+def test_asking_about_the_same_thing_twice_is_not_an_echo():
+    """The bug that made it unusable, and no threshold could have fixed it.
+
+    A reply always contains its question's subject, so the *next* question
+    about that subject overlaps the answer. Measured on real wording: "what is
+    the weather in Jakarta" scores 0.67 against the reply to it, and the
+    follow-up "and the humidity" scores 1.00, because every word of it is in
+    the answer. Both were being thrown away, and the person was told their own
+    voice sounded like Sunday's.
+    """
+    reply = "The weather in Jakarta is 26.0 degrees Celsius with a clear sky, 77% humidity."
+    assert echo.similarity("what is the weather in Jakarta", reply) >= 0.6
+    assert echo.similarity("and the humidity", reply) >= 0.6
+
+
+def test_a_clip_recorded_in_silence_is_never_checked_for_echo(cfg):
+    """Which is what makes the case above harmless. The spec says to compare
+    against the sentence Kokoro is *currently speaking*; a clip recorded while
+    nothing was playing cannot hold Sunday's voice, whatever it sounds like."""
+    listener = Listener(cfg, wake=FakeWake(), vad=LevelVad())
+    events = utterance(listener, before=40, speech=30, after=60)
+    clip = [e for e in events if e.kind == "clip"][0].clip
+    assert clip.while_speaking is False
+
+
+def test_a_clip_that_overlapped_the_reply_is_marked(cfg):
+    """And the other half: an echo has to stay catchable."""
+    listener = Listener(cfg, wake=FakeWake(), vad=LevelVad())
+    drive(listener, 40, QUIET)
+    assert listener.phase == "recording"
+
+    listener.speaking = True  # Kokoro starts mid-clip
+    drive(listener, 30, LOUD)
+    listener.speaking = False
+    events = drive(listener, 60, QUIET)
+
+    clip = [e for e in events if e.kind == "clip"][0].clip
+    assert clip.while_speaking is True
+
+
+def test_the_barge_in_floor_survives_the_gap_between_sentences():
+    """`speaking` stays true between two sentences of one reply, but the
+    speaker stops producing reference while the next is synthesised. Zeroing
+    the floor there opens the gate at the one moment residual echo is loudest.
+    `silence()` is what says the reply has ended -- not a quiet moment in it."""
+    aec = Aec(delay_ms=0)
+    played = np.full(FRAME * 4, 0.3, dtype=np.float32)
+    aec.played(played, rate=16000)
+    for _ in range(4):
+        aec.process(np.zeros(FRAME, dtype=np.float32))
+    assert aec.reference_rms > 0.2
+
+    # The gap: nothing left to align against, but the reply is not over.
+    aec.process(np.zeros(FRAME, dtype=np.float32))
+    assert aec.reference_rms > 0.2
+
+    aec.silence()
+    assert aec.reference_rms == 0.0
