@@ -216,6 +216,13 @@ export class Orb {
 
     this._resize = () => this.resize();
     addEventListener('resize', this._resize);
+    /* A window resize is not the only thing that changes this box. The panel
+     * has a media query, the setup screen comes and goes, and compact mode
+     * swaps the whole layout -- all of which resize the canvas without the
+     * window moving. Watched rather than listened for, or the backing store
+     * quietly stops matching the element and the drawing is stretched. */
+    this._observer = new ResizeObserver(() => this.resize());
+    this._observer.observe(canvas);
     this.resize();
   }
 
@@ -226,6 +233,7 @@ export class Orb {
     removeEventListener('focus', this._onFocus);
     removeEventListener('blur', this._onFocus);
     this._motionQuery.removeEventListener('change', this._onMotion);
+    this._observer.disconnect();
   }
 
   resize() {
@@ -367,7 +375,21 @@ export class Orb {
     const still = this.reduced;
     const rgb = this._rgb.map(Math.round);
 
-    ctx.clearRect(0, 0, this.w, this.h);
+    /* Cleared in device pixels, not CSS ones.
+     *
+     * `canvas.width` is `round(w * dpr)`, and at a fractional dpr that rounds
+     * *up*: 190 CSS at 1.25 is 237.5 device pixels stored in a 238-wide
+     * buffer. Clearing 0..190 under the dpr transform reaches 237.5, so the
+     * last half-pixel column -- and the matching row -- is never cleared, and
+     * whatever was drawn there on some early frame stays for the life of the
+     * window. It reads as a hairline down the right of the orb and another
+     * under it, which is exactly what it is: a leftover, one pixel wide,
+     * perfectly still while everything beside it moves.
+     */
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.restore();
 
     let target = look.bright;
     let radius = 1;

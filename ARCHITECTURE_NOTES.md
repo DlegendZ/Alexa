@@ -2709,3 +2709,61 @@ app is in whenever it is waiting for you.
 Below 96 pixels it still drops to fourteen points drawn heavier. That is not drift: a web
 whose links are thinner than a pixel is a smudge, and an icon set exists precisely so that a
 16-pixel version can be a different drawing of the same thing.
+
+## 131. The hairline beside the orb was half a device pixel the clear never reached
+
+**Reported:** a line next to the orb that looks like a border -- "but i think maybe there is a
+bug in the component". It was.
+
+Two of them, actually: one pixel wide, about fifty long, one down the right of the orb and one
+under it. They survived the border being taken off the panel (note 118) and the window edge
+being painted to match the background (note 129), because they were neither.
+
+Measured rather than guessed, by capturing the running window twice a second apart and
+diffing: the orb's body changed 7138 pixels between the two frames and the lines changed
+**zero**. A still line beside a moving drawing is not being drawn; it is being *left*.
+
+`resize()` sets `canvas.width = Math.round(w * dpr)` and then scales the context by `dpr`.
+At a fractional device pixel ratio those two disagree: 190 CSS pixels at 1.25 is 237.5 device
+pixels, stored in a 238-wide buffer. `clearRect(0, 0, this.w, this.h)` under the transform
+reaches 237.5 -- so the last half-pixel column, and the matching row, is never cleared, and
+whatever was drawn there on some early frame stays for the life of the window.
+
+The clear happens in device space now, with the transform reset, so it covers the buffer
+rather than the box. A `ResizeObserver` went in beside it: a window resize is not the only
+thing that changes this element, and the panel's media query, the setup screen and compact
+mode all resize it without the window moving.
+
+**The general form, and it is not about canvases.** Two numbers describing one thing, rounded
+by different rules -- `round(w * dpr)` for the buffer and `w * dpr` for the transform -- differ
+by less than a pixel, and less than a pixel is exactly the size of a fault nobody looks for.
+The evidence that separated it from four plausible CSS causes was that it did not move.
+
+## 132. A running app holds its own executable, so `tauri dev` stops rebuilding the shell
+
+**Reported, twice:** the title bar is still doubled and the icon has not changed.
+
+Both were fixed and neither had reached the machine. `npm run tauri dev` watches two things
+and treats them very differently: the page is served by Vite and hot-reloads, while the shell
+is a compiled binary that has to be replaced on disk. Windows will not let you replace a
+running executable, so the moment the app is up, `cargo` fails with
+
+    error: failed to remove file `...\target\debug\sunday.exe`
+    Caused by: Access is denied. (os error 5)
+
+and the session carries on with the *old* shell under the *new* page. That is exactly the
+reported symptom: the page draws its own title bar, the stale binary still has
+`decorations: true` compiled in from `tauri.conf.json`, and the window has two. The icon is
+the same story -- it is a resource embedded in the exe at build time.
+
+So the fix for both was "stop it and start it again", and neither is a code change. What *is*
+worth keeping is the diagnosis, because the failure is silent from the outside and looks
+exactly like a change that did not work:
+
+- `tauri.conf.json` is read at **build** time. Nothing in it can reach a running window.
+- The icon is compiled into the executable. Same.
+- A frontend change reaches the window instantly, which is what makes the two halves look
+  like one thing until they disagree.
+
+`main.rs` asks for `set_decorations(false)` at startup anyway (note 129), which makes the
+config's staleness survivable rather than fatal -- but only from the next build onward.
