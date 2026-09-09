@@ -159,8 +159,9 @@
     background: var(--faint);
     transform: translateY(-2px);
   }
+  /* On this machine is white; only what leaves it gets a colour. */
   .note.local .dot {
-    background: var(--local);
+    background: var(--text);
   }
   .note.external .dot {
     background: var(--external);

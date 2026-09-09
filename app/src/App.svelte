@@ -238,7 +238,7 @@
               />
               {#if session.busy}
                 <button class="icon stop" type="button" title="Stop" aria-label="stop" onclick={() => session.cancel()}>
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="5.5" width="13" height="13" rx="2.5" /></svg>
                 </button>
               {:else}
                 <button
@@ -429,8 +429,10 @@
     padding: 6px 8px 6px 10px;
     transition: border-color 140ms ease;
   }
+  /* The focus edge is the light the box comes up in, and it is white for the
+     same reason the orb is: colour in this window means a tool is running. */
   .field:focus-within {
-    border-color: color-mix(in srgb, var(--local) 55%, var(--line));
+    border-color: color-mix(in srgb, var(--text) 45%, var(--line));
   }
   .field input {
     flex: 1;
@@ -468,12 +470,12 @@
     stroke-linejoin: round;
   }
   .icon.send {
-    background: var(--local);
-    color: #1d1408;
+    background: var(--text);
+    color: var(--bg);
   }
   .icon.send:hover:not(:disabled) {
-    background: #e0855f;
-    color: #1d1408;
+    background: #ffffff;
+    color: var(--bg);
   }
   .icon.send:disabled {
     background: var(--raised);
@@ -483,7 +485,11 @@
     background: var(--stop-soft);
     color: var(--stop);
   }
+  /* The square is the whole button, so it is drawn at a size you can see:
+     a 10px glyph in a 46px circle reads as a dot. */
   .icon.stop svg {
+    width: 26px;
+    height: 26px;
     fill: currentColor;
     stroke: none;
   }

@@ -29,6 +29,22 @@ export async function discover() {
   return { port: Number(port), token };
 }
 
+/** How many questions the backstage keeps. Three is enough to look back at
+ *  what the last thing did and small enough that the panel never becomes a
+ *  log -- which is the failure the per-turn clearing was avoiding. */
+const TURNS_KEPT = 3;
+
+/** Drop everything before the start of the oldest turn worth keeping. A turn
+ *  starts at the `wake` step, which is the sidecar's own marker for it. */
+function trimmed(lines) {
+  const starts = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].step === 'wake') starts.push(i);
+  }
+  if (starts.length <= TURNS_KEPT) return lines;
+  return lines.slice(starts[starts.length - TURNS_KEPT]);
+}
+
 let nextId = 0;
 
 export class Session {
@@ -62,7 +78,11 @@ export class Session {
    *  a redaction appears where it happened rather than in a side panel that
    *  nobody is looking at when it matters. */
   entries = $state([]);
-  /** Every trace line of the current turn. Cleared when the next one starts. */
+  /** Backstage lines, for the last few turns rather than only the one in
+   *  flight. It used to be cleared by `ask`, which had two faults: a spoken
+   *  turn never went through `ask` at all, so voice quietly accumulated the
+   *  whole session, and a panel that keeps only the turn in flight cannot
+   *  answer "what did it do about the thing I asked before this one". */
   trace = $state([]);
   /** The splitter's second sink, shown so the sentence boundaries are visible
    *  without a synthesiser attached. */
@@ -148,10 +168,6 @@ export class Session {
   ask(text) {
     const said = text.trim();
     if (!said || !this.connected) return false;
-    /* Cleared per turn rather than accumulated: the backstage panel answers
-     * "what is happening now", and a thousand lines of history answers a
-     * different question badly. */
-    this.trace = [];
     this.sentences = [];
     this.busy = true;
     return this.send({ type: 'text_input', text: said });
@@ -354,7 +370,7 @@ export class Session {
       }
 
       case 'trace':
-        this.trace = [...this.trace, message];
+        this.trace = trimmed([...this.trace, message]);
         break;
 
       case 'notice':

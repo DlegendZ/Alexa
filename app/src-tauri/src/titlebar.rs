@@ -24,10 +24,12 @@ use windows::Win32::Foundation::{COLORREF, HWND};
 #[cfg(windows)]
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
 
-/// Slightly lighter than `--bg` in the stylesheet, so the window still has an
-/// edge against a dark desktop instead of bleeding into it. Two places for one
-/// colour is a thing that goes stale, so if the palette moves, this moves.
-const EDGE: (u8, u8, u8) = (0x40, 0x3f, 0x3b);
+/// `--bg` from the stylesheet, byte for byte. It used to be a few shades
+/// lighter so the window had an edge against a dark desktop; that edge reads,
+/// from inside, as a hairline drawn beside the orb, and the orb spent a whole
+/// milestone losing its own. Two places for one colour is a thing that goes
+/// stale, so if the palette moves, this moves.
+const EDGE: (u8, u8, u8) = (0x26, 0x26, 0x24);
 
 #[cfg(windows)]
 fn colorref((r, g, b): (u8, u8, u8)) -> COLORREF {

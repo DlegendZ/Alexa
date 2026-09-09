@@ -32,11 +32,12 @@ HERE = Path(__file__).resolve().parent
 #: be in one of those states, so it is the resting one.
 WHITE = (255, 252, 247)
 
-#: How far apart two points can be and still be joined. Wider than the orb's
-#: own 0.62, and deliberately: the orb turns, so a chord that is hidden this
-#: frame arrives in the next one. A still picture has one frame, and at 0.62
-#: the projection reads as a ring of dots with nothing between them.
-LINK = 0.82
+#: The orb's own numbers, so the icon and the thing it sits above are one
+#: object. Thirty-four points and a 0.92 threshold is exactly `listening`,
+#: which is the state the app is in whenever it is waiting for you -- the
+#: right thing for a picture of it to be doing.
+NODES = 34
+LINK = 0.92
 #: Held at an angle where the lattice reads as a sphere rather than as a ring.
 YAW = 0.9
 ROLL = 0.45
@@ -87,8 +88,12 @@ def light(size: int) -> list[float]:
     # small sizes are the same object with fewer points, drawn heavier and
     # brighter -- a lit constellation rather than a diagram of one. This is
     # what an icon set is for; a 16-pixel copy of the 512 is a smudge.
+    #
+    # The large sizes are the orb exactly: same lattice, same threshold, same
+    # white. An icon that merely resembles the thing it launches is an icon
+    # that drifts away from it the first time either is touched.
     small = size < 96
-    count = 14 if small else 26
+    count = 14 if small else NODES
     points = lattice(count)
     centre = (size - 1) / 2
     radius = size * (0.30 if small else 0.33)

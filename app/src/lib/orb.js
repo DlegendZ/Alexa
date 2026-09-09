@@ -18,16 +18,21 @@
  * a web with most of its lines gone. And a mesh has direction, so speaking
  * can be a wave that travels through it rather than a ring that leaves it.
  *
- * White at rest, on purpose. Colour is now reserved for the three facts that
- * are worth interrupting somebody for: amber while a tool is running on this
- * machine, teal while one is reaching off it, red for a refusal. A white orb
- * that turns teal is a stronger signal than an amber one that turns teal.
+ * White, except for the two facts worth interrupting somebody for: teal while
+ * something is reaching off this machine, red for a refusal. Everything else
+ * the assistant does is white, which is what makes those two mean something.
  */
 
-/* Amber is a tool running on this machine, teal is one leaving it, red is a
- * refusal. Everything else -- thinking, listening, speaking, idle -- is
- * white, which is what makes the three that are not white mean something. */
-const AMBER = [217, 119, 87];
+/* Teal is something leaving this machine and red is a refusal. Those two are
+ * the whole palette now: everything the assistant does *on* this machine --
+ * thinking, listening, speaking, running a local tool -- is white.
+ *
+ * Amber used to mean "working on your machine" and it is gone. Two colours
+ * carry more than three did: the question the orb has to answer without being
+ * asked is "is anything leaving?", and a white orb that turns teal answers it
+ * from across a room in a way an amber one turning teal never did. Local work
+ * is told apart from thinking by density and speed instead, which are two
+ * channels the web has and a sphere did not. */
 const TEAL = [108, 171, 156];
 const RED = [204, 123, 114];
 const WHITE = [255, 252, 247];
@@ -55,17 +60,17 @@ const LOOKS = {
   listening: { rgb: WHITE, bright: 0.95, link: 0.92 },
   transcribing: { rgb: WHITE, bright: 0.7, link: 1.05 },
   thinking: { rgb: WHITE, bright: 0.85, link: 0.86 },
-  'tool.local': { rgb: AMBER, bright: 0.92, link: 0.86 },
+  'tool.local': { rgb: WHITE, bright: 1, link: 0.98 },
   'tool.external': { rgb: TEAL, bright: 1, link: 0.82 },
   blocked: { rgb: RED, bright: 1, link: 0.74 },
   speaking: { rgb: WHITE, bright: 0.95, link: 0.9 },
   error: { rgb: RED, bright: 0.75, link: 0.62 },
 };
 
-/** States that are an event rather than a place. They flash over whatever is
+/** States that are an event rather than a place. They pulse over whatever is
  *  happening and the orb stays where it was afterwards -- `wake` arrives while
  *  the models are still loading, so settling the orb on it would leave the
- *  window holding a flash for as long as that takes. */
+ *  window holding an acknowledgement for as long as that takes. */
 const FLASHES = {
   wake: WHITE,
 };
@@ -75,8 +80,16 @@ const FLASHES = {
  *  whatever the last one was, which is worse than not moving. */
 export const STATES = [...Object.keys(LOOKS), ...Object.keys(FLASHES)];
 
-/** The wake flash: one sharp expansion and out. */
-const WAKE_MS = 180;
+/** The wake pulse.
+ *
+ *  It used to be a ring expanding out of the orb, which is the one shape this
+ *  drawing had already decided against everywhere else -- a splash reads as a
+ *  notification badge, and it was the only thing in here that left the body of
+ *  the orb. The web does it from the inside now: every link that could exist
+ *  snaps in, the whole thing flares, and it settles back. Same 'I heard you',
+ *  no splash, and it uses the channel the mesh has rather than borrowing one.
+ */
+const WAKE_MS = 320;
 /** How long `blocked` stutters before the state underneath shows again. */
 const BLOCKED_MS = 900;
 
@@ -245,9 +258,22 @@ export class Orb {
     this.state = value;
   }
 
-  /** The wake flash. Deliberately not a state: it overlays whatever follows. */
+  /** The wake pulse. Deliberately not a state: it overlays whatever follows. */
   flashWake() {
     this._wakeAt = this._t;
+  }
+
+  /** 1 the instant the phrase lands, 0 once the pulse is over.
+   *
+   *  Squared rather than linear so it drops away fast: the point of the pulse
+   *  is the leading edge, and a slow tail turns an acknowledgement into a
+   *  second animation competing with whatever state arrives next.
+   */
+  wakePulse() {
+    const age = this._t - this._wakeAt;
+    if (age < 0 || age > WAKE_MS / 1000) return 0;
+    const left = 1 - age / (WAKE_MS / 1000);
+    return left * left;
   }
 
   setLevels({ mic, out }) {
@@ -407,7 +433,10 @@ export class Orb {
     this._bright = ease(this._bright, target, 9, dt);
     this._radius = ease(this._radius, radius, 11, dt);
     const r = base * this._radius;
-    const glow = Math.max(0.05, this._bright);
+    /* The pulse rides on top of whatever the state is doing rather than
+     * replacing it, which is the whole reason it is not a state. */
+    const wake = still ? 0 : this.wakePulse();
+    const glow = Math.min(1, Math.max(0.05, this._bright) + wake * 0.45);
 
     /* The bloom. There is no outline anywhere in here for the same reason
      * there never was: an edge is what makes a drawing read as a widget. The
@@ -419,12 +448,10 @@ export class Orb {
     ctx.fillStyle = bloom;
     ctx.fillRect(0, 0, this.w, this.h);
 
-    this.project(cx, cy, r, still ? 0 : jitter, glow, state);
-    this.drawLinks(rgb, glow);
+    this.project(cx, cy, r, still ? 0 : jitter, glow, state, wake);
+    this.drawLinks(rgb, glow, wake);
     this.drawNodes(rgb, glow);
     this.drawCore(cx, cy, r, rgb, glow);
-
-    this.drawWakeFlash(cx, cy, base);
   }
 
   /** Rotate the lattice, jitter it, and put every node on the screen.
@@ -433,7 +460,7 @@ export class Orb {
    *  horizontal bands, which reads as a carousel; a second, slower roll is
    *  what makes it read as a sphere being turned over.
    */
-  project(cx, cy, r, jitter, glow, state) {
+  project(cx, cy, r, jitter, glow, state, wake) {
     const yaw = this._spin;
     const roll = this._roll;
     const cosY = Math.cos(yaw);
@@ -464,7 +491,7 @@ export class Orb {
        * a perspective divide on a sphere this small buys nothing you can
        * see and costs a branch per node for the points behind the camera. */
       const near = (z2 + 1) / 2;
-      p.size = 0.9 + near * 2.1;
+      p.size = (0.9 + near * 2.1) * (1 + wake * 0.7);
       p.alpha = (0.18 + near * 0.62) * glow * this.nodeWave(p, state);
     }
   }
@@ -489,9 +516,11 @@ export class Orb {
    *  web knits itself tight, `idle` -- which now means the ear is shut --
    *  drops it far enough that most of the lines go and what is left drifts.
    */
-  drawLinks(rgb, glow) {
+  drawLinks(rgb, glow, wake = 0) {
     const ctx = this.ctx;
-    const limit = this._link;
+    /* The wake pulse widens the threshold rather than drawing anything new:
+     * for a third of a second every link the lattice could have exists. */
+    const limit = this._link + wake * 0.55;
     if (limit <= 0.01) return;
     const nodes = this._nodes;
     ctx.lineWidth = 1;
@@ -546,22 +575,6 @@ export class Orb {
     ctx.fillStyle = core;
     ctx.beginPath();
     ctx.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawWakeFlash(cx, cy, base) {
-    const age = this._t - this._wakeAt;
-    if (age < 0 || age > WAKE_MS / 1000) return;
-    const phase = age / (WAKE_MS / 1000);
-    const ctx = this.ctx;
-    const radius = base * (1 + phase * 1.4);
-    const ring = ctx.createRadialGradient(cx, cy, radius * 0.8, cx, cy, radius);
-    ring.addColorStop(0, rgba(WHITE, 0));
-    ring.addColorStop(0.7, rgba(WHITE, (1 - phase) * 0.55));
-    ring.addColorStop(1, rgba(WHITE, 0));
-    ctx.fillStyle = ring;
-    ctx.beginPath();
-    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
     ctx.fill();
   }
 }

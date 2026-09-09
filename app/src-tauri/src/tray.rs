@@ -14,13 +14,14 @@ const SIZE: u32 = 32;
 /// first time a state was added.
 fn tint(state: &str) -> [u8; 3] {
     match state {
-        // Amber is a tool running on this machine, teal is one leaving it,
-        // red is a refusal. Those three are the whole reason the icon is
-        // tinted; everything else is the white the orb is at rest.
-        "tool.local" => [217, 119, 87],
+        // Teal is something leaving this machine and red is a refusal. Those
+        // two are the whole reason the icon is tinted; everything else is the
+        // white the orb is, including a tool running here.
         "tool.external" => [108, 171, 156],
         "blocked" | "error" => [204, 123, 114],
-        "listening" | "transcribing" | "wake" | "thinking" | "speaking" => [255, 252, 247],
+        "listening" | "transcribing" | "wake" | "thinking" | "speaking" | "tool.local" => {
+            [255, 252, 247]
+        }
         // `idle` is the closed microphone now, and it is the only thing that
         // means that -- with the ear open the resting state is `listening`.
         _ => [140, 137, 130],

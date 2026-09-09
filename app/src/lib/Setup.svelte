@@ -137,7 +137,7 @@
   }
   .fill {
     height: 100%;
-    background: var(--local);
+    background: var(--text);
     transition: width 120ms linear;
   }
   .what {

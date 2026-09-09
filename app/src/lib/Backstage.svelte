@@ -30,13 +30,24 @@
 
   /* Consecutive lines of the same step are one act. Consecutive, not grouped
    * by name: the agent talks, calls a tool, talks again, and that really is
-   * three acts in order rather than two acts shuffled together. */
+   * three acts in order rather than two acts shuffled together.
+   *
+   * And a `wake` line opens a turn, so it opens a block. The panel keeps the
+   * last few questions rather than only the one in flight -- which is what
+   * makes the break matter, because without it 5/5 filing runs straight into
+   * the next 0/5 and there is nothing saying where one question ended. */
   const acts = $derived.by(() => {
     const out = [];
     for (const line of trace) {
       const last = out[out.length - 1];
-      if (last && last.step === line.step) last.lines.push(line);
-      else out.push({ step: line.step, heading: line.heading || line.step, lines: [line] });
+      if (last && last.step === line.step && line.step !== 'wake') last.lines.push(line);
+      else
+        out.push({
+          step: line.step,
+          heading: line.heading || line.step,
+          opens: line.step === 'wake',
+          lines: [line],
+        });
     }
     return out;
   });
@@ -45,11 +56,11 @@
 
   /* What each line is about, in colour.
    *
-   * Only the three that are worth finding at a glance carry one, and they are
-   * the same three the orb uses: amber is a tool running on this machine,
-   * teal is one reaching off it, red is a refusal or a no. Memory keeps its
-   * own blue because it is the half of a turn you cannot otherwise watch
-   * happen, which is the reason this panel exists at all.
+   * Only what is worth finding at a glance carries one, and it is the same
+   * scheme the orb uses: a tool running on this machine is white, one
+   * reaching off it is teal, a refusal or a no is red. Memory keeps its own
+   * blue because it is the half of a turn you cannot otherwise watch happen,
+   * which is the reason this panel exists at all.
    */
   function tone(line) {
     const detail = line.detail || {};
@@ -83,7 +94,7 @@
 
   <div class="scroller" bind:this={box}>
     {#each acts as act, i (i)}
-      <section class="act">
+      <section class="act" class:turn={act.opens && i > 0}>
         <h3>{act.heading}</h3>
         <ol>
           {#each act.lines as line, j (j)}
@@ -168,7 +179,18 @@
      rather than twenty. Inside an act the lines are close, because they are
      one thing being described. */
   .act + .act {
-    margin-top: 22px;
+    margin-top: 26px;
+  }
+  /* And a turn is not an act. A new question starting where the last one's
+     filing ended -- 5/5 straight into 0/5 -- is the one boundary the panel
+     was not drawing, and it is the boundary that says which question a line
+     belongs to. Marked in the markup rather than by counting children: which
+     block is first is a fact the component has, and positional CSS is wrong
+     the first time something else is rendered above it. */
+  .turn {
+    margin-top: 30px;
+    padding-top: 26px;
+    border-top: 1px solid var(--line);
   }
   h3 {
     margin: 0 0 8px;
@@ -194,7 +216,7 @@
     border-left-color: var(--memory);
   }
   li.local {
-    border-left-color: var(--local);
+    border-left-color: var(--text);
   }
   li.external {
     border-left-color: var(--external);

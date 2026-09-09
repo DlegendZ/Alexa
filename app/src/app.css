@@ -5,10 +5,12 @@
  * top of it look like a diagnostic. These greys have red in them, so amber
  * belongs against them instead of shouting.
  *
- * Three of these colours are load-bearing and not decoration. Amber is work
- * happening on this machine, teal is something leaving it, red is a refusal.
- * Nothing else in the program is ever teal. They have been warmed to sit in
- * this palette, and the meanings are untouched.
+ * Two of these colours are load-bearing and not decoration: teal is something
+ * leaving this machine, red is a refusal. Nothing else in the program is ever
+ * teal. There used to be a third -- amber, for work happening here -- and
+ * dropping it made the other two louder rather than quieter: everything the
+ * assistant does on your own machine is white now, so any hue at all means
+ * one of the two things you would want to be interrupted for.
  */
 :root {
   --bg: #262624;
@@ -21,10 +23,7 @@
   --dim: #a8a49b;
   --faint: #7c786f;
 
-  --local: #d97757; /* on your machine */
-  --local-soft: #4a3226;
   --external: #6cab9c; /* leaves your machine */
-  --external-soft: #2a3f3a;
   --stop: #cc7b72;
   --stop-soft: #472f2c;
   --memory: #8fa4c9; /* the half you cannot otherwise watch happen */
@@ -102,20 +101,22 @@ button:disabled {
 }
 button:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--local);
+  outline: 2px solid var(--text);
   outline-offset: 2px;
 }
 
-/* The one button that is an action rather than a toggle. */
+/* The one button that is an action rather than a toggle. White, like the
+   send button and for the same reason: colour in this window is reserved for
+   what is leaving the machine and what was refused. */
 button.primary {
-  background: var(--local);
-  color: #1d1408;
+  background: var(--text);
+  color: var(--bg);
   font-weight: 600;
   border-color: transparent;
 }
 button.primary:hover:not(:disabled) {
-  background: #e0855f;
-  color: #1d1408;
+  background: #ffffff;
+  color: var(--bg);
 }
 
 /* Every state still changes colour when motion is off. What stops is the

@@ -11,7 +11,7 @@
     --line: #24272e;
     --text: #e7e9ee;
     --dim: #878d9a;
-    --local: #d99b3d;   /* on your machine */
+    --here: #e7e9ee;    /* on your machine: white, like the orb */
     --external: #3dbfb0; /* leaves your machine */
     --stop: #d9534f;
     --memory: #6f8fd9;  /* the half you cannot otherwise watch happen */
@@ -38,12 +38,11 @@
   .orb { width: 40px; height: 40px; border-radius: 50%; flex: none;
          background: radial-gradient(circle at 35% 35%, #4a4f5a, #23262d 70%);
          box-shadow: 0 0 0 0 transparent; transition: box-shadow .25s, background .25s; }
-  /* Colour means a tool is running: amber on this machine, teal off it, red
-     for a refusal. Thinking and speaking are white, like the orb. */
+  /* Two colours, and they are the two worth interrupting somebody for: teal
+     is something leaving this machine, red is a refusal. Everything else --
+     thinking, speaking, a tool running here -- is white, like the orb. */
+  .orb[data-state="thinking"], .orb[data-state="speaking"],
   .orb[data-state="tool.local"] {
-    background: radial-gradient(circle at 35% 35%, var(--local), #6b4a15 70%);
-    box-shadow: 0 0 18px -2px var(--local); }
-  .orb[data-state="thinking"], .orb[data-state="speaking"] {
     background: radial-gradient(circle at 35% 35%, #fffcf7, #8d8a83 70%);
     box-shadow: 0 0 18px -2px #fffcf7; }
   .orb[data-state="tool.external"] {
@@ -70,7 +69,7 @@
   .said { white-space: pre-wrap; }
   .note { font-size: 13px; color: var(--dim); border-left: 2px solid var(--line);
           padding-left: 10px; }
-  .note.local { border-color: var(--local); }
+  .note.local { border-color: var(--here); }
   .note.external { border-color: var(--external); }
   .note.stop { border-color: var(--stop); color: #e5a3a1; }
 
@@ -80,7 +79,7 @@
     background: #1b1e24; color: var(--text); padding: 9px 12px;
   }
   input { flex: 1; min-width: 0; }
-  input:focus-visible, button:focus-visible { outline: 2px solid var(--local); outline-offset: 1px; }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--here); outline-offset: 1px; }
   button { cursor: pointer; }
   button:hover:not(:disabled) { border-color: #3a3f49; }
   button:disabled { opacity: .45; cursor: default; }
@@ -89,7 +88,7 @@
   .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
   #sentences { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px;
                font-size: 13px; color: var(--dim); }
-  #sentences li { border-left: 2px solid var(--local); padding-left: 10px; }
+  #sentences li { border-left: 2px solid var(--here); padding-left: 10px; }
 
   /* Backstage: one line per step, so "did it read long-term memory?" is a
      thing you can see rather than infer from an empty answer. */
@@ -102,7 +101,7 @@
                     letter-spacing: .07em; }
   #backstage li[data-step="memory_read"], #backstage li[data-step="memory_write"] {
     border-color: var(--memory); }
-  #backstage li[data-step="tools"] { border-color: var(--local); }
+  #backstage li[data-step="tools"] { border-color: var(--here); }
   #backstage li[data-step="done"] { border-color: #3a3f49; color: #b9bfcc; }
   .traceoff { opacity: .5; }
   code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }

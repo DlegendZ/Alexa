@@ -298,10 +298,18 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // The window has no frame, so the only thing Windows still
-            // draws around it is the border. Painted here, or a dark window
-            // has no edge at all against a dark desktop.
+            // The frame is off in `tauri.conf.json`, and said again here.
+            // Not belt and braces for its own sake: the config is baked into
+            // the binary at build time, so an exe built before the title bar
+            // moved into the page comes up with both -- the system's caption
+            // strip above the one the page draws. Asking at runtime costs
+            // nothing and cannot be stale.
+            //
+            // The border is the one piece of frame left, and Windows still
+            // draws it; it is painted to match, or the window has a hairline
+            // around it that reads from inside as an edge beside the orb.
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
                 if let Ok(handle) = window.hwnd() {
                     titlebar::match_the_app(handle.0 as isize);
                 }
