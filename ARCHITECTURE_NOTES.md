@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–85 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–86 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1554,3 +1554,25 @@ variant.
 
 The rule, stated so it generalises: **when config chooses between files, the test iterates
 the choices.** A default is not a sample.
+
+## 86. The follow-up window is thirty seconds, not eight
+
+**Doc:** Desktop 02 as revised by note 70 — the window exists, at `follow_up_ms`.
+**Code:** `[wake] follow_up_ms = 30000`.
+**Why:** eight was the wrong side of its own trade, and the reasoning behind it was
+subtly wrong rather than merely short. Eight seconds is long enough to ask a follow-up
+you had *already decided on* — but asking a follow-up means reading or hearing the
+answer first, and the window was expiring during the reading. The thing it was sized
+against was not the thing that happens.
+
+What it costs, stated rather than discovered later: for thirty seconds after every reply,
+sustained speech in the room opens a clip with no wake word. That is a real widening and
+it is the point of the feature. The guards are unchanged and they are what keeps it
+cheap — `barge_in_ms` of continuous speech to open a clip at all, `min_clip_ms` of speech
+to keep it, `lead_in_ms` to abandon it — so a passing conversation costs a dropped clip
+and a notice, not a turn. `0` turns the window off and every question needs the phrase.
+
+The test that came with it is about the rule rather than the number: drive silence to
+just inside the configured window and just past it, and check the door is open for one
+and shut for the other. Changing a duration is only safe if the duration means what it
+says.

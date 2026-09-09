@@ -16,7 +16,7 @@ import pytest
 
 from sunday.audio import echo
 from sunday.audio.aec import FRAME, Aec, erle, to_capture_rate
-from sunday.audio.listener import Listener
+from sunday.audio.listener import FRAME_MS, Listener
 from sunday.audio.speaker import BLOCK, Speaker
 from tests.test_voice import (
     FakeWake, LevelVad, LOUD, QUIET, drive, kinds, utterance,
@@ -458,3 +458,24 @@ def test_the_barge_in_floor_survives_the_gap_between_sentences():
 
     aec.silence()
     assert aec.reference_rms == 0.0
+
+
+def test_the_window_lasts_as_long_as_it_says(cfg):
+    """It was eight seconds and is now thirty, which is only a safe change if
+    the number means what it claims. Drive silence to just inside the window,
+    then just past it, and check the door is open for one and shut for the
+    other."""
+    cfg.wake.follow_up_ms = 1000
+    frames_inside = round(cfg.wake.follow_up_ms / FRAME_MS) - 5
+    frames_past = round(cfg.wake.follow_up_ms / FRAME_MS) + 5
+
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.expect_follow_up()
+    drive(listener, frames_inside, QUIET)
+    assert "follow_up" in kinds(drive(listener, 20, LOUD))
+
+    listener = Listener(cfg, wake=FakeWake(at=9999), vad=LevelVad())
+    listener.expect_follow_up()
+    drive(listener, frames_past, QUIET)
+    assert "follow_up" not in kinds(drive(listener, 20, LOUD))
+    assert listener.phase == "sleeping"

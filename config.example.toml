@@ -48,7 +48,10 @@ threshold   = 0.3
 cooldown_ms = 1500
 # After a reply, speech alone opens the next question for this long, so a
 # conversation is a conversation rather than a sequence of summonings. 0 = off.
-follow_up_ms = 8000
+# The cost: for this long after every reply, speech in the room opens a clip
+# without the phrase. The clip guards still apply, so the cost is a dropped
+# clip rather than a turn.
+follow_up_ms = 30000
 
 [tts]
 enabled  = true

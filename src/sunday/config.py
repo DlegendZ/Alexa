@@ -164,10 +164,19 @@ class Wake:
     #: conversation rather than a sequence of summonings. Say the phrase once
     #: and the follow-up questions need only be spoken.
     #:
-    #: Eight seconds is long enough to think of the next thing and short enough
-    #: that a room does not spend its evening being listened to. Zero turns it
-    #: off and every turn needs the phrase again.
-    follow_up_ms: int = 8000
+    #: Thirty seconds. It was eight, which is long enough to ask the next
+    #: thing you had already decided on and short enough that a room is not
+    #: listened to all evening -- and eight turned out to be the wrong side of
+    #: that trade in use. Asking a follow-up means reading the answer first,
+    #: and the window was expiring during the reading.
+    #:
+    #: What it costs is stated rather than hidden: for thirty seconds after
+    #: every reply, sustained speech in the room opens a clip without the wake
+    #: word. The guards still apply -- `barge_in_ms` of speech to open one,
+    #: `min_clip_ms` of speech to keep it, `lead_in_ms` to abandon it -- so
+    #: what a passing conversation costs is a dropped clip and a notice, not a
+    #: turn. Zero turns the window off and every question needs the phrase.
+    follow_up_ms: int = 30000
 
 
 @dataclass
