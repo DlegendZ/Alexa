@@ -58,9 +58,13 @@ That is the terminal client. It stays alive for the whole build — it is the
 fastest way to test the core without an app in the way. `.venv\Scripts\python.exe
 -m sunday.main` does the same thing if you prefer the module form.
 
-Add `--voice` to open the microphone as well. Say "alexa" -- its own name, and `[assistant] name` changes both -- then ask; it
-answers out loud, and for eight seconds afterwards you can just keep talking
-without the wake word. Talking over it stops it.
+Add `--voice` to open the microphone as well. Say **"alexa"**, then ask. It
+answers out loud, and for thirty seconds afterwards you can keep talking without
+the wake word at all. Talking over it stops it — while it is speaking, and while
+it is still thinking.
+
+The phrase is its own name: `[assistant] name` and `[wake] model` are meant to
+agree, and `alexa` is one of the three openWakeWord ships pretrained.
 
 ```powershell
 .venv\Scripts\sunday.exe --voice
@@ -113,26 +117,35 @@ rather than failing.
 | `src/sunday/memory/` | RAM session store, Chroma store, window budget |
 | `src/sunday/tools/` | weather, asset prices, files, `ask_external` |
 | `src/sunday/stream.py` | the sentence splitter and the two sinks |
+| `src/sunday/fastpaths.py` | the three patterns answered in code, before the model |
+| `src/sunday/trace.py` | the backstage narration, one line per step |
+| `src/sunday/audio/` | wake word, VAD, transcription, synthesis, echo |
+| `src/sunday/audio/listener.py` | every decision voice makes, with no hardware in it |
+| `src/sunday/audio/check.py` | measures your microphone and room against your own voice |
 | `src/sunday/server.py` | the sidecar's WebSocket protocol |
 | `web/debug.html` | a plain page that drives a whole turn |
 
 ## Build progress
 
-| # | Milestone | State |
-| --- | --- | --- |
-| 1 | Single agent, text only | done |
-| 2 | File tools + sandbox | done |
-| 3 | Guardrail | done |
-| 4 | The airlock + web | done |
-| 5 | Memory | done |
-| 6 | Streaming | done |
-| 7 | Voice in | not started |
-| 8 | Voice out + echo | not started |
-| 9 | Barge-in | cancellation done, audio side not started |
-| 10 | The socket | done |
-| 11 | Tauri shell + orb | not started |
-| 12 | Windows integration | not started |
-| 13 | Calendar + mail | not started |
+**Milestones 1 to 10 of 13 are running.** Everything below the line is the
+desktop app; the assistant itself is complete and usable from the terminal or
+over the socket, by typing or out loud.
+
+| # | Milestone | State | What it means |
+| --- | --- | --- | --- |
+| 1 | Single agent, text only | done | One agent answers in the terminal with weather and prices |
+| 2 | File tools + sandbox | done | Reads and writes inside the roots, refuses everything else |
+| 3 | Guardrail | done | Reading `.env` taints the turn; a `ghp_` token is redacted |
+| 4 | The airlock + web | done | A private file and a web search in one turn, with nothing private in the query |
+| 5 | Memory | done | Chroma write-through, distance cutoff, slice budgets, idle summary |
+| 6 | Streaming | done | Tokens as generated; the splitter emits whole sentences |
+| 7 | Voice in | done | Wake word, VAD, Parakeet. `sunday --voice`, or `listen` over the socket |
+| 8 | Voice out + echo | done | Kokoro speaks a sentence while the model writes the next; all three echo layers |
+| 9 | Barge-in | done | Talking over it stops it in about 100 ms — including while it is thinking |
+| 10 | The socket | done | The sidecar protocol; `web/debug.html` drives a whole turn |
+| 11 | Tauri shell + orb | not started | A real window, with the orb wired to real events |
+| 12 | Windows integration | not started | Tray, hotkey, single instance, installer |
+| 13 | Calendar + mail | not started | OAuth once, read-only, token on the credential list |
 
 ## Tests
 
