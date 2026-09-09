@@ -5,13 +5,22 @@ a promise about what the code does; it is a fact about what the token is
 allowed to do, checked by Google rather than by this file. An assistant that
 can send mail is a different risk conversation, and this one does not have it.
 
-Consent happens once, outside a turn:
+Consent happens outside a turn:
 
-    .venv\Scripts\sunday-google.exe
+    .venv\Scripts\python.exe -m sunday.tools.google
 
 Doing it inside a tool call would block the turn on a browser window that may
 never open. So a missing token is a refusal that says which command to run --
 the same rule every other refusal here follows.
+
+The module rather than the `sunday-google` console script, because a console
+script is written at install time and a virtualenv older than the entry point
+does not have one. The module route works in any of them.
+
+Not only once, either. While the OAuth client is in Google's testing mode --
+which is where a personal project stays, because `gmail.readonly` is a
+restricted scope and leaving testing means a verification review -- Google
+expires the refresh token after seven days on purpose. The refusal says so.
 
 Plain HTTP rather than `google-api-python-client`, which brings a client
 library, a discovery cache and two transitive auth stacks to make four
@@ -61,9 +70,15 @@ EVENT_CAP = 50
 #: the request fails as a 401, which reads to the model as "no calendar".
 EXPIRY_MARGIN_S = 60
 
+#: The command, and the two reasons to run it. Not "only the first time" any
+#: more: while the OAuth client is in Google's testing mode, the refresh token
+#: is expired after seven days on purpose, so the second reason is the one the
+#: user meets repeatedly and the refusal has to say so.
 RUN_AUTH = (
-    "Ask the user to run sunday-google once in a terminal to sign in to "
-    "Google; it only has to happen the first time."
+    "Ask the user to run python -m sunday.tools.google in a terminal to sign "
+    "in to Google. That is also what fixes an expired sign-in: while the "
+    "Google client is in testing mode, Google expires the saved sign-in every "
+    "seven days."
 )
 
 _access: dict[str, Any] = {"token": "", "expires": 0.0}
@@ -106,23 +121,33 @@ def access_token() -> str:
         raise net.HttpError(
             "no Google client is configured. Ask the user to put "
             "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the .env file at the "
-            "project root, then run sunday-google once."
+            "project root, then run python -m sunday.tools.google once."
         )
     stored = load_token()
     if not stored or not stored.get("refresh_token"):
         raise net.HttpError(f"nobody has signed in to Google yet. {RUN_AUTH}")
 
     client_id, client_secret = client
-    payload = net.post_json(
-        TOKEN_URL,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": stored["refresh_token"],
-            "grant_type": "refresh_token",
-        },
-        timeout=15,
-    )
+    try:
+        payload = net.post_json(
+            TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": stored["refresh_token"],
+                "grant_type": "refresh_token",
+            },
+            timeout=15,
+        )
+    except net.HttpError as exc:
+        # A refused refresh token is a 400, and `net.request` raises on a 4xx
+        # before anything here can look at the body -- so the refusal the user
+        # actually met was "HTTP 400 from oauth2.googleapis.com", which is a
+        # status code pretending to be an instruction. This is the path that
+        # happens: in testing mode Google expires the refresh token weekly.
+        raise net.HttpError(
+            f"the saved Google sign-in is no longer accepted ({exc}). {RUN_AUTH}"
+        ) from None
     token = payload.get("access_token")
     if not token:
         raise net.HttpError(

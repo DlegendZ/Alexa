@@ -2967,3 +2967,35 @@ Two halves to the fix. `google.py` had no `if __name__ == "__main__"` guard -- t
 the five without one -- so `python -m sunday.tools.google` did nothing either. It has one now,
 which makes the module route work in any venv and cannot go stale, and that is what the README
 leads with. The reinstall that writes all five scripts is the line under it.
+
+## 141. The refusal that happens weekly was a status code
+
+**Reported:** signing in says *"Alexa has not completed the Google verification process. The
+app is currently being tested, and can only be accessed by developer-approved testers."*
+
+That one is a console setting and not a bug: a personal OAuth client sits in **Testing**, and
+Testing means an explicit allow-list. Adding your own address under *Audience → Test users*
+is the whole of it. Leaving Testing is not an option worth taking here -- `gmail.readonly` is
+a *restricted* scope, so publishing means a verification review, for an app with one user.
+
+**But looking at what happens next found a real one.** Testing mode also expires the refresh
+token after **seven days**, by design. So this is not a first-run path that runs once; it is a
+path the user meets weekly. And Google refuses an expired refresh token with a **400**, which
+`net.request` turns into `HttpError("HTTP 400 from oauth2.googleapis.com")` and raises *before*
+`access_token` can look at the body -- so the carefully written refusal underneath it,
+`"the saved Google sign-in is no longer accepted. {RUN_AUTH}"`, was unreachable on the only
+path that reaches it. What the user would actually have got is a status code pretending to be
+an instruction.
+
+The refresh is wrapped now, and `RUN_AUTH` says both reasons to run the command rather than
+"it only has to happen the first time", which was true when it was written and is not.
+
+**The test that should have caught it was mocking the polite path.** `every_refusal` stubbed
+`post_json` to *return* `{"error": "invalid_grant"}` -- a 200 carrying an error field, which
+Google does not send. It exercised the branch that reads the body and never the one that
+raises. This is the lesson this repo keeps paying for, in its third costume: **a test written
+from the shape of the code checks the code's shape.** Both paths are in the fixture now, and
+the expired one has a test of its own.
+
+While in there: three refusal strings and the module docstring still named `sunday-google`,
+which note 140 had just established does not exist in this virtualenv. They name the module.

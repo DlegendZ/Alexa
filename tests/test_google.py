@@ -104,7 +104,22 @@ def every_refusal(monkeypatch) -> dict[str, str]:
         "calendar with a token Google no longer accepts": google.calendar_read(),
         "mail with a token Google no longer accepts": google.mail_search("anything"),
     }
-    return {**no_client, **not_signed_in, **stale}
+
+    # And the same thing the way it actually arrives. Google answers a refused
+    # refresh token with a 400, and `net.request` raises on any 4xx before the
+    # body is ever looked at -- so the branch above, which needs a 200 carrying
+    # an error field, is a path Google does not take. Mocking the polite one
+    # and not this one is how the refusal a user really met was `HTTP 400 from
+    # oauth2.googleapis.com`.
+    def refused(*a, **k):
+        raise google.net.HttpError("HTTP 400 from oauth2.googleapis.com")
+
+    monkeypatch.setattr(google.net, "post_json", refused)
+    expired = {
+        "calendar with an expired sign-in": google.calendar_read(),
+        "mail with an expired sign-in": google.mail_search("anything"),
+    }
+    return {**no_client, **not_signed_in, **stale, **expired}
 
 
 def test_every_refusal_tells_the_model_what_to_say(monkeypatch):
@@ -121,14 +136,14 @@ def test_no_refusal_writes_down_a_name(monkeypatch):
     sentences it speaks, so a name in one is a name that goes stale in a voice
     that is now called something else.
 
-    `sunday-google` is exempt and is the reason this test is worded around a
-    command rather than a substring: the *program* is called sunday -- the
-    package, the process, the data directory and the console scripts -- and
-    only the person it plays is called anything else. Telling the user to run
-    a command is telling them the program's name, which is correct.
+The sign-in command is exempt and is the reason this test is worded around
+    a command rather than a substring: the *program* is called sunday -- the
+    package, the process, the data directory and the entry points -- and only
+    the person it plays is called anything else. Telling the user to run a
+    command is telling them the program's name, which is correct.
     """
     for why, out in every_refusal(monkeypatch).items():
-        prose = out.replace("sunday-google", "")
+        prose = out.replace("python -m sunday.tools.google", "")
         assert "sunday" not in prose.lower(), (why, out)
 
 
@@ -140,7 +155,30 @@ def test_a_missing_sign_in_names_the_command_to_run(monkeypatch):
     monkeypatch.setattr(config, "GOOGLE_CLIENT_SECRET", "secret")
     monkeypatch.setattr(google, "_access", {"token": "", "expires": 0.0})
     monkeypatch.setattr(google, "load_token", lambda: None)
-    assert "sunday-google" in google.calendar_read()
+    assert "python -m sunday.tools.google" in google.calendar_read()
+
+
+def test_an_expired_sign_in_names_the_command_too(monkeypatch):
+    """The refusal that happens weekly, not the one that happens once.
+
+    Google's testing mode expires a refresh token after seven days by design,
+    and refuses it with a 400 -- which `net.request` turns into `HTTP 400 from
+    oauth2.googleapis.com` before `access_token` can say anything useful. A
+    status code is not an instruction, and this is the instruction the user
+    needs most often.
+    """
+    monkeypatch.setattr(config, "GOOGLE_CLIENT_ID", "id")
+    monkeypatch.setattr(config, "GOOGLE_CLIENT_SECRET", "secret")
+    monkeypatch.setattr(google, "_access", {"token": "", "expires": 0.0})
+    monkeypatch.setattr(google, "load_token", lambda: {"refresh_token": "old"})
+
+    def refused(*a, **k):
+        raise google.net.HttpError("HTTP 400 from oauth2.googleapis.com")
+
+    monkeypatch.setattr(google.net, "post_json", refused)
+    out = google.calendar_read()
+    assert "python -m sunday.tools.google" in out
+    assert "seven days" in out
 
 
 # -- calendar --------------------------------------------------------------

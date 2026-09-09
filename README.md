@@ -75,6 +75,13 @@ five, and the module above works without it:
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
+Google will refuse the sign-in until your own address is on the client's test
+user list -- *OAuth consent screen → Audience → Test users* in the console. A
+personal client stays in **Testing**, because `gmail.readonly` is a restricted
+scope and leaving Testing means a verification review. Testing also expires the
+refresh token every seven days, so the command above is not a once-only thing;
+both tools say so when it happens.
+
 The refresh token lands in `%LOCALAPPDATA%\Sunday\google_token.json`, which is
 on the credential list — if the agent ever reads that file the web door shuts for
 the rest of the turn. Until you sign in, both tools refuse and say which command
@@ -235,7 +242,7 @@ launches, spawns the sidecar, reads the handshake and drives a whole turn.
 | 10 | The socket | done | The sidecar protocol; `web/debug.html` drives a whole turn |
 | 11 | Tauri shell + orb | done | A real window; the orb is the whole status display and both amplitudes it moves to are measured. The shell spawns the sidecar and drives a whole turn |
 | 12 | Windows integration | done | Tray tinted with the state, a title bar the page draws itself, single instance, NSIS, autostart, and a first-run screen that says what is missing. The installer itself has not been produced yet |
-| 13 | Calendar + mail | done | OAuth once through `sunday-google`, read-only, token on the credential list |
+| 13 | Calendar + mail | done | OAuth through `python -m sunday.tools.google`, read-only, token on the credential list |
 
 ## Tests
 
