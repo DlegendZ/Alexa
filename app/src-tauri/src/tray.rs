@@ -1,0 +1,48 @@
+//! The tray icon, and the one thing it is for.
+//!
+//! It is tinted with the current state colour, which means the privacy
+//! affordance survives the window being hidden: if something is leaving this
+//! machine, the icon in the corner is teal, whether or not you are looking at
+//! the orb.
+
+use tauri::image::Image;
+
+const SIZE: u32 = 32;
+
+/// The same palette as the orb, for the same reason. A tray that used its own
+/// colours would be a second thing to keep in step, and it would be wrong the
+/// first time a state was added.
+fn tint(state: &str) -> [u8; 3] {
+    match state {
+        "thinking" | "tool.local" | "speaking" => [217, 155, 61],
+        "tool.external" => [61, 191, 176],
+        "blocked" | "error" => [217, 83, 79],
+        "listening" | "transcribing" | "wake" => [232, 235, 242],
+        "muted" => [90, 95, 105],
+        _ => [122, 129, 142],
+    }
+}
+
+/// A filled disc, drawn by hand.
+///
+/// No image crate: this is one circle at one size, and pulling in a decoder to
+/// produce thirty-two rows of pixels would cost more to build than it saves to
+/// write. The edge is anti-aliased by distance because a 32-pixel circle with
+/// hard edges reads as a square.
+pub fn icon(state: &str) -> Image<'static> {
+    let [r, g, b] = tint(state);
+    let centre = (SIZE as f32 - 1.0) / 2.0;
+    let radius = SIZE as f32 * 0.40;
+
+    let mut rgba = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as f32 - centre;
+            let dy = y as f32 - centre;
+            let distance = (dx * dx + dy * dy).sqrt();
+            let alpha = ((radius - distance) * 1.6).clamp(0.0, 1.0);
+            rgba.extend_from_slice(&[r, g, b, (alpha * 255.0) as u8]);
+        }
+    }
+    Image::new_owned(rgba, SIZE, SIZE)
+}
