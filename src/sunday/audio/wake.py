@@ -16,9 +16,11 @@ The unit of work is 1280 samples, 80 ms: exactly 8 mel hops, exactly one new
 embedding. Feeding anything else still works, but 80 ms is the step the models
 were trained on and is what the ring is sized around.
 
-Threshold and cooldown live in `[wake]` in config. The cooldown is not a
-detail: at 80 ms a step, one spoken phrase scores above threshold for a dozen
-consecutive steps, and without it a single "hey jarvis" opens a dozen turns.
+Threshold and cooldown live in `[wake]` in config, and this file keeps no copy
+of either: a threshold written down in two places is the one that gets measured
+once and updated once. The cooldown is not a detail -- at 80 ms a step, one
+spoken phrase scores above threshold for a dozen consecutive steps, and without
+it saying the word once opens a dozen turns.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from sunday import config
 from sunday.audio import models, onnx
 
 #: The step the models were trained on: 80 ms at 16 kHz.
@@ -60,9 +63,17 @@ class WakeWord:
     microphone can be open all the time without the fans coming on.
     """
 
-    def __init__(self, phrase: str = "hey_jarvis", *, threshold: float = 0.5) -> None:
-        self.phrase = phrase
-        self.threshold = threshold
+    def __init__(
+        self, phrase: str | None = None, *, threshold: float | None = None
+    ) -> None:
+        # Both default to `[wake]`, rather than to numbers written here. The
+        # threshold started at 0.5 because a document suggested it, sat a
+        # hundredth above where the phrase actually peaks, and fired about one
+        # time in three -- note 69. A second copy of it in a default argument
+        # is the same bug waiting for the first caller who omits the keyword.
+        cfg = config.get().wake
+        self.phrase = phrase or cfg.model
+        self.threshold = cfg.threshold if threshold is None else threshold
 
         # One thread each. Three tiny graphs run every 80 ms forever, and
         # starting a pool for them costs more than it saves.

@@ -3,7 +3,7 @@
 Running list of places where the build departed from `doc/sunday_architecture.html`,
 or filled in something the document left open.
 
-**Entries 1–92 have been applied to the HTML.** They are kept here as the record of
+**Entries 1–94 have been applied to the HTML.** They are kept here as the record of
 why each passage in that document reads the way it does — the HTML states the
 decisions, this file states what they replaced. Add new entries below as they come up,
 and apply them in a batch rather than editing the HTML mid-build.
@@ -1741,3 +1741,51 @@ milestone, with a green suite the entire time.
 The helper now enumerates nine paths: outside a root, one level above a root, a traversal,
 and a credential at each of the six ends that can name one. When a rule says *never*, the
 test walks the paths.
+
+## 93. Four numbers still described the 16384 window
+
+**Doc:** Stage 02 as revised by note 82 — the window is 20480 and the slices are sized to
+fit it.
+**Code:** `budget.py` opened "The window is 16384"; `config.py` opened the
+`context_tokens` comment with "16384, and the number belongs to the model rather than to
+the window" and closed the overhead comment with "at 16384 the same 2400 is 15%"; and
+`config.example.toml` said the slices "come to 12800 of the 13216 left after overhead and
+the reply".
+**Why:** this is note 62, verbatim, one window later. Note 62 was written because four
+numbers in the source still described the 8k window after note 51 widened it. Note 82
+moved the window again, `config.py`'s `Memory` block was updated, and the four numbers
+around it were not.
+
+The arithmetic that is now written down, because it is checkable: 20480 of window, less
+2400 of overhead and 768 for the reply, leaves 17312. The five slices come to 16384. 928
+is slack, and every configured number is the number in use.
+
+What note 62 concluded and this repeats: a number that lives only in prose is a number
+nobody rechecks, and it is what a person reads *instead of* the document. `scaled_to`
+firing silently is the failure these comments exist to prevent, so a comment that
+describes the wrong window is worse than no comment. **When a measured number moves, grep
+for it** — and the grep is `16384`, not "the window".
+
+Also stale in the same pass, for the same reason: `vad.py` and `listener.py` still
+introduced Moonshine as the transcriber four notes after 78 made Parakeet the default.
+Both now name neither where the point is general, and say "Moonshine, still selectable"
+where the point is specifically Moonshine's — the empty transcript for a padded clip,
+which is why `_trim` exists and why it stays for either model.
+
+## 94. The wake threshold had a second home in a default argument
+
+**Doc:** note 69 — the threshold is 0.3, measured, and it lives in `[wake] threshold`.
+**Code, as written:** `WakeWord.__init__(self, phrase="hey_jarvis", *, threshold=0.5)`.
+**Code, now:** both default to `[wake]`, read from config at construction.
+**Why:** 0.5 is the number note 69 exists to have removed. It sat one hundredth above
+where the phrase actually peaks on this microphone, fired about one time in three, and
+looked exactly like a hardware fault — and it was still there, in the signature, as the
+answer for any caller who omits the keyword.
+
+Every call site passes both today, so nothing was broken. That is precisely the condition
+under which a wrong default survives: it is unreachable until somebody writes the fourth
+call site, and then it is a bug on the audio thread, at the first word anybody says.
+
+The general form is the one note 62 keeps restating. A measured number has one home. A
+copy of it in a default argument is a second home that no measurement will ever update,
+and it does not have the decency to be wrong loudly.

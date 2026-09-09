@@ -43,7 +43,7 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/ant
 class Models:
     agent: str = "qwen3.5:4b"
     ollama_url: str = "http://127.0.0.1:11434"
-    #: 16384, and the number belongs to the model rather than to the window.
+    #: 20480, and the number belongs to the card rather than to the model.
     #: On the 2b, reserved KV was nearly free and 32768 cost 260 MiB more than
     #: 8192 at the same 63 tokens a second. The 4b is larger, and the card runs
     #: out. Measured here, with a browser open:
@@ -88,7 +88,7 @@ class Models:
     #: The trend is still the thing to watch -- all of it is paid every turn,
     #: whether or not a tool is called -- but it is no longer a crisis. At the
     #: old 8192 window this was 29% of everything and the slices were being
-    #: scaled to 0.61 to fit under it; at 16384 the same 2400 is 15% and the
+    #: scaled to 0.61 to fit under it; at 20480 the same 2400 is 12% and the
     #: slices are sized to fit rather than scaled into it. Ten tools costing
     #: 1239 tokens of bound schema is a cost worth knowing rather than a
     #: reason not to add the eleventh.
@@ -148,7 +148,10 @@ class Wake:
     #: is a model you trained yourself and dropped in `models\wake\`.
     model: str = "alexa"
     #: 0.3, not the 0.5 this started at, and the difference is measured rather
-    #: than felt. On this microphone a clearly spoken "hey jarvis" peaks at
+    #: than felt. Measured against `hey_jarvis`, which was the phrase at the
+    #: time; it is a property of the phrase and the voice saying it, so it is
+    #: worth re-running `python -m sunday.audio.check` for `alexa`.
+    #: On this microphone a clearly spoken "hey jarvis" peaks at
     #: 0.490 -- under the old bar by a hundredth, so it fired perhaps one time
     #: in three and looked like a broken microphone the rest of the time. In
     #: the same recording everything that was *not* the phrase, the whole

@@ -1,9 +1,9 @@
 """Silero VAD: where speech starts and where it stops.
 
-Moonshine does not stream. It transcribes a clip you hand it, so something has
-to decide where that clip begins and ends -- and later, while Kokoro is
-speaking, the same component is what notices you talking over it. Both jobs
-are one 2 MB ONNX graph.
+Neither transcriber streams -- Parakeet does not and Moonshine does not. Each
+takes a clip you hand it, so something has to decide where that clip begins and
+ends -- and later, while Kokoro is speaking, the same component is what notices
+you talking over it. Both jobs are one 2 MB ONNX graph.
 
 Two things about the model are easy to get wrong and silent when you do:
 

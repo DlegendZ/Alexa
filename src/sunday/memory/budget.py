@@ -1,11 +1,14 @@
 """The window, split five ways.
 
-The window is 16384, and it belongs to the model rather than to this file. It
+The window is 20480, and it belongs to the card rather than to this file. It
 was 8192 for most of the build -- chosen before anything was measured -- then
 32768 once it was, because on a 2b reserved KV that never fills is nearly free.
-The 4b is larger and the card is not, so it came back down: past 16384 Ollama
+The 4b is larger and the card is not, so it came back down: past 20480 Ollama
 leaves part of the model on the CPU, which costs 28% of generation speed and is
-reported by nothing except `ollama ps`.
+reported by nothing except `ollama ps`. It was 16384 the day before it was
+20480, same model, because the ceiling is the card and not the model -- so this
+number is re-measured rather than reasoned about, and the one place it is
+written down is `[models] context_tokens`.
 
 Memory is not the only claimant. Tool results land in the window, and so does
 thinking when it is switched on. Give each a fixed allowance and overflow
@@ -76,22 +79,25 @@ def slices(cfg: config.Config | None = None) -> Slices:
     """The five allowances, sized against what is actually free.
 
     The five slices are a statement of ratios, and they are not the only
-    claimants: the system prompt, the bound tool schemas, the memory framing
-    block and the standing system lines cost around 2260 tokens that no slice
-    pays for, and the reply needs room of its own. Sizing the slices *to* the
-    window rather than to what is left of it overruns `num_ctx`, and Ollama
-    answers by dropping the oldest messages without saying so -- the silent
-    truncation Stage 02 exists to prevent.
+    claimants: the system prompt (276 tokens), the bound tool schemas (1239),
+    the memory framing block and the standing system lines cost around 2260
+    tokens that no slice pays for, and the reply needs room of its own. Sizing
+    the slices *to* the window rather than to what is left of it overruns
+    `num_ctx`, and Ollama answers by dropping the oldest messages without
+    saying so -- the silent truncation Stage 02 exists to prevent.
 
     So the fixed overhead comes off the top and the slices are scaled into what
     remains, keeping the ratios the config asked for.
 
     The shipped slices are sized so that nothing is scaled, and that is worth
-    keeping true. This function is silent when it fires: carrying the old
-    2048/6144/2048/4096 into a 16384 window would have shrunk every one by 0.81
-    while `config.toml` went on claiming the old numbers. The scaling stays,
-    because it is what makes a smaller window degrade rather than break -- but
-    the configuration that ships must not be one that needs it.
+    keeping true. 20480 of window less 2400 of overhead and 768 for the reply
+    leaves 17312; the five slices come to 16384, so 928 is slack and every
+    configured number is the number in use. This function is silent when it
+    fires: carrying the same 2048/6144/2048/4096 into a 16384 window would have
+    shrunk every one by 0.81 while `config.toml` went on claiming the old
+    numbers. The scaling stays, because it is what makes a smaller window
+    degrade rather than break -- but the configuration that ships must not be
+    one that needs it.
     """
     cfg = cfg or config.get()
     want = Slices(

@@ -11,7 +11,8 @@ The turn, in audio terms:
    people start talking before they finish saying the trigger.
 2. The VAD marks speech. Recording continues while it stays true.
 3. 700 ms of silence and you are done. The clip closes.
-4. Moonshine transcribes it -- elsewhere; this file hands over a clip.
+4. The transcriber turns it into text -- elsewhere; this file hands over a
+   clip, and which model reads it is `[models] stt`.
 
 Two guards on step 3, and one addition. A clip whose *speech* is shorter than
 `min_clip_ms` is a cough and is dropped; one longer than `max_clip_ms` is
@@ -52,8 +53,8 @@ FRAME_MS = 20
 LEVEL_EVERY_MS = 100
 
 #: Kept either side of the speech when the clip is trimmed. Enough that a soft
-#: consonant at the very start is not clipped off, and little enough that
-#: Moonshine still sees a segment shaped like the ones it was trained on.
+#: consonant at the very start is not clipped off, and little enough that the
+#: transcriber still sees a segment shaped like the ones it was trained on.
 TRIM_MARGIN_MS = 250
 
 Phase = Literal["sleeping", "recording"]
@@ -364,7 +365,9 @@ class Listener:
         trimmed to the speech, because Moonshine was trained on segments that
         were trimmed that way and answers a clip padded with silence by
         emitting end-of-sequence as its very first token -- an empty
-        transcript for audio that plainly has words in it.
+        transcript for audio that plainly has words in it. Moonshine is no
+        longer the default, but it is still selectable, and trimming costs
+        Parakeet nothing.
         """
         self._clip.append(block)
         self._clip_samples += block.size
@@ -450,7 +453,9 @@ class Listener:
         either side of four seconds of clear speech, and end-of-sequence
         outscores the first real word. Every clip here carries half a second
         of pre-roll and seven-tenths of trailing silence by construction, so
-        without this the common case is the failing one.
+        without this the common case is the failing one. It stays for Parakeet
+        too: `[models] stt` is one word to change, and this guard has to hold
+        for whichever word is in it.
         """
         if self._first_speech is None or self._last_speech is None:
             return audio

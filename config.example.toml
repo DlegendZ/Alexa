@@ -42,8 +42,9 @@ lead_in_ms    = 4000   # woke, heard nothing, go back to sleep
 enabled     = true
 model       = "alexa"
 # Measured, not guessed: a clear "hey jarvis" scores ~0.49 on this mic and
-# everything that is not the phrase scores ~0.0002. Run
-# `python -m sunday.audio.check` to see both numbers for your own voice.
+# everything that is not the phrase scores ~0.0002. That was the phrase at the
+# time, and the number is a property of the phrase and the voice saying it --
+# run `python -m sunday.audio.check` to see both for your own voice and word.
 threshold   = 0.3
 cooldown_ms = 1500
 # After a reply, speech alone opens the next question for this long, so a
@@ -85,8 +86,8 @@ max_read_bytes = 200000
 distance_cutoff = 0.45   # tune with real turns
 top_k           = 5
 idle_minutes    = 10
-# Sized to fit 16384 rather than scaled into it: these four plus the thinking
-# reservation come to 12800 of the 13216 left after overhead and the reply, so
+# Sized to fit 20480 rather than scaled into it: these four plus the thinking
+# reservation come to 16384 of the 17312 left after overhead and the reply, so
 # the numbers here are the numbers used. Raise the window and raise these too.
 slice_summary   = 2048
 slice_recent    = 6144
