@@ -192,6 +192,10 @@
           <h1>{session.name}</h1>
           <p class="saying">{saying}</p>
 
+          <!-- Two controls, side by side, and no words on them. The line
+               under the orb already says what is happening; a stack of
+               labelled buttons under that says it twice and takes the wall
+               the orb was given. What each one does is in its title. -->
           <div class="controls">
             <!-- One switch. On means the microphone is open, the wake word is
                  listening and replies are spoken; off means this is a text
@@ -200,14 +204,29 @@
             <button
               type="button"
               class:on={session.voice}
+              title={session.voice ? 'Voice on — microphone open, replies spoken' : 'Voice off — typing only'}
+              aria-label={session.voice ? 'turn voice off' : 'turn voice on'}
               onclick={toggleVoice}
               disabled={!session.connected}
             >
-              <span class="glyph">{session.voice ? '◉' : '○'}</span>
-              {session.voice ? 'Voice on' : 'Voice off'}
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3.5a2.8 2.8 0 0 1 2.8 2.8v5.4a2.8 2.8 0 0 1-5.6 0V6.3A2.8 2.8 0 0 1 12 3.5z" />
+                <path d="M5.8 11.2a6.2 6.2 0 0 0 12.4 0M12 17.6V21" />
+                {#if !session.voice}
+                  <path d="M4.4 4.4l15.2 15.2" />
+                {/if}
+              </svg>
             </button>
-            <button type="button" onclick={() => toggleCompact(true)}>
-              <span class="glyph">⤡</span> Compact
+            <button
+              type="button"
+              title="Compact — just the orb, on top of everything"
+              aria-label="compact mode"
+              onclick={() => toggleCompact(true)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3.4" y="4.6" width="17.2" height="14.8" rx="2.6" />
+                <rect x="11.6" y="11.6" width="6.6" height="5.4" rx="1.6" fill="currentColor" stroke="none" />
+              </svg>
             </button>
           </div>
         </aside>
@@ -318,11 +337,14 @@
 
   .body {
     display: grid;
-    /* Wider than they were, both of them. The orb needs room to move and the
-       backstage is a column of prose; the transcript is the one column that
-       reads perfectly well narrower, because it is already capped at a
-       reading measure and was only ever centring itself in the slack. */
-    grid-template-columns: 300px minmax(0, 1fr) 390px;
+    /* 3:4:3, in fractions rather than pixels. The orb needs room to move and
+       the backstage is a column of prose; the transcript is the one column
+       that reads perfectly well narrower, because it is already capped at a
+       720px reading measure and was only ever centring itself in the slack.
+       `minmax(0, …)` on all three because a grid track's default floor is its
+       content, and one long unbroken word in the backstage would otherwise
+       push the ratio out. */
+    grid-template-columns: minmax(0, 3fr) minmax(0, 4fr) minmax(0, 3fr);
     overflow: hidden;
   }
 
@@ -333,6 +355,11 @@
     justify-items: center;
     gap: 4px;
     padding: 22px 22px 20px;
+    /* A rule between the columns, which is not the hairline note 118 removed:
+       that one ran down the side of the orb itself and was, in the end, half a
+       device pixel the canvas never cleared. This one divides three panels,
+       which is what a divider is for. */
+    border-right: 1px solid var(--line-soft);
     text-align: center;
   }
   .orb {
@@ -352,29 +379,33 @@
   }
   .controls {
     align-self: start;
-    margin-top: 24px;
-    display: grid;
-    gap: 6px;
-    width: 100%;
+    margin-top: 26px;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
   }
   .controls button {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    text-align: left;
-    padding: 11px 14px;
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 1px solid var(--line);
+  }
+  .controls svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .controls button.on {
     background: var(--raised);
+    border-color: transparent;
     color: var(--text);
-  }
-  .glyph {
-    font-size: 17px;
-    line-height: 1;
-    width: 20px;
-    text-align: center;
-    flex: none;
   }
 
   /* -- middle: the conversation ----------------------------------------- */
@@ -519,13 +550,10 @@
     background: none;
   }
 
-  /* The backstage is not behind a toggle any more, so it cannot be dropped
-     at a narrow width either -- it would leave a three-column grid with
-     something in a fourth row. Both side panels give ground instead. */
+  /* The columns are fractions, so they give ground on their own. What does
+     not is the orb, which is a fixed square and the first thing to overflow
+     a narrow panel. */
   @media (max-width: 1120px) {
-    .body {
-      grid-template-columns: 240px minmax(0, 1fr) 310px;
-    }
     .orb {
       width: 150px;
       height: 150px;

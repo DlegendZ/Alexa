@@ -2767,3 +2767,32 @@ exactly like a change that did not work:
 
 `main.rs` asks for `set_decorations(false)` at startup anyway (note 129), which makes the
 config's staleness survivable rather than fatal -- but only from the next build onward.
+
+## 133. Three panels, one ground, two rules, and 3:4:3
+
+**Asked for:** the backstage on the same background as the rest of the app; a line between
+each of the three panels, as there used to be; the widths at 3:4:3; and the two controls under
+the orb side by side, icons only.
+
+All four are the same correction, which is that the window had been saying *panel* four
+different ways at once. The backstage sat on `--surface` while the other two sat on `--bg`, so
+it read as a drawer bolted to the side rather than a third of one window. The rules between
+the columns had been taken out with the hairline note 118 removed -- and that was an
+over-correction: **the hairline note 118 removed ran down the side of the orb**, which is a
+thing made of light and the one place an edge is wrong. A rule between two panels is not that;
+it is what says where each one begins, and with all three on one ground it is the only thing
+that does. (The line still visible after 118 turned out to be neither -- see note 131.)
+
+The widths are fractions now, `minmax(0, 3fr) minmax(0, 4fr) minmax(0, 3fr)` rather than
+`300px minmax(0, 1fr) 390px`. Fixed side panels meant the middle column absorbed every pixel
+of a wider window, which it has no use for -- the transcript is capped at a 720px reading
+measure and was only centring itself in the slack. The `minmax(0, ...)` is not decoration:
+a grid track's default floor is its own content, so one long unbroken word in the backstage
+would push the ratio out. The media query lost its column override with them and now only
+shrinks the orb, which is a fixed square and the first thing to overflow a narrow panel.
+
+The controls are two 46px circles side by side with a microphone and a compact glyph in them.
+There was never much information in the words: the line under the orb already says
+*listening* or *microphone off*, so **Voice on** underneath it said the same thing twice and
+took the wall the orb had been given on purpose. The state is in the glyph -- a slash across
+the microphone when it is shut -- and the sentence is in the `title`.

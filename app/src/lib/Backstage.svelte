@@ -113,7 +113,11 @@
   aside {
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
-    background: var(--surface);
+    /* The same ground as the rest of the window. A panel on its own shade
+       reads as a drawer bolted to the side; the three columns are one
+       surface, and the rule between them is what says where each begins. */
+    background: var(--bg);
+    border-left: 1px solid var(--line-soft);
     overflow: hidden;
   }
   header {
