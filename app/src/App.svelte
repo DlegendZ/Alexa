@@ -13,6 +13,7 @@
     setCompact,
     setState,
     settings,
+    startDragging,
     toggleMaximise,
   } from './lib/shell.js';
 
@@ -125,28 +126,59 @@
    * arrives there is still something honest to say -- the turn has started
    * and nothing has been looked at yet. */
   const doingNow = $derived(session.trace.at(-1)?.text || 'starting the turn');
+
+  /* Compact runs at the focused rate whether or not it is focused.
+   *
+   * `fps_blurred` exists so a window nobody is looking at stops asking for
+   * frames next to a model that wants the whole machine. Compact is the exact
+   * case that reasoning does not cover: it is a small always-on-top circle you
+   * put in a corner *to watch while you work in something else*, so it is
+   * never focused and was therefore always running at ten frames a second,
+   * which is visibly not smooth. It is the one window that is looked at more
+   * when it is blurred than when it is not. */
+  const compactFps = $derived({ focused: fps.focused, blurred: fps.focused });
+
+  /* One mousedown, three meanings, and none of them can be a drag region.
+   *
+   * Note 114: `-webkit-app-region: drag` swallows mouse events before the page
+   * sees them, which is what made the click that left compact impossible to
+   * fire. Asking the shell to start the drag on mousedown leaves every event
+   * where the page can still read it -- so a double click can mean something,
+   * and the whole window can still be picked up and moved. */
+  function onCompactPress(event) {
+    if (event.button !== 0) return;
+    if (event.detail === 2) {
+      toggleCompact(false);
+      return;
+    }
+    startDragging();
+  }
 </script>
 
 <main class:compact>
   {#if compact}
-    <!-- Just the orb. Two ways out, because this is the state in which being
-         unable to get out strands the whole app: the strip at the top is the
-         drag handle and carries an explicit button, and the orb itself is
-         clickable. The orb is deliberately NOT a drag region -- making it one
-         is what swallowed every click on it. -->
-    <div class="compactbar drag">
-      <button class="nodrag chip" type="button" title="back to the full window" onclick={() => toggleCompact(false)}>
-        Expand
+    <!-- Just the orb, filling the window. Every pixel of it drags, a double
+         click expands, and the corner carries an explicit button as well --
+         because this is the state in which being unable to get out strands the
+         whole app: a small circle, always on top, with no menu and no title
+         bar. The tray is still the third way, and the only one that survives
+         the window itself being unclickable. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="compactwindow" onmousedown={onCompactPress} ondblclick={() => toggleCompact(false)}>
+      <Orb state={session.state} mic={session.micLevel} out={session.outLevel} fps={compactFps} />
+      <button
+        class="expand"
+        type="button"
+        title="Back to the full window"
+        aria-label="back to the full window"
+        onmousedown={(event) => event.stopPropagation()}
+        onclick={() => toggleCompact(false)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M14 4h6v6M20 4l-7.5 7.5M10 20H4v-6M4 20l7.5-7.5" />
+        </svg>
       </button>
     </div>
-    <button
-      class="orbonly nodrag"
-      type="button"
-      title="back to the full window"
-      onclick={() => toggleCompact(false)}
-    >
-      <Orb state={session.state} mic={session.micLevel} out={session.outLevel} {fps} />
-    </button>
   {:else}
     <!-- The title bar, drawn here rather than by Windows.
          Windows will not let you keep its caption buttons and drop the icon
@@ -292,7 +324,7 @@
     grid-template-rows: 38px minmax(0, 1fr);
   }
   main.compact {
-    grid-template-rows: 28px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
   /* -- the title bar ----------------------------------------------------- */
@@ -433,7 +465,10 @@
     font-size: 14px;
     color: var(--dim);
   }
+  /* `min-width: 0` because a flex item's floor is its own content, so without
+     it a long trace line cannot shrink and the ellipsis never fires. */
   .working .what {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -534,28 +569,46 @@
   }
 
   /* -- compact ---------------------------------------------------------- */
-  .compactbar {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+  .compactwindow {
+    position: relative;
+    display: grid;
+    min-height: 0;
     background: var(--bg);
+    cursor: grab;
   }
-  .chip {
-    font-size: 12.5px;
-    padding: 3px 12px;
-    border-radius: 999px;
-    border: 1px solid var(--line);
+  .compactwindow:active {
+    cursor: grabbing;
   }
-  .orbonly {
-    border: 0;
-    background: none;
+  /* Big enough to hit without looking, small enough not to be the subject.
+     It sits over the orb's corner, where the web is thinnest. */
+  .expand {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 30px;
+    height: 30px;
     padding: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--faint);
+    cursor: pointer;
+    opacity: 0.55;
+    transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
   }
-  .orbonly:hover {
-    background: none;
+  .expand:hover {
+    opacity: 1;
+    background: var(--raised);
+    color: var(--text);
+  }
+  .expand svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   /* No breakpoint. The columns are fractions and the orb is a fraction of its

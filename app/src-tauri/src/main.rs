@@ -167,6 +167,22 @@ fn hide_window(app: AppHandle) {
     }
 }
 
+/// Pick the window up, from wherever the page decided is a handle.
+///
+/// The full window's title bar is a CSS drag region and can stay one: it holds
+/// nothing you click except buttons, which are marked `no-drag`. Compact mode
+/// cannot, because there the handle and the thing you click are the same
+/// pixels -- and a drag region eats mouse events before the page sees them,
+/// which is the trap note 114 was written from. This is the other way round:
+/// the page reads the event and asks for the drag, so it still knows a double
+/// click when it sees one.
+#[tauri::command]
+fn drag_window(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.start_dragging();
+    }
+}
+
 #[tauri::command]
 fn minimise(app: AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -291,6 +307,7 @@ fn main() {
             minimise,
             toggle_maximise,
             hide_window,
+            drag_window,
             set_autostart,
             autostart_enabled,
             quit,

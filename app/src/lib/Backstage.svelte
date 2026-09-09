@@ -154,6 +154,7 @@
     color: var(--faint);
   }
   .now .text {
+    overflow-wrap: anywhere;
     font-size: 14px;
     line-height: 1.5;
     color: var(--text);
@@ -212,6 +213,8 @@
   li {
     padding-left: 11px;
     border-left: 2px solid var(--line);
+    /* Trace lines carry paths and queries, which do not break on their own. */
+    overflow-wrap: anywhere;
     font-size: 14.5px;
     line-height: 1.6;
     color: var(--dim);

@@ -54,6 +54,15 @@ export const toggleMaximise = () => invoke('toggle_maximise');
  *  tray menu, both of which flush the session summary first. */
 export const close = () => invoke('hide_window');
 
+/** Pick the window up and move it, from wherever the page says is a handle.
+ *
+ *  Compact mode used to do this with `-webkit-app-region: drag`, and note 114
+ *  is what that cost: a drag region swallows mouse events before the page sees
+ *  them, so the click that left compact could never fire. Asking on
+ *  `mousedown` leaves every event where the page can still read it, which is
+ *  what lets a double click mean something. */
+export const startDragging = () => invoke('drag_window');
+
 /** Events the shell pushes at the window -- the tray menu arrives this way,
  *  because it happens where there is no DOM. */
 export async function onShellEvent(name, handler) {

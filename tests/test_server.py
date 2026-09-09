@@ -529,10 +529,18 @@ async def test_a_turn_with_the_ear_open_ends_listening_and_not_idle(sidecar):
 
     await ws.send(json.dumps({"type": "text_input", "text": "say something"}))
     await _drain(ws)
+    # `done` reaches the client from inside the turn's own loop, and the
+    # follow-up is what that loop does *after* it -- so a bare assertion here
+    # races the two and fails about one run in twenty. Wait for it rather than
+    # for a round trip that only looks like a synchronisation point.
+    for _ in range(200):
+        if FakeEar.made[0].follow_ups:
+            break
+        await asyncio.sleep(0.01)
     # One follow-up per turn, and no `idle` racing it.
+    assert FakeEar.made[0].follow_ups == 1
     await ws.send(json.dumps({"type": "ping"}))
     assert await _recv(ws) == {"type": "pong"}
-    assert FakeEar.made[0].follow_ups == 1
     await ws.close()
 
 

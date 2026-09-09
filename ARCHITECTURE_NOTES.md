@@ -2824,3 +2824,67 @@ soon as it starts observing. So the observer added in note 131 was throwing away
 that had just been drawn. Sixty times a second that is invisible; once, on a canvas that is
 being stepped by hand, it is a blank orb, which is how it was found. `resize()` returns early
 when nothing has changed.
+
+## 135. A column that holds is worth more than a filename that does
+
+**Reported:** the conversation sometimes reaches into the backstage.
+
+Measured rather than guessed. A 74-character Windows path, typed as a question,
+makes the bubble **726 pixels wide inside a 472-pixel column** -- `scrollWidth` 1099 against a
+client width of 472. `white-space: pre-wrap` wraps at spaces and a path has none, so the
+longest run of non-space characters is the floor under the whole layout, and every ancestor
+either scrolls or is overrun.
+
+`overflow-wrap: anywhere` on the replies, the notices, the backstage lines and the working
+strip. A path broken mid-token is mildly ugly; a column that stops being a column is a broken
+window. Same fix, different shape, on the working strip: a flex item's minimum width is its
+own content, so `min-width: 0` is what makes the ellipsis fire at all.
+
+The general rule, and the reason `minmax(0, 3fr)` in note 133 was not enough on its own:
+**a track floor and a content floor are two different floors**, and clamping the first does
+nothing about the second.
+
+## 136. Compact mode, again, and the drag region stays gone
+
+**Asked for:** an expand icon in the corner rather than a strip; double click anywhere to
+expand; single click and drag anywhere to move it; and the orb is not smooth in compact.
+
+The last one first, because it is the one that was a real fault. `[ui] fps_blurred` is 10, and
+it exists so a window nobody is looking at stops asking for frames next to a model that wants
+the whole machine. Compact is the exact case that reasoning does not cover: it is a small
+always-on-top circle you put in a corner **to watch while you work in something else**, so it
+is never focused, and it was therefore always running at ten frames a second. It is the one
+window that is looked at more when it is blurred than when it is not, and it runs at the
+focused rate in both states now.
+
+The rest is note 114 revisited without repeating it. That note removed the drag region from
+the orb because **a drag region swallows mouse events before the page sees them**, which made
+the click that left compact impossible to fire -- and the fix at the time was to stop the orb
+being a handle. But the ask here is that the whole window be a handle *and* that a double
+click on it mean something, which a CSS drag region cannot do at all.
+
+So the window drags the other way round: `mousedown` reaches the page, the page looks at
+`event.detail`, and either expands (2) or asks the shell for `start_dragging()` (1). Every
+event stays where the page can read it. The corner button stops propagation on `mousedown`,
+so it is a button rather than a handle. The tray is still the third way out, and still the
+only one that survives the window itself being unclickable -- which is the part of note 114
+that generalises.
+
+## 137. The icon stopped being the orb, on purpose
+
+**Asked for:** a simpler, clearer mark, in the shape of a cube seen from its corner.
+
+Note 130 made the icon the orb exactly -- 34 points, threshold 0.92 -- on the argument that
+two drawings of one object drift apart. That argument is right and the conclusion was wrong at
+the size that matters. 16 pixels is what the taskbar and the alt-tab strip use, and a mesh
+whose links are thinner than a pixel is a smudge there however it is tuned; the fallback to
+fourteen heavier points was already an admission of it.
+
+The mark is the same idea reduced to what survives: a solid seen down its long diagonal, which
+is a hexagon with a Y in it -- three faces, six edges, one centre. Vertices and the lines
+between them, still, and the top face catches the light while the two sides fall away from it,
+which is the whole reason it reads as a cube rather than a hexagon. White, because colour in
+this program means teal off the machine or red refused and an icon cannot be in either state.
+
+It is checked at 16, 32, 64 and 256 rather than drawn at 512 and hoped for, which is what an
+icon set is for.

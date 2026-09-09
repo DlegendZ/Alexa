@@ -1,21 +1,23 @@
 """Draw the application icon.
 
-The icon is the orb, because the orb is what the app is, and because deriving
-it from the same handful of numbers means it cannot drift away from the window
-it sits above. A generator rather than a checked-in binary for the same reason
-a measured number lives in one place: an icon nobody can regenerate is an icon
-nobody can change.
-
     python app/src-tauri/icons/make_icons.py
 
-No Pillow. This is a lattice of points, the lines between the near ones, and a
-bloom behind them; a PNG encoder for that is thirty lines -- fewer than the
-argument for adding a dependency.
+A generator rather than a checked-in binary, for the same reason a measured
+number lives in one place: an icon nobody can regenerate is an icon nobody can
+change. No Pillow -- this is polygons and lines, and a PNG encoder for that is
+thirty lines, fewer than the argument for adding a dependency.
 
-The geometry is `app/src/lib/orb.js`, held still. Same golden-angle lattice,
-same link threshold, same white. What it cannot share is the code, because one
-of them is a canvas at sixty frames a second and the other is a bytes object,
-so the numbers are repeated here on purpose and are the thing to keep in step.
+**The mark is not the orb, and that is deliberate.** It used to be: 34 points
+and the lines between them, the same lattice the window draws. It read as a
+smudge at 16 pixels, which is the size the taskbar and the alt-tab strip
+actually use, and no amount of tuning fixes a mesh whose links are thinner than
+a pixel. So the icon is the same idea reduced to what survives: a solid seen
+down its corner, three faces, six edges and a centre. Vertices and the lines
+between them, still -- just few enough to read at any size.
+
+White on nothing, like the orb. Colour in this program means something is
+happening -- teal off the machine, red refused -- and an icon cannot be in one
+of those states.
 """
 
 from __future__ import annotations
@@ -27,20 +29,16 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-#: The web, in the white the orb is at rest. Colour in this program means a
-#: tool is running -- amber on this machine, teal off it -- and an icon cannot
-#: be in one of those states, so it is the resting one.
+#: The one colour. `--text` from the stylesheet, byte for byte.
 WHITE = (255, 252, 247)
 
-#: The orb's own numbers, so the icon and the thing it sits above are one
-#: object. Thirty-four points and a 0.92 threshold is exactly `listening`,
-#: which is the state the app is in whenever it is waiting for you -- the
-#: right thing for a picture of it to be doing.
-NODES = 34
-LINK = 0.92
-#: Held at an angle where the lattice reads as a sphere rather than as a ring.
-YAW = 0.9
-ROLL = 0.45
+#: How much of the tile the solid fills. Enough air around it that the mark is
+#: never touching the edges at a size Windows composites it into.
+RADIUS = 0.34
+
+#: Alpha per face. The top catches the light and the two sides fall away from
+#: it, which is the whole reason a cube reads as a cube rather than a hexagon.
+TOP, RIGHT, LEFT = 0.34, 0.17, 0.085
 
 SIZES = {
     "32x32.png": 32,
@@ -53,55 +51,68 @@ SIZES = {
 ICO_SIZES = (16, 32, 48, 64, 128, 256)
 
 
-def lattice(count: int) -> list[tuple[float, float, float]]:
-    """Points spread evenly over a sphere, by the golden angle, then turned.
+def corners(size: int):
+    """The centre and the six silhouette vertices, in screen coordinates.
 
-    Evenly is the whole requirement: random points clump, and a clump in a
-    particle web is a bright blob that reads as a fault in the drawing.
+    A cube seen down its long diagonal is a regular hexagon with a Y in it. The
+    vertices sit every 60 degrees; the three spokes go to every other one.
     """
-    golden = math.pi * (3 - math.sqrt(5))
+    centre = ((size - 1) / 2, (size - 1) / 2)
+    radius = size * RADIUS
     points = []
-    cos_y, sin_y = math.cos(YAW), math.sin(YAW)
-    cos_r, sin_r = math.cos(ROLL), math.sin(ROLL)
-    for i in range(count):
-        y = 1 - (i / (count - 1)) * 2
-        ring = math.sqrt(max(0.0, 1 - y * y))
-        theta = golden * i
-        x, z = math.cos(theta) * ring, math.sin(theta) * ring
-        x1 = x * cos_y + z * sin_y
-        z1 = z * cos_y - x * sin_y
-        y2 = y * cos_r - z1 * sin_r
-        z2 = z1 * cos_r + y * sin_r
-        points.append((x1, y2, z2))
-    return points
+    for i in range(6):
+        angle = math.radians(30 + 60 * i)
+        points.append(
+            (centre[0] + radius * math.cos(angle), centre[1] - radius * math.sin(angle))
+        )
+    return centre, points
+
+
+def inside(poly, x: float, y: float) -> bool:
+    """Crossing test. Convex quads only, so the cheap one is right."""
+    hit = False
+    n = len(poly)
+    for i in range(n):
+        ax, ay = poly[i]
+        bx, by = poly[(i + 1) % n]
+        if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
+            hit = not hit
+    return hit
 
 
 def light(size: int) -> list[float]:
     """One greyscale buffer: how much light reaches each pixel.
 
-    Everything is drawn into this and coloured afterwards, which is what keeps
-    the layers from seaming -- a link crossing a node adds to it rather than
-    painting over it.
+    Everything is drawn into this and coloured afterwards, so an edge crossing
+    a face adds to it rather than painting over it.
     """
-    # Below about 96 pixels a web is not a thing a screen can draw: the links
-    # are thinner than a pixel and the nodes land on top of each other. So the
-    # small sizes are the same object with fewer points, drawn heavier and
-    # brighter -- a lit constellation rather than a diagram of one. This is
-    # what an icon set is for; a 16-pixel copy of the 512 is a smudge.
-    #
-    # The large sizes are the orb exactly: same lattice, same threshold, same
-    # white. An icon that merely resembles the thing it launches is an icon
-    # that drifts away from it the first time either is touched.
-    small = size < 96
-    count = 14 if small else NODES
-    points = lattice(count)
-    centre = (size - 1) / 2
-    radius = size * (0.30 if small else 0.33)
-
+    centre, v = corners(size)
     buffer = [0.0] * (size * size)
 
+    # The three faces, brightest first. Two samples each way, which is enough
+    # antialiasing for an edge that also has a line drawn along it.
+    faces = (
+        ([centre, v[0], v[1], v[2]], TOP),
+        ([centre, v[4], v[5], v[0]], RIGHT),
+        ([centre, v[2], v[3], v[4]], LEFT),
+    )
+    for poly, alpha in faces:
+        lo_x = max(0, int(min(p[0] for p in poly)) - 1)
+        hi_x = min(size, int(max(p[0] for p in poly)) + 2)
+        lo_y = max(0, int(min(p[1] for p in poly)) - 1)
+        hi_y = min(size, int(max(p[1] for p in poly)) + 2)
+        for y in range(lo_y, hi_y):
+            row = y * size
+            for x in range(lo_x, hi_x):
+                hits = 0
+                for dy in (0.25, 0.75):
+                    for dx in (0.25, 0.75):
+                        if inside(poly, x + dx, y + dy):
+                            hits += 1
+                if hits:
+                    buffer[row + x] += alpha * hits / 4
+
     def splat(px: float, py: float, r: float, weight: float) -> None:
-        """One soft dot. Everything here is made of these."""
         lo_x, hi_x = int(px - r - 1), int(px + r + 2)
         lo_y, hi_y = int(py - r - 1), int(py + r + 2)
         for y in range(max(0, lo_y), min(size, hi_y)):
@@ -115,50 +126,32 @@ def light(size: int) -> list[float]:
                 fall = 1.0 - d / r
                 buffer[row + x] += weight * fall * fall
 
-    # The bloom, first and underneath. A flat web on a transparent square reads
-    # as a diagram; the glow is what makes it read as light, which is the whole
-    # idea of the orb.
-    bloom = size * 0.5
-    halo = 0.3 if small else 0.13
+    def line(a, b, width: float, weight: float) -> None:
+        steps = max(2, int(math.dist(a, b) * 2))
+        for s in range(steps + 1):
+            t = s / steps
+            splat(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, width, weight)
+
+    # Six edges around, three spokes in. The spokes are softer on purpose: they
+    # are the inside of the solid, and at 16 pixels three bright lines meeting
+    # at a point turn into a blob.
+    width = max(0.75, size * 0.026)
+    for i in range(6):
+        line(v[i], v[(i + 1) % 6], width, 0.5)
+    for i in (0, 2, 4):
+        line(centre, v[i], width * 0.85, 0.32)
+
+    # The bloom. A flat mark on a transparent square reads as a diagram; the
+    # glow is what makes it read as light, which is what the window is made of.
+    bloom = size * 0.52
     for y in range(size):
         row = y * size
-        dy = y - centre
+        dy = y - centre[1]
         for x in range(size):
-            dx = x - centre
+            dx = x - centre[0]
             d = math.sqrt(dx * dx + dy * dy)
             if d < bloom:
-                buffer[row + x] += (1.0 - d / bloom) ** 2.6 * halo
-
-    # The core: a small light inside the web, or the thing is a hollow shell
-    # and the eye has nowhere to rest.
-    splat(centre, centre, radius * (0.9 if small else 0.5), 0.62 if small else 0.34)
-
-    screen = [(centre + x * radius, centre + y * radius, z) for x, y, z in points]
-
-    # The links. Drawn by walking each one and splatting, rather than by
-    # measuring every pixel against every segment -- that is 147 million
-    # distance checks at 512 and this is about twenty thousand.
-    width = max(0.75, size * (0.02 if small else 0.009))
-    for i in range(count):
-        ax, ay, az = screen[i]
-        for j in range(i + 1, count):
-            bx, by, bz = screen[j]
-            d = math.dist(points[i], points[j])
-            if d > LINK:
-                continue
-            close = 1 - d / LINK
-            depth = (az + bz + 2) / 4
-            weight = close * close * (0.3 + depth * 0.6)
-            steps = max(2, int(math.dist((ax, ay), (bx, by)) * 2))
-            for s in range(steps + 1):
-                t = s / steps
-                splat(ax + (bx - ax) * t, ay + (by - ay) * t, width, weight / 2.6)
-
-    # The nodes, last, so they sit on top of their own lines.
-    for x, y, z in screen:
-        near = (z + 1) / 2
-        spread = size * (0.05 if small else 0.015)
-        splat(x, y, max(1.0, spread) * (0.65 + near * 0.6), (0.8 if small else 0.5) + near * 0.45)
+                buffer[row + x] += (1.0 - d / bloom) ** 2.6 * 0.1
 
     return buffer
 
@@ -171,8 +164,7 @@ def pixels(size: int) -> bytes:
         row = bytearray()
         base = y * size
         for x in range(size):
-            value = buffer[base + x]
-            alpha = min(1.0, value)
+            alpha = min(1.0, buffer[base + x])
             if alpha <= 0.004:
                 row += bytes(4)
                 continue

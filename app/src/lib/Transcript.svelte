@@ -125,6 +125,12 @@
 
   .said {
     white-space: pre-wrap;
+    /* A path or a URL is one word as far as line breaking is concerned, and
+       `pre-wrap` will not break it. Measured: a 74-character path made the
+       bubble 726px wide inside a 472px column, which is how the conversation
+       ended up reaching into the backstage. Anything is allowed to break now,
+       because a column that holds is worth more than a filename that does. */
+    overflow-wrap: anywhere;
     line-height: 1.65;
   }
   /* No "YOU" and "SUNDAY" labels shouting in caps above every line. Who said
@@ -148,6 +154,8 @@
     display: flex;
     align-items: baseline;
     gap: 11px;
+    min-width: 0;
+    overflow-wrap: anywhere;
     font-size: 15px;
     color: var(--dim);
   }
