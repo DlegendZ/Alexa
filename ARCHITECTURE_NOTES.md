@@ -2443,10 +2443,10 @@ because the next person to add a state will otherwise pick a number that means n
 
 **White is not only a preference; it is what makes the colours louder.** Amber and teal were
 already the two most common looks -- amber covered thinking, speaking and local tools -- so
-teal arriving was a hue shift between two warm states. Colour is now spent on three facts
-only: amber while a tool runs on this machine, teal while one reaches off it, red for a
-refusal. Everything else -- connecting, listening, transcribing, thinking, speaking, idle --
-is white. `AIRLOCK_VISIBLE` did not change; what changed is that the one signal that matters
+teal arriving was a hue shift between two warm states. Colour is spent on three facts only:
+amber while a tool runs on this machine, teal while one reaches off it, red for a refusal.
+Everything else -- connecting, listening, transcribing, thinking, speaking, idle -- is white.
+*(Two facts, from note 126: amber is gone as well, and a local tool call is white.)* `AIRLOCK_VISIBLE` did not change; what changed is that the one signal that matters
 is now the only coloured thing on the screen.
 
 The app icon is the same object, drawn once and held still, by the same generator that has
@@ -2557,8 +2557,9 @@ the agent talks, calls a tool, talks again, and that really is three acts in ord
 **Colour follows the tool, and it is read off `detail` rather than guessed.** Every trace
 line already carries the raw numbers -- `scope`, `ok`, `why`, `approved`, `query` -- and they
 were being thrown away by a panel that coloured on `step` alone, so a local call, a call to
-the web and a refusal were the same amber. They are amber, teal and red now, the same three
-the orb uses, from the same facts the runtime already sends.
+the web and a refusal were the same amber. They are told apart now, the same way the orb
+tells them apart, from the same facts the runtime already sends. *(White, teal and red, from
+note 126.)*
 
 ## 123. Waiting with nothing to read
 
@@ -2612,3 +2613,99 @@ Parakeet, Silero and openWakeWord -- run on the CPU, because this `onnxruntime` 
 `CPUExecutionProvider`, and they cost about 1.2 GB of ordinary RAM. Chroma and the WebView
 add their own. That is system memory, not VRAM, and the two are not the same question: the
 binding constraint on the window is 6 GB of card, and it is not being touched.
+
+## 126. Amber is gone, and two colours carry more than three did
+
+**Asked for:** the orb should be white while a tool is running, not orange; and the tool dot
+in the transcript and the backstage with it.
+
+Note 117 had already cut colour down to three facts. This cuts it to two: **teal is something
+leaving this machine, red is a refusal, and everything else is white** -- thinking, listening,
+speaking, and a tool running here.
+
+It reads as a smaller signal and is a larger one. The orb has to answer one question without
+being asked, and that question is *is anything leaving?* With amber on the belt, a local tool
+call and a web call were two coloured states and the eye had to tell warm-orange from
+warm-teal; now the orb is white until it is not, and the moment it is not is the moment that
+matters. Local work is told apart from thinking by the two channels the web has and the
+sphere did not -- it is denser (0.98 against 0.86) and slower (0.7 against 1.15).
+
+This is the passage in note 117 that said "amber while a tool runs on this machine" and it
+supersedes it. `--local` and `--local-soft` are out of the stylesheet rather than left sitting
+there unused, and the send button, the confirmation's primary button, the focus ring, the
+first-run progress bar and the tray's `tool.local` tint all went white with them. The one
+thing that did **not** change is the rule that pays for all of this: nothing in the program
+is ever teal except something leaving the machine.
+
+## 127. A splash was the one shape this drawing had already rejected
+
+**Asked for:** remove the spreading splash when the orb wakes; animate it some other way.
+
+The wake acknowledgement was a ring expanding out of the orb and fading -- which is a
+notification badge, and the only thing in the whole drawing that left the body of the orb.
+Every other decision in `orb.js` had gone the other way: no stroke, no edge, nothing with a
+hard boundary, because a hard boundary reads as a widget.
+
+It is done from the inside now. For 320 ms every link the lattice could possibly have snaps
+in, the nodes swell, the whole thing flares, and it settles back -- the pulse widens the link
+threshold rather than drawing anything new, so it uses the channel the mesh already has
+instead of borrowing one. Squared falloff, so the leading edge is the whole event: a slow
+tail turns an acknowledgement into a second animation competing with whatever state arrives
+next, and `wake` arrives while the transcriber is still loading.
+
+## 128. The backstage kept one turn, except when it did not
+
+**Asked for:** a gap between tasks in the backstage, so it is clear which question a run of
+lines belongs to.
+
+Two faults behind one complaint.
+
+The panel was cleared per turn -- by `Session.ask`, which is the *typed* path. A spoken turn
+never goes through `ask`, so voice quietly accumulated the whole session into one unbroken
+list, and `5/5 filing` ran straight into the next `0/5 wake` with nothing between them. That
+is the exact shape of the bug this codebase keeps meeting: **a rule enforced at one of its
+call sites**, like `mkdir` on `write_file` and the compound-message guard on two fast paths
+out of three.
+
+The fix is not to clear it at both. Keeping the last few questions is more useful than keeping
+one, now that the panel is always open and 390px wide -- so the trace keeps **three turns**,
+trimmed at the `wake` line, which is the sidecar's own marker for where a turn begins. And a
+turn boundary is drawn as one: 30px of space and a rule, against 26px between acts and 9px
+inside one. Marked in the markup (`act.opens && i > 0`) rather than by counting children,
+because note 112 already paid for positional CSS once.
+
+## 129. A config is baked into the binary; the runtime is not
+
+**Reported:** two title bars, one above the other. The lower one -- the one the page draws --
+is correct.
+
+`decorations: false` in `tauri.conf.json` is read at *build* time. An executable built before
+the title bar moved into the page still has `decorations: true` compiled into it, comes up
+with the system caption strip, and then renders a page that draws its own underneath. Nothing
+is wrong with either half; they are from two different builds.
+
+So the window asks for it again at startup, in `setup()`. The config stays, because it is
+what the window is *created* with and stops the frame appearing for a frame; the call is what
+makes any binary, however old its config, end up frameless. `core:window:allow-set-decorations`
+goes back into the capability file with it.
+
+The same report mentioned a faint edge beside the orb, and the border is the other half of
+this. Windows still draws one around a frameless window, no stylesheet reaches it, and
+`titlebar.rs` had been painting it a few shades *lighter* than the background so the window
+had an edge against a dark desktop. From inside, that edge is a hairline next to the orb --
+which is the thing note 118 removed from the stylesheet and the thing the orb spent a
+milestone removing from itself. It is `--bg` exactly now. The window loses its outline against
+a dark desktop, which is the trade that was asked for.
+
+## 130. The icon is the orb, not something that resembles it
+
+**Asked for:** the app icon should look like the orb.
+
+It already used the same lattice and the same white, with its own node count and its own link
+threshold -- and "its own" is how two drawings of one object drift apart. The large sizes are
+the orb exactly now: 34 points, threshold 0.92, which is `listening`, which is the state the
+app is in whenever it is waiting for you.
+
+Below 96 pixels it still drops to fourteen points drawn heavier. That is not drift: a web
+whose links are thinner than a pixel is a smudge, and an icon set exists precisely so that a
+16-pixel version can be a different drawing of the same thing.
