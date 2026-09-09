@@ -1,0 +1,80 @@
+/* The palette is the document's, and it is load-bearing rather than
+ * decorative: amber is work done here, teal is anything leaving, red is a
+ * refusal. Nothing else is ever teal. */
+:root {
+  --bg: #0e0f12;
+  --panel: #16181d;
+  --line: #24272e;
+  --text: #e7e9ee;
+  --dim: #878d9a;
+  --local: #d99b3d;
+  --external: #3dbfb0;
+  --stop: #d9534f;
+  --memory: #6f8fd9;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  overflow: hidden;
+}
+
+/* The title bar is the shell's, so the window is dragged by the header. The
+ * inputs inside it opt back out, or you cannot click them. */
+.drag {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.drag button,
+.drag input,
+.nodrag {
+  -webkit-app-region: no-drag;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: #1b1e24;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+button {
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  border-color: #3a3f49;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--local);
+  outline-offset: 1px;
+}
+
+/* Every state still changes colour when motion is off. What stops is the
+ * moving, not the telling. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
