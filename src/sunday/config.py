@@ -36,6 +36,11 @@ HANDSHAKE_PATH = SUNDAY_HOME / "handshake.json"
 GOOGLE_TOKEN_PATH = SUNDAY_HOME / "google_token.json"
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+#: The Google desktop OAuth client, for calendar and mail. Read-only scopes,
+#: and the refresh token it earns lands at GOOGLE_TOKEN_PATH -- which is on the
+#: credential list, so the agent reading it shuts the web door for the turn.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic")
 
 
@@ -80,7 +85,7 @@ class Models:
     #: What no memory slice pays for: the system prompt, the bound tool
     #: schemas, the memory framing block, and the standing system lines the
     #: runtime adds every turn -- which folders are open, and what asks before
-    #: it happens. Measured at ~2260 worst case: 1239 of bound schemas, 276 of
+    #: it happens. Measured at ~2300 worst case: 1552 of bound schemas, 276 of
     #: system prompt, and the rest in framing and the situational lines.
     #: Underestimating this overruns num_ctx, and Ollama answers by dropping
     #: the oldest messages without saying so, so the rest is headroom.
@@ -88,11 +93,12 @@ class Models:
     #: The trend is still the thing to watch -- all of it is paid every turn,
     #: whether or not a tool is called -- but it is no longer a crisis. At the
     #: old 8192 window this was 29% of everything and the slices were being
-    #: scaled to 0.61 to fit under it; at 20480 the same 2400 is 12% and the
-    #: slices are sized to fit rather than scaled into it. Ten tools costing
-    #: 1239 tokens of bound schema is a cost worth knowing rather than a
-    #: reason not to add the eleventh.
-    overhead_tokens: int = 2400
+    #: scaled to 0.61 to fit under it; at 20480 the same 2600 is 13% and the
+    #: slices are sized to fit rather than scaled into it. Twelve tools costing
+    #: 1552 tokens of bound schema is a cost worth knowing rather than a
+    #: reason not to add the thirteenth -- calendar and mail were the eleventh
+    #: and twelfth, and they moved this number for the fourth time.
+    overhead_tokens: int = 2600
     #: Room for the reply itself, which has no slice of its own.
     reply_tokens: int = 768
 
@@ -292,7 +298,7 @@ class Memory:
     top_k: int = 5
     idle_minutes: int = 10
     #: Sized to fit the window rather than scaled into it. With 20480 of
-    #: window, 2400 of overhead and 768 for the reply, 17312 is left; these
+    #: window, 2600 of overhead and 768 for the reply, 17112 is left; these
     #: four plus the thinking reservation come to 16384, so nothing is
     #: scaled and the numbers here are the numbers used.
     #:

@@ -79,8 +79,8 @@ def slices(cfg: config.Config | None = None) -> Slices:
     """The five allowances, sized against what is actually free.
 
     The five slices are a statement of ratios, and they are not the only
-    claimants: the system prompt (276 tokens), the bound tool schemas (1239),
-    the memory framing block and the standing system lines cost around 2260
+    claimants: the system prompt (276 tokens), the bound tool schemas (1552),
+    the memory framing block and the standing system lines cost around 2300
     tokens that no slice pays for, and the reply needs room of its own. Sizing
     the slices *to* the window rather than to what is left of it overruns
     `num_ctx`, and Ollama answers by dropping the oldest messages without
@@ -90,8 +90,8 @@ def slices(cfg: config.Config | None = None) -> Slices:
     remains, keeping the ratios the config asked for.
 
     The shipped slices are sized so that nothing is scaled, and that is worth
-    keeping true. 20480 of window less 2400 of overhead and 768 for the reply
-    leaves 17312; the five slices come to 16384, so 928 is slack and every
+    keeping true. 20480 of window less 2600 of overhead and 768 for the reply
+    leaves 17112; the five slices come to 16384, so 728 is slack and every
     configured number is the number in use. This function is silent when it
     fires: carrying the same 2048/6144/2048/4096 into a 16384 window would have
     shrunk every one by 0.81 while `config.toml` went on claiming the old

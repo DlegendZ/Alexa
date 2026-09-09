@@ -26,7 +26,7 @@ def test_the_slices_leave_room_for_everything_else_in_the_window(cfg):
 
     The slices are not the only claimants: the system prompt, the bound tool
     schemas, the memory framing block and the standing system lines cost around
-    2260 tokens no slice pays for, and the reply needs room too. Sizing the
+    2300 tokens no slice pays for, and the reply needs room too. Sizing the
     slices *to* the window overruns num_ctx, and Ollama drops the oldest
     messages without saying so.
     """

@@ -29,6 +29,7 @@ def request(
     *,
     params: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
+    data: dict[str, Any] | None = None,
     timeout: float = 10.0,
     max_bytes: int | None = None,
     follow_redirects: bool = False,
@@ -47,7 +48,7 @@ def request(
             ) as client:
                 if max_bytes is None:
                     response = client.request(
-                        method, url, params=params, headers=headers
+                        method, url, params=params, headers=headers, data=data
                     )
                 else:
                     response = _capped(
@@ -103,9 +104,28 @@ def get_json(
     url: str,
     *,
     params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
     timeout: float = 10.0,
 ) -> Any:
-    response = request("GET", url, params=params, timeout=timeout)
+    return json_from(
+        request("GET", url, params=params, headers=headers, timeout=timeout), url
+    )
+
+
+def post_json(
+    url: str,
+    *,
+    data: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 10.0,
+) -> Any:
+    """A form-encoded POST. Only OAuth needs one, and it needs it twice."""
+    return json_from(
+        request("POST", url, data=data, headers=headers, timeout=timeout), url
+    )
+
+
+def json_from(response: httpx.Response, url: str) -> Any:
     try:
         return response.json()
     except ValueError:

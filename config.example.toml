@@ -23,7 +23,7 @@ summariser      = "deepseek-v4-flash"
 stt             = "parakeet-tdt-0.6b-v2"
 # Taken off the top before the memory slices are sized: the system prompt, the
 # tool schemas and the memory framing block, then room for the reply itself.
-overhead_tokens = 2400
+overhead_tokens = 2600
 reply_tokens    = 768
 
 [audio]
@@ -87,7 +87,7 @@ distance_cutoff = 0.45   # tune with real turns
 top_k           = 5
 idle_minutes    = 10
 # Sized to fit 20480 rather than scaled into it: these four plus the thinking
-# reservation come to 16384 of the 17312 left after overhead and the reply, so
+# reservation come to 16384 of the 17112 left after overhead and the reply, so
 # the numbers here are the numbers used. Raise the window and raise these too.
 slice_summary   = 2048
 slice_recent    = 6144

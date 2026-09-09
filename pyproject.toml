@@ -34,6 +34,7 @@ sunday = "sunday.main:main"
 sunday-sidecar = "sunday.sidecar:main"
 sunday-models = "sunday.audio.models:main"
 sunday-mic = "sunday.audio.check:main"
+sunday-google = "sunday.tools.google:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

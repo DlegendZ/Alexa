@@ -84,6 +84,7 @@ def _load_builtins() -> None:
         capabilities,
         external,
         files,
+        google,
         weather,
     )
 
