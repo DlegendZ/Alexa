@@ -12,7 +12,9 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{
+    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
+};
 
 use sidecar::{Handshake, Sidecar};
 
@@ -27,6 +29,14 @@ struct Shell {
     /// What the orb is showing. The window is the only thing that knows, and
     /// the tray is the only thing that needs telling.
     state: Mutex<String>,
+    /// Why the global hotkey is not working, if it is not.
+    ///
+    /// Another program can already hold `Ctrl+Alt+Space`, and on this machine
+    /// one did. Refusing to start over that would be worse than having no
+    /// hotkey -- but so is printing it to a console that a packaged app does
+    /// not have. It reaches the window instead, which is the only place the
+    /// person who pressed the keys is looking.
+    hotkey: Mutex<Option<String>>,
 }
 
 /// The `[ui]` block, read once and handed to the window.
@@ -41,6 +51,9 @@ struct Settings {
     start_minimised: bool,
     autostart: bool,
     trace: bool,
+    /// None when the hotkey registered. Some(reason) when it did not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hotkey_error: Option<String>,
 }
 
 impl Default for Settings {
@@ -51,6 +64,7 @@ impl Default for Settings {
             start_minimised: false,
             autostart: false,
             trace: true,
+            hotkey_error: None,
         }
     }
 }
@@ -83,6 +97,7 @@ fn read_settings() -> Settings {
             start_minimised: flag("start_minimised", false),
             autostart: flag("autostart", false),
             trace: flag("trace", true),
+            hotkey_error: None,
         };
         break;
     }
@@ -111,8 +126,10 @@ fn connection(shell: State<'_, Shell>) -> Result<Handshake, String> {
 }
 
 #[tauri::command]
-fn settings() -> Settings {
-    read_settings()
+fn settings(shell: State<'_, Shell>) -> Settings {
+    let mut out = read_settings();
+    out.hotkey_error = shell.hotkey.lock().ok().and_then(|held| held.clone());
+    out
 }
 
 /// The window telling the shell what the orb is showing, so the tray can be
@@ -239,6 +256,7 @@ fn main() {
         .manage(Shell {
             sidecar: Mutex::new(Sidecar::default()),
             state: Mutex::new("connecting".to_string()),
+            hotkey: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             connection,
@@ -303,10 +321,21 @@ fn main() {
                     .build(),
             )?;
             if let Err(why) = app.global_shortcut().register(hotkey) {
-                // Another program already has it. Say so and carry on: a
-                // window that refuses to start over a hotkey is worse than a
-                // window with no hotkey.
-                eprintln!("could not register Ctrl+Alt+Space: {why}");
+                // Another program already has it. Carry on -- a window that
+                // refuses to start over a hotkey is worse than a window with
+                // no hotkey -- but record it where the window can say so. A
+                // console message is invisible in a packaged app, and a
+                // shortcut that quietly does nothing is the failure this
+                // codebase keeps relearning.
+                let told = format!(
+                    "Ctrl+Alt+Space is already taken by another program, so push-to-talk from the keyboard will not work ({why})."
+                );
+                eprintln!("{told}");
+                if let Some(shell) = app.try_state::<Shell>() {
+                    if let Ok(mut held) = shell.hotkey.lock() {
+                        *held = Some(told);
+                    }
+                }
             }
 
             // Spawning it here rather than on the window's first request means

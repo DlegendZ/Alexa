@@ -2040,3 +2040,86 @@ They are **not** grown to fill the window either, and the reason is prompt eval 
 VRAM — roughly 0.15 ms per token paid before a turn says a word, so 19456 of slices is about
 3.3 s worst case and much beyond that is over four seconds on every turn of a long session.
 That is the trade Stage 02 already described; this only moves along it.
+
+## 104. The shell compiled, and the two things it got wrong were both about the boundary
+
+**Doc:** Desktop 01 — a Rust shell that owns the window and reads the handshake, and a
+WebView that owns none of it.
+**Code, as written:** it did not compile, and then it compiled and did not connect.
+**Why it is worth an entry:** both faults were at the same seam, and neither was visible
+by reading.
+
+The compile error was one line: `app.global_shortcut()` needs `GlobalShortcutExt` in
+scope. One error in about six hundred lines of Rust written without a toolchain is a
+better rate than it deserved, and it is the boring half of this note.
+
+The interesting half is that it then built, launched, spawned the sidecar, wrote the
+handshake — and the window never connected. Everything *looked* right: `sunday.exe`
+running, `sunday-sidecar.exe` running, the socket LISTENING. What was missing was an
+ESTABLISHED connection, and nothing in the app says so out loud. `globalThis.__TAURI__`
+does not exist unless `withGlobalTauri` is set, so `discover()` fell through to its
+browser fallback, found no `?port=` in the query string, and sat in `connecting` forever.
+
+That fallback is the thing to notice. It exists so the window can be developed in an
+ordinary browser tab, which is genuinely how it was built — but a fallback that silently
+catches the case it was not written for turns a hard failure into a soft one. The
+diagnosis was `netstat`, not the app: **LISTENING with no ESTABLISHED** is the shape of
+this bug, and it is worth knowing because every component reports itself healthy.
+
+## 105. The window is not what decides whether the model fits. The desktop is.
+
+**Doc:** note 103 — 23552, measured, the largest window that stays 100% on the card.
+**Then:** the first turn through the finished shell came back `27%/60% CPU/GPU`.
+**Now:** 23552, still, and 100% on the card — with the shell running.
+**Why:** note 103 was measured in a quiet moment, and the shipping condition is not quiet.
+It has its own WebView2, which is a Chromium, and Chromium wants the GPU.
+
+The measurement that settles it, taken with the app *and* a browser open:
+
+    ctx      model on card
+    16384      3.5 GB
+    18432      3.6 GB
+    20480      3.7 GB
+    22528      3.8 GB
+    23552      3.8 GB
+
+**Three hundred megabytes across the whole range.** The weights are about 3.4 GB and the
+KV cache for this model is small, so the window is very nearly free — while the rest of
+the desktop moved between 240 MiB and 3232 MiB during this session, an order of magnitude
+more than the thing being tuned.
+
+Which reverses the conclusion note 103 reached by a different route. That turn did not
+spill *because the window was 23552*. It spilled because WebView2 had started thirty
+seconds earlier and, with Brave also up, only 2912 MiB was free — and 20480 needs
+3.7 GB, so the supposedly safe number would have spilled in exactly the same breath. The
+choice between 20480 and 23552 buys 3072 tokens of context for about 100 MB. It is not
+the lever.
+
+The rule note 82 states — re-measure after anything changes — survives intact and gains a
+sharper edge: **measure with the app running, because the app is one of the things
+competing.** A ceiling measured on an idle desktop is a ceiling that is wrong the moment
+the product it belongs to is open.
+
+The lever that would actually matter, if a much larger window is ever wanted, is
+`OLLAMA_KV_CACHE_TYPE=q8_0`, which halves the KV rather than shaving a tenth of a
+gigabyte off it. That has still not been tried.
+
+## 106. A hotkey another program already owns is the quietest failure in the app
+
+**Doc:** Desktop 05 — `Ctrl+Alt+Space` focuses the window and starts listening.
+**Found:** on this machine something else already holds it, so registration fails.
+**Code, as written:** `eprintln!` and carry on.
+**Code, now:** carry on, and tell the window, which puts it in the transcript.
+
+Carrying on is right — a window that refuses to start over a keyboard shortcut is worse
+than a window with no shortcut. Printing it to stderr is not: a packaged Tauri app has no
+console, so the entire failure is that you press three keys and nothing whatsoever
+happens. There is no error, no log you can reach, and every component involved is
+working.
+
+This is the same failure this codebase has now catalogued in three other places — the
+withdrawn tool nobody was told about, the redaction emitted after the sinks were cleared,
+and the four voice faults that all presented as a blank terminal. The pattern is constant:
+**a capability that silently does not exist is indistinguishable from one that is
+broken.** So the reason travels to the one place the person who pressed the keys is
+looking.

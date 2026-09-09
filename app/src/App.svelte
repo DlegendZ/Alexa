@@ -32,6 +32,10 @@
       fps = { focused: s.fps_focused, blurred: s.fps_blurred };
       showBackstage = s.trace;
       if (s.start_minimised) toggleCompact(true);
+      /* A hotkey another program already owns is the quietest possible
+       * failure: you press the keys and nothing at all happens, with no
+       * console in a packaged app to explain it. */
+      if (s.hotkey_error) session.notice(s.hotkey_error);
     });
 
     /* The tray menu and the global hotkey happen where there is no DOM, so

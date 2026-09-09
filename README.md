@@ -184,12 +184,9 @@ too, if you want the calendar and the mailbox.
 
 ## Build progress
 
-**Twelve of the thirteen are running, and the thirteenth is written.** The
-assistant is usable from the terminal, from a browser page, and from the window
-itself served by Vite — by typing or out loud. What has *not* been run is the Rust
-shell that wraps that window: there is no toolchain on this machine yet, so
-`app/src-tauri/` has never been compiled. Everything it talks to has been driven
-against a real sidecar.
+**All thirteen are running.** The assistant is usable from the terminal, from a
+browser page, and from its own window — by typing or out loud. The shell builds,
+launches, spawns the sidecar, reads the handshake and drives a whole turn.
 
 | # | Milestone | State | What it means |
 | --- | --- | --- | --- |
@@ -203,8 +200,8 @@ against a real sidecar.
 | 8 | Voice out + echo | done | Kokoro speaks a sentence while the model writes the next; all three echo layers |
 | 9 | Barge-in | done | Talking over it stops it in about 100 ms — including while it is thinking |
 | 10 | The socket | done | The sidecar protocol; `web/debug.html` drives a whole turn |
-| 11 | Tauri shell + orb | window done, shell uncompiled | The orb is the whole status display and both amplitudes it moves to are measured. Driven against a real sidecar; the Rust wrapper around it has not been built |
-| 12 | Windows integration | written, uncompiled | Tray tinted with the state, `Ctrl+Alt+Space`, single instance, NSIS, autostart. The first-run screen is done and tested — it lives in the sidecar and the window, not in Rust |
+| 11 | Tauri shell + orb | done | A real window; the orb is the whole status display and both amplitudes it moves to are measured. The shell spawns the sidecar and drives a whole turn |
+| 12 | Windows integration | done | Tray tinted with the state, `Ctrl+Alt+Space`, single instance, NSIS, autostart, and a first-run screen that says what is missing. The installer itself has not been produced yet |
 | 13 | Calendar + mail | done | OAuth once through `sunday-google`, read-only, token on the credential list |
 
 ## Tests
