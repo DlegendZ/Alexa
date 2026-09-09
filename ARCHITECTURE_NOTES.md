@@ -2888,3 +2888,39 @@ this program means teal off the machine or red refused and an icon cannot be in 
 
 It is checked at 16, 32, 64 and 256 rather than drawn at 512 and hoped for, which is what an
 icon set is for.
+
+## 138. The icon was a build-script input nobody had declared
+
+**Reported, for the third time:** the app logo has not changed.
+
+The first two were the stale-binary trap in note 132, and closing the window did fix those.
+This one survived a real rebuild, so the file worth reading was `build.rs`, and it said:
+
+    fn main() {
+        tauri_build::build()
+    }
+
+Cargo re-runs a build script only when something it was **told** about changes, and
+`tauri_build` names exactly two things. Read straight out of `target/debug/build/sunday-*/
+output`:
+
+    cargo:rerun-if-changed=E:\Work\Sunday\app\src-tauri\tauri.conf.json
+    cargo:rerun-if-changed=capabilities
+
+The icon is neither. It is a Windows resource compiled from `icons/icon.ico` into a
+`resource.lib` that the executable links against -- so regenerating the icons changed a file
+nothing was watching, the build script never re-ran, the old `resource.lib` was reused, and
+the previous icon stayed embedded. **Indefinitely.** No rebuild would ever have fixed it, and
+from outside it is indistinguishable from an icon that was never regenerated.
+
+One line: `println!("cargo:rerun-if-changed=icons");` before `tauri_build::build()`. Verified
+rather than assumed -- the build script's `output` now carries the new trigger, `resource.lib`
+was regenerated, and the 256-pixel image inside the fresh `icon.ico` is a byte-for-byte
+substring of it.
+
+**The shape of this, which is the reason it took three tries.** Note 132 had a correct
+diagnosis for a different fault with the same symptom, and a correct diagnosis is the most
+expensive thing to be given twice: it explains the evidence, so nobody looks further. What
+separated them was a timestamp -- the executable was two minutes *older* than the icon, which
+meant the rebuild had happened and had not helped. **When the same symptom survives its own
+fix, stop re-applying the fix and go and read the thing that does the work.**
