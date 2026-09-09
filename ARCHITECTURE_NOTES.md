@@ -2282,3 +2282,50 @@ form, so they are inside one rounded field that reads as somewhere to talk.
 **The name is not written down anywhere in the window.** It arrives on `ready`, from
 `[assistant] name`. Note 83's rule reaches the shell too, and the markup nearly grew a
 literal "Alexa" before it was caught.
+
+## 112. The corrupt memory store was a copy, and force-killing the sidecar is what broke it
+
+**Reported:** long-term memory was corrupt — `PRAGMA integrity_check` returning B-tree
+damage across four tables, `count()` returning 0 against a 2.3 MB file, and the trace
+saying "database disk image is malformed. Nothing was recalled, and that is a fault, not an
+empty cabinet" on every turn.
+**Actually true:** the real store at `%LOCALAPPDATA%\Sunday\memory` is intact. 411 turns
+filed, `integrity_check` clean, recall returning five hits at sensible distances for an
+ordinary query. It was never broken.
+
+Two separate mistakes, and the second is the one worth keeping.
+
+**The store being examined was not the store the app uses.** This project is developed
+through a tool whose filesystem writes are redirected into a packaged app's container —
+`...\Packages\Claude_…\LocalCache\Local\Sunday`. Windows copies a file into that container
+the first time something inside it writes, so a sidecar launched from there gets a private
+copy-on-write duplicate of the Chroma store, and the real one stops changing. Everything
+diagnosed for a whole session was that duplicate. The give-away was visible the moment
+anything native looked: `Get-ChildItem` shows the redirected entries with a `Target`
+pointing into the package, and the real directory has a `memory` the container view does
+not.
+
+**The duplicate was corrupted by killing the sidecar, repeatedly, mid-write.** `taskkill /F`
+was used a dozen times during this session to restart things quickly. SQLite does not
+survive that reliably, and Chroma is SQLite. Which means the corruption was not a mystery
+to be dated from logs — it was manufactured, on purpose, by the debugging.
+
+That is an argument *for* the shutdown path the shell already has, rather than against
+anything: `shutdown` over the socket, wait for the process to go, force-kill only after five
+seconds. It exists so the session summary reaches Chroma. It turns out to also be what keeps
+the file readable, and the cost of skipping it is now measured rather than assumed.
+
+Two rules come out of this, and the first one is general.
+
+**Diagnose the artefact the product uses, not the one the tooling touched.** Every number in
+that diagnosis was correct and every conclusion from it was wrong, because the file being
+measured was not the file in question. Before reporting that a user's data is damaged,
+check the path natively.
+
+**And the telemetry log should have caught it either way.** `logs/*.jsonl` records
+`retrieved` and `retrieval_scores` per turn and has no field for *why* retrieval returned
+nothing — so a store that could not be opened and a store with nothing close enough produce
+identical log lines. The backstage trace distinguishes them, in words, and is the only thing
+that does. That asymmetry is exactly what the trace was built for, and it is also a gap in
+the log: the one channel that persists is the one that cannot tell a fault from an empty
+cabinet.
