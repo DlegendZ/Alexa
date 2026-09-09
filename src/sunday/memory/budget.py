@@ -1,14 +1,14 @@
 """The window, split five ways.
 
-The window is 20480, and it belongs to the card rather than to this file. It
+The window is 23552, and it belongs to the card rather than to this file. It
 was 8192 for most of the build -- chosen before anything was measured -- then
 32768 once it was, because on a 2b reserved KV that never fills is nearly free.
-The 4b is larger and the card is not, so it came back down: past 20480 Ollama
-leaves part of the model on the CPU, which costs 28% of generation speed and is
-reported by nothing except `ollama ps`. It was 16384 the day before it was
-20480, same model, because the ceiling is the card and not the model -- so this
-number is re-measured rather than reasoned about, and the one place it is
-written down is `[models] context_tokens`.
+The 4b is larger and the card is not, so it came back down: past 23552 Ollama
+leaves part of the model on the CPU, which is reported by nothing except
+`ollama ps`. It was 16384 one day and 20480 the next and 23552 the day after,
+same model, because the ceiling is the card and not the model -- so this number
+is re-measured rather than reasoned about, and the one place it is written down
+is `[models] context_tokens`.
 
 Memory is not the only claimant. Tool results land in the window, and so does
 thinking when it is switched on. Give each a fixed allowance and overflow
@@ -90,8 +90,8 @@ def slices(cfg: config.Config | None = None) -> Slices:
     remains, keeping the ratios the config asked for.
 
     The shipped slices are sized so that nothing is scaled, and that is worth
-    keeping true. 20480 of window less 2600 of overhead and 768 for the reply
-    leaves 17112; the five slices come to 16384, so 728 is slack and every
+    keeping true. 23552 of window less 2600 of overhead and 768 for the reply
+    leaves 20184; the five slices come to 19456, so 728 is slack and every
     configured number is the number in use. This function is silent when it
     fires: carrying the same 2048/6144/2048/4096 into a 16384 window would have
     shrunk every one by 0.81 while `config.toml` went on claiming the old

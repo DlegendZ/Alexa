@@ -13,7 +13,7 @@ name = "Alexa"
 [models]
 agent           = "qwen3.5:4b"
 ollama_url      = "http://127.0.0.1:11434"
-context_tokens  = 20480      # measured: the largest 4b window that stays 100% on the card
+context_tokens  = 23552      # measured: the largest 4b window that stays 100% on the card
 thinking_budget = 2048
 # The airlock summariser. The only model that is not local, and it only ever
 # sees a cleared query plus text that was already public.
@@ -86,13 +86,13 @@ max_read_bytes = 200000
 distance_cutoff = 0.45   # tune with real turns
 top_k           = 5
 idle_minutes    = 10
-# Sized to fit 20480 rather than scaled into it: these four plus the thinking
-# reservation come to 16384 of the 17112 left after overhead and the reply, so
+# Sized to fit 23552 rather than scaled into it: these four plus the thinking
+# reservation come to 19456 of the 20184 left after overhead and the reply, so
 # the numbers here are the numbers used. Raise the window and raise these too.
-slice_summary   = 2048
-slice_recent    = 6144
-slice_retrieved = 2048
-slice_tools     = 4096
+slice_summary   = 2560
+slice_recent    = 7680
+slice_retrieved = 2560
+slice_tools     = 4608
 
 [external]
 enabled           = true

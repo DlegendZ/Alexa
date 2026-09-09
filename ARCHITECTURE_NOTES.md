@@ -1990,3 +1990,53 @@ six socket tests whose fake agent has no client — which is the right complaint
 right place. A stand-in that does not track the interface it stands in for stops testing the
 thing it replaced, so `Talker` grew both methods and `SlowTalker` now subclasses it instead
 of copying it.
+
+## 103. The window is 23552, and 70000 was measured rather than argued about
+
+**Doc:** Stage 02 — the window is 20480, the largest that stays entirely on the card, and
+`ollama ps` must read 100%.
+**Asked for:** a 70000-token window and a Q6_K quantisation, on the grounds that the
+machine has plenty of space.
+**Code:** 23552, still Q4_K_M, with the slices resized to 2560 / 7680 / 2560 / 4608.
+**Why:** the space in question was disk, and the constraint is VRAM. Six gigabytes of it,
+on a laptop 3050, shared with the desktop.
+
+Measured before anything was changed, because that is what this section of the design has
+said since milestone 1:
+
+    ctx      on GPU   tok/s
+    20480     100%     45.5
+    22528     100%     46.6
+    23552     100%     46.1
+    24576      85%     40.1
+    32768      79%     31.9
+    40960      71%     25.4
+    70000      60%     16.8
+
+70000 runs. Turns complete and nothing errors, which is exactly the problem — 40% of the
+model is on the processor, every reply is 2.7× slower, and the only thing in the system
+that would tell you is `ollama ps`. That is the failure mode note 82 exists to describe,
+and it was reproduced here rather than predicted.
+
+**The ceiling is a cliff, not a slope.** 23552 is 100% and 24576 is 85%: one step up the
+1024 grid costs 15% of the model and 13% of the speed. So the shipped number sits one grid
+step below a wall, with 1279 MiB of card spare when measured with a browser open. Note 82's
+warning that the ceiling depends on whatever else wants the card is not a caveat here, it is
+the operating condition.
+
+Q6_K was not a decision, it was unavailable: Ollama publishes `q4_K_M`, `q8_0` and `bf16`
+for `qwen3.5` and nothing between. Verified against the registry — the two working tags
+return 200 and every Q6_K spelling returns 404 — rather than inferred from a failed pull.
+It could be imported from a GGUF, but Q6_K is roughly 1.2 GB larger than Q4_K_M, which
+spends the headroom this window move just used and puts the model off the card at any
+context worth having. The interesting half of that finding is that **the two requests were
+in tension with each other**: a bigger window and a bigger quantisation compete for the same
+six gigabytes, and satisfying either fully means abandoning the other.
+
+The slices moved with the window, which is note 82's other rule and the one that is easy to
+skip: `scaled_to` is silent when it fires, so leaving them at 16384 inside 23552 would have
+worked, wasted the window, and left `config.toml` describing allowances nobody was using.
+They are **not** grown to fill the window either, and the reason is prompt eval rather than
+VRAM — roughly 0.15 ms per token paid before a turn says a word, so 19456 of slices is about
+3.3 s worst case and much beyond that is over four seconds on every turn of a long session.
+That is the trade Stage 02 already described; this only moves along it.

@@ -48,7 +48,7 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/ant
 class Models:
     agent: str = "qwen3.5:4b"
     ollama_url: str = "http://127.0.0.1:11434"
-    #: 20480, and the number belongs to the card rather than to the model.
+    #: 23552, and the number belongs to the card rather than to the model.
     #: On the 2b, reserved KV was nearly free and 32768 cost 260 MiB more than
     #: 8192 at the same 63 tokens a second. The 4b is larger, and the card runs
     #: out. Measured here, with a browser open:
@@ -57,8 +57,19 @@ class Models:
     #:      2b     32768   100%      64.8   3612M
     #:      4b     16384   100%      46.6   4430M
     #:      4b     20480   100%      46.6   4560M
-    #:      4b     24576    85%      40.3   4628M
-    #:      4b     32768    79%      32.4   4666M
+    #:      4b     21504   100%      46.5   ~4600M
+    #:      4b     22528   100%      46.6   ~4650M
+    #:      4b     23552   100%      46.1   ~4700M
+    #:      4b     24576    85%      40.1   4628M
+    #:      4b     32768    79%      31.9   4666M
+    #:      4b     40960    71%      25.4      --
+    #:      4b     70000    60%      16.8      --
+    #:
+    #: The cliff is between 23552 and 24576 and it is a cliff, not a slope:
+    #: one step over it and 15% of the model is on the processor. 70000 was
+    #: asked for and measured rather than argued about -- it costs 63% of
+    #: generation speed, because the constraint is 6 GB of VRAM and not the
+    #: disk, which has plenty.
     #:
     #: Past 20480 Ollama leaves part of the model on the CPU and never says so
     #: -- `ollama ps` reports it and nothing else does. The cost is not the
@@ -71,7 +82,7 @@ class Models:
     #: window and whatever else wants the card, so it is worth re-measuring
     #: rather than assuming. `OLLAMA_KV_CACHE_TYPE=q8_0` would halve the KV and
     #: is the documented next lever if 32768 is ever wanted.
-    context_tokens: int = 20480
+    context_tokens: int = 23552
     thinking_budget: int = 2048
     summariser: str = "deepseek-v4-flash"
     #: Which transcriber. `parakeet-tdt-0.6b-v2` is a 600M-parameter
@@ -297,9 +308,9 @@ class Memory:
     distance_cutoff: float = 0.45
     top_k: int = 5
     idle_minutes: int = 10
-    #: Sized to fit the window rather than scaled into it. With 20480 of
-    #: window, 2600 of overhead and 768 for the reply, 17112 is left; these
-    #: four plus the thinking reservation come to 16384, so nothing is
+    #: Sized to fit the window rather than scaled into it. With 23552 of
+    #: window, 2600 of overhead and 768 for the reply, 20184 is left; these
+    #: four plus the thinking reservation come to 19456, so nothing is
     #: scaled and the numbers here are the numbers used.
     #:
     #: That last part is the point. `scaled_to` exists so a smaller window
@@ -312,10 +323,10 @@ class Memory:
     #: They are allowances, not usage. A short session fills none of them, so
     #: the prompt-eval cost -- about 0.15 ms per token above 3k -- arrives
     #: gradually and only in sessions long enough to have earned it.
-    slice_summary: int = 2048
-    slice_recent: int = 6144
-    slice_retrieved: int = 2048
-    slice_tools: int = 4096
+    slice_summary: int = 2560
+    slice_recent: int = 7680
+    slice_retrieved: int = 2560
+    slice_tools: int = 4608
 
 
 @dataclass
