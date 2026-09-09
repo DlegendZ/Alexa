@@ -6,10 +6,7 @@
   import Setup from './lib/Setup.svelte';
   import { Session } from './lib/session.svelte.js';
   import {
-    inShell,
-    minimise,
     onShellEvent,
-    quit,
     setCompact,
     setState,
     settings,
@@ -103,14 +100,6 @@
     setCompact(value);
   }
 
-  /* Quit in the right order: the socket is told first, because `shutdown` is
-   * what flushes the session summary into Chroma. The shell then waits for the
-   * process to go and stops waiting after five seconds. */
-  function sayGoodbye() {
-    session.shutdown();
-    quit();
-  }
-
   const stateLabel = $derived(session.connected ? session.state : session.status);
 </script>
 
@@ -130,11 +119,12 @@
       <button type="button" onclick={() => (showBackstage = !showBackstage)}>
         {showBackstage ? 'Hide backstage' : 'Backstage'}
       </button>
-      <button type="button" onclick={() => toggleCompact()}>Compact</button>
-      {#if inShell()}
-        <button class="always" type="button" onclick={minimise}>&minus;</button>
-        <button class="always" type="button" onclick={sayGoodbye}>&times;</button>
-      {/if}
+      <!-- No minimise and no close. Windows already draws both on the title
+           bar, and a second pair beside them behaved differently -- the native
+           close hides to the tray, this one quit -- which is worse than either
+           alone. Quit lives in the tray menu, where it does the ordered
+           shutdown that flushes the session summary. -->
+      <button class="always" type="button" onclick={() => toggleCompact()}>Compact</button>
     </div>
   </header>
 

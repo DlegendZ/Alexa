@@ -2123,3 +2123,28 @@ and the four voice faults that all presented as a blank terminal. The pattern is
 **a capability that silently does not exist is indistinguishable from one that is
 broken.** So the reason travels to the one place the person who pressed the keys is
 looking.
+
+## 107. The window grew a second set of window controls
+
+**Doc:** Desktop 04 — the window has a transcript, an input row and a mode toggle;
+*compact* is "a small frameless always-on-top window showing just the orb".
+**Code, as written:** the full window kept the title bar Windows gives it, and the header
+*also* drew a minimise and a close of its own.
+**Why it matters:** the two closes did different things. The native one hides to the tray,
+which is what this app wants -- it is meant to go on listening. The one an inch to its left
+sent `shutdown` and quit. Two identical-looking buttons, a centimetre apart, one of which
+ends the session and one of which does not.
+
+Found by the app exiting when it was not expected to, which is the mildest possible version
+of this bug and the reason it is worth writing down: the next person to meet it would have
+lost a conversation rather than a test run.
+
+The fix is the reading the document already gives. *Compact* is the frameless one; the full
+window keeps its title bar and does not duplicate it. Quit lives in the tray menu, which is
+where the ordered shutdown belongs anyway -- ask over the socket, wait, then stop waiting --
+so nothing was lost by removing it from the header.
+
+The general shape, since this codebase collects them: **when the platform already draws a
+control, drawing a second one is not an addition, it is an ambiguity.** The CSS drag region
+that made the header look like a title bar was written for the compact window and quietly
+implied a frameless full one, which is how the duplicate got there.

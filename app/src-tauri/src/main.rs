@@ -152,6 +152,11 @@ fn set_state(app: AppHandle, shell: State<'_, Shell>, state: String) {
 fn set_compact(app: AppHandle, compact: bool) {
     let Some(window) = app.get_webview_window("main") else { return };
     let (w, h) = if compact { COMPACT } else { FULL };
+    // Compact is the frameless one; the full window keeps the title bar
+    // Windows gives it. That is the split the design asks for, and the window
+    // must not grow its own copy of those controls to sit beside them -- one
+    // close button that hides and another that quits, a centimetre apart, is
+    // worse than either on its own.
     let _ = window.set_decorations(!compact);
     let _ = window.set_always_on_top(compact);
     let _ = window.set_size(LogicalSize::new(w, h));
