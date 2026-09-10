@@ -157,16 +157,6 @@ fn toggle_maximise(app: AppHandle) {
     }
 }
 
-/// The close button, which hides rather than quits -- the same thing the
-/// native one did, because the app is meant to keep listening. Quitting is
-/// `exit` in the box, or the tray menu.
-#[tauri::command]
-fn hide_window(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
-}
-
 /// Pick the window up, from wherever the page decided is a handle.
 ///
 /// The full window's title bar is a CSS drag region and can stay one: it holds
@@ -306,7 +296,6 @@ fn main() {
             set_compact,
             minimise,
             toggle_maximise,
-            hide_window,
             drag_window,
             set_autostart,
             autostart_enabled,
@@ -429,12 +418,19 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window hides it, because there is a tray icon and
-            // the thing is meant to be listening in the background. Quit is
-            // in the tray menu, and it is the one that stops the sidecar.
+            // Closing quits, and quits *politely* -- the same thing typing
+            // `exit` does. It used to hide to the tray, on the argument that
+            // something meant to listen in the background should not be shut
+            // by a stray click; the answer to that is the tray's own Show,
+            // and a close button that does not close is a control that lies.
+            //
+            // The order is the part that matters and is why this cannot just
+            // be `app.exit(0)`: the sidecar is told first, because `shutdown`
+            // is what folds the session summary into Chroma, and Chroma is
+            // SQLite, which does not survive being killed mid-write.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = window.hide();
+                quit_politely(&window.app_handle().clone());
             }
         })
         .run(tauri::generate_context!())

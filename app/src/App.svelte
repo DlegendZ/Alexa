@@ -6,7 +6,6 @@
   import Setup from './lib/Setup.svelte';
   import { Session } from './lib/session.svelte.js';
   import {
-    close,
     minimise,
     onShellEvent,
     quit,
@@ -235,9 +234,10 @@
         <button type="button" title="Maximise" aria-label="maximise" onclick={() => toggleMaximise()}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="5.5" width="13" height="13" rx="1.5" /></svg>
         </button>
-        <!-- Hides to the tray, the way the native close did. Quitting is
-             `exit` in the box, or the tray menu. -->
-        <button class="shut" type="button" title="Close to tray" aria-label="close" onclick={() => close()}>
+        <!-- Closes, and closing quits: the same thing typing `exit` does,
+             in the same order, because `shutdown` is what folds the session
+             summary into Chroma before anything is killed. -->
+        <button class="shut" type="button" title="Close Alexa" aria-label="close" onclick={sayGoodbye}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>

@@ -9,6 +9,20 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// `CREATE_NO_WINDOW`. The sidecar is a console application -- a Python
+/// console script, and later a PyInstaller build of one -- so Windows gives it
+/// a console of its own, which appears beside the window as a black rectangle
+/// nobody asked for and nobody can close without killing the assistant.
+///
+/// It is not the handshake, which is a file the two processes share and has
+/// nothing to do with what the desktop shows. It is the subsystem of the child
+/// process, and this flag is the whole of the fix.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 use serde::{Deserialize, Serialize};
 
 /// How long to wait for the sidecar to write its handshake. Generous, because
@@ -141,7 +155,10 @@ impl Sidecar {
         let spawned_at = now_epoch();
         let path = handshake_path();
 
-        let child = Command::new(&exe)
+        let mut command = Command::new(&exe);
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+        let child = command
             .spawn()
             .map_err(|e| format!("could not start the sidecar: {e}"))?;
         self.child = Some(child);

@@ -49,11 +49,6 @@ export const minimise = () => invoke('minimise');
  *  and drop the icon and the title beside them. */
 export const toggleMaximise = () => invoke('toggle_maximise');
 
-/** Close means hide to the tray, which is what the native close did -- the
- *  thing is meant to keep listening. Quitting is `exit` in the box or the
- *  tray menu, both of which flush the session summary first. */
-export const close = () => invoke('hide_window');
-
 /** Pick the window up and move it, from wherever the page says is a handle.
  *
  *  Compact mode used to do this with `-webkit-app-region: drag`, and note 114
