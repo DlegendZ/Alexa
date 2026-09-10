@@ -16,16 +16,32 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path, PurePath
 
 from dotenv import load_dotenv
 
+#: True inside the installed build -- the sidecar PyInstaller froze
+#: (`packaging/build_sidecar.py`). A frozen sidecar has no repository, and
+#: must not behave as though it had one: `REPO_ROOT` below would resolve to
+#: the install folder, so a `.env` or a `config.toml` dropped there would
+#: quietly become this copy's credentials and settings. Frozen, the only
+#: places anything is read from are `SUNDAY_HOME` and the real environment.
+FROZEN = bool(getattr(sys, "frozen", False))
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENV_PATH = REPO_ROOT / ".env"
 
-load_dotenv(ENV_PATH)
+
+def _load_dotenv() -> None:
+    """The developer's `.env`, and only in a checkout."""
+    if not FROZEN:
+        load_dotenv(ENV_PATH)
+
+
+_load_dotenv()
 
 
 def _sunday_home() -> Path:
@@ -639,7 +655,10 @@ class Config:
 
 
 def config_path() -> Path | None:
-    for candidate in (REPO_ROOT / "config.toml", SUNDAY_HOME / "config.toml"):
+    candidates = [SUNDAY_HOME / "config.toml"]
+    if not FROZEN:
+        candidates.insert(0, REPO_ROOT / "config.toml")
+    for candidate in candidates:
         if candidate.is_file():
             return candidate
     return None

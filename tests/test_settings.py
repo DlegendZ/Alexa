@@ -489,6 +489,38 @@ def test_the_deepseek_key_is_optional_and_the_web_still_works(monkeypatch):
 # -- the shipped template belongs to nobody --------------------------------
 
 
+def test_a_frozen_sidecar_reads_no_repository_files(home, monkeypatch, tmp_path):
+    """The installed build has no repository, and must not act as if it had.
+
+    Frozen, `REPO_ROOT` resolves to the install folder -- so a `config.toml`
+    or a `.env` somebody dropped there would become this copy's settings and
+    credentials. Only `SUNDAY_HOME` and the real environment count.
+    """
+    repo = tmp_path / "install"
+    repo.mkdir()
+    (repo / "config.toml").write_text('[assistant]\nname = "Planted"\n', encoding="utf-8")
+    (repo / ".env").write_text("DEEPSEEK_API_KEY=sk-planted\n", encoding="utf-8")
+    monkeypatch.setattr(config, "REPO_ROOT", repo)
+    monkeypatch.setattr(config, "ENV_PATH", repo / ".env")
+
+    loaded = []
+    monkeypatch.setattr(config, "load_dotenv", lambda path: loaded.append(path))
+
+    monkeypatch.setattr(config, "FROZEN", True)
+    assert config.config_path() is None
+    config._load_dotenv()
+    assert loaded == []
+
+    (home / "config.toml").write_text('[assistant]\nname = "Mine"\n', encoding="utf-8")
+    assert config.config_path() == home / "config.toml"
+
+    # And in a checkout, both are still found.
+    monkeypatch.setattr(config, "FROZEN", False)
+    assert config.config_path() == repo / "config.toml"
+    config._load_dotenv()
+    assert loaded == [repo / ".env"]
+
+
 def test_the_shipped_template_names_no_folders():
     """A template carrying the builder's own folders is the same mistake as a
     shipped `.env`: two paths that do not exist on the machine that copied it,
