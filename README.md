@@ -66,6 +66,12 @@ What is left is the interesting half:
 - **Cheaper.** Every tool is paid for in context on every turn, whether or not it
   is called. Twelve of them cost 1552 tokens off the top. That number decides how
   many hands it can have at once, so it is the number the next stage is about.
+- **Shippable.** It runs on a stranger's machine now. The installer carries a
+  frozen Python sidecar beside the window, every credential is optional and
+  entered in the app, nothing of the author's is bundled — the build refuses to
+  finish if a `.env`, a config or anything key-shaped got in — and the model is
+  pulled from whatever Ollama the user already has. What a release still lacks
+  is code signing.
 
 Full design: [`doc/sunday_architecture.html`](doc/sunday_architecture.html) —
 the specification the code is written against. Open it in a browser; it is one
@@ -73,12 +79,11 @@ file with no dependencies.
 
 ## From nothing to an app you can double-click
 
-There is no binary on the releases page and there is not going to be one: the
-installer this project can currently produce carries the window and not the
-Python half, which would give you something that starts and then says it cannot
-find its own sidecar. Building it yourself takes about ten minutes, most of
-which is downloads, and the result is better than a release anyway — it runs
-against your own models and your own folders.
+There is no binary on the releases page yet. You can build an installer that
+works on any Windows machine — see [Giving it to somebody
+else](#giving-it-to-somebody-else) — but for your own machine, building from
+source takes about ten minutes, most of which is downloads, and it runs against
+your own models and your own folders.
 
 Every command here is **PowerShell**, which is what Windows gives you.
 
@@ -183,20 +188,26 @@ talk and prints what each piece made of it:
 ### Calendar and mail, if you want them
 
 Both are read-only and both need a Google **desktop** OAuth client. Create one
-in the Google Cloud console, enable the Calendar and Gmail APIs, and put the two
-values in `.env` at the repo root beside `DEEPSEEK_API_KEY`:
+in the Google Cloud console, enable the Calendar and Gmail APIs, then open
+**Settings → Keys and sign-in** in the window, paste the client id and secret,
+and press **Sign in to Google**. That opens a browser, and the code comes back
+to a socket on this machine rather than through your clipboard.
 
-```
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-```
+Without a client id and secret, `calendar_read` and `mail_search` are simply not
+bound — the assistant does not have them, does not claim to, and says where to
+turn them on if you ask.
 
-Then sign in once. This opens a browser, and the code comes back to a socket on
-this machine rather than through your clipboard:
+There is a terminal route too, which does the same thing and is the one to reach
+for if the window will not start:
 
 ```powershell
 .venv\Scripts\python.exe -m sunday.tools.google
 ```
+
+Not once, either. A personal OAuth client stays in Google's **testing** mode,
+which needs your own address on its test-user list and expires the sign-in every
+seven days. The same button fixes that, and the refusal you get when it lapses
+says so.
 
 `sunday-google.exe` does the same thing, but console scripts are written at
 install time -- a `.venv` created before that entry point existed does not have
@@ -332,24 +343,47 @@ Move the repository and both shortcuts break; make them again.
 
 ### Giving it to somebody else
 
-The same command also writes an NSIS installer to
-`target\release\bundle\nsis\Alexa_0.1.0_x64-setup.exe`, and that installer is
-**not distributable yet**. It carries the window and not the Python sidecar,
-which is still supposed to ship as a PyInstaller one-folder build beside the
-exe. Installed on a machine without this repository, the shell starts and then
-reports that it cannot find `sunday-sidecar.exe`. That is broken rather than
-unsafe, but it is broken.
+```powershell
+cd app; npm run bundle
+```
 
-If you do package it, three things are worth knowing before a first release,
-because none of them are visible from the code:
+That freezes the Python half with PyInstaller into `app\src-tauri\sidecar\`
+(about 310 MB — its own Python, Chroma, the ONNX runtime, PortAudio, espeak-ng)
+and then builds the installer with it inside:
+`app\src-tauri\target\release\bundle\nsis\Alexa_0.1.0_x64-setup.exe`. **That
+file is the one to hand over** — about 95 MB. It needs no Python, no repository
+and no `.venv` on the other machine.
 
-- **`.env` is the whole risk.** It holds `DEEPSEEK_API_KEY` and the Google
-  client secret. It is gitignored, so the repository is safe — but a PyInstaller
-  spec takes what it is told to take, and one that sweeps the project root puts
-  that key *inside the binary*, where `.gitignore` means nothing and a published
-  release is permanent. Exclude it explicitly.
-- **`%LOCALAPPDATA%\Sunday` must never be in the build.** It is the memory
-  store — every turn ever filed — and `google_token.json`.
+What the other machine still needs, and gets told about on first launch:
+
+- **[Ollama](https://ollama.com/download)**, installed and running. It is the
+  one thing this app cannot install for you.
+- **The models.** The first-run screen pulls `qwen3.5:4b` through Ollama and
+  downloads the voice models (about 1 GB). Chroma fetches its small embedding
+  model the first time something is remembered.
+- **Their own keys, if they want them.** None are needed. The DeepSeek key and a
+  Google client are entered under Settings → Keys and sign-in and stay on their
+  machine.
+
+Your `.env` is never in it, by three separate means. PyInstaller is given the
+sidecar's imports and nothing from the repository root. The frozen sidecar does
+not read a `.env` or a repo-root `config.toml` even if one is put beside it —
+only `%LOCALAPPDATA%\Sunday` and real environment variables. And
+`packaging\build_sidecar.py` searches its own output for `.env`, `config.toml`,
+`credentials.json`, `google_token.json` and anything shaped like a DeepSeek key
+or a Google client secret, and deletes the build rather than finish if it finds
+one. `%LOCALAPPDATA%\Sunday` — your memory store and your Google sign-in — is
+never an input either.
+
+On this machine nothing changes: the `sunday.exe` in `target\release` still
+prefers the repository's `.venv` when it finds one above itself, so your own copy
+keeps your `config.toml` and your `.env`. Only a copy with no `.venv` above it —
+an installed one — uses the bundled sidecar.
+
+Plain `npm run tauri build` still works without freezing anything first; it
+warns that the installer it makes has no sidecar inside, which is fine for
+yourself and useless for anybody else.
+
 - **An unsigned binary is a scary download, not a dangerous one.** SmartScreen
   will warn about it, and antivirus false positives on PyInstaller bundles are
   routine. Code signing is the only fix, and it costs money.
@@ -370,14 +404,53 @@ nothing needs it. In Git Bash the same commands work with forward slashes:
 
 ## Configuration
 
-Copy `config.example.toml` to `config.toml` at the repo root (development) or to
-`%LOCALAPPDATA%\Sunday\config.toml` (installed). The repo-root copy wins. Set
-`SUNDAY_HOME` to move the data directory.
+**There is a settings screen** — the gear in the title bar — and everything in
+`config.toml` is on it, grouped, with a sentence about what each thing does.
+Saving rewrites `config.toml`, so comments in that file do not survive a save;
+`config.example.toml` is the commented template and is never overwritten.
 
-`.env` at the repo root holds `DEEPSEEK_API_KEY`, used only by the airlock's
-summariser. Without it, the web pipeline degrades to returning raw snippets
-rather than failing. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` go there
-too, if you want the calendar and the mailbox.
+Numbers that were *measured* say so on the screen, and say how to measure them
+again on your own hardware. `context_tokens` belongs to your graphics card, and
+`[wake] threshold` and `[echo] barge_in_ratio` belong to your microphone and
+your room. They are the ones worth changing and the ones worth not guessing at.
+
+Almost everything takes effect immediately. The model and the window size
+cannot, and the screen says which those are and offers a restart rather than
+pretending. *Start with Windows* and the frame rates apply the moment you save;
+*Start hidden* applies at the next launch, the only time it means anything.
+
+**Save** writes; **Cancel** throws away whatever you have not saved and closes.
+
+If you would rather edit the file: copy `config.example.toml` to `config.toml`
+at the repo root (development) or to `%LOCALAPPDATA%\Sunday\config.toml`
+(installed). The repo-root copy wins. Set `SUNDAY_HOME` to move the data
+directory.
+
+### Keys, all of which are optional
+
+None of them ship with the app. Enter them under **Settings → Keys and sign-in**
+and they are written to `%LOCALAPPDATA%\Sunday\credentials.json` — a path
+`[guardrail] secret_paths` already covers, so the assistant reading that file
+shuts the web door for the turn exactly as reading a `.env` does. The window
+itself never receives a key: it is shown whether one is set and the last four
+characters, and nothing else.
+
+| Key | What it is for | Without it |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | the airlock's summariser, the one model that is not local | web lookups still work; page text comes back unsummarised |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | calendar and mail, read-only | `calendar_read` and `mail_search` are not bound at all |
+
+Environment variables and a `.env` at the repo root still work as a fallback, so
+a development checkout needs nothing new. Anything entered in the settings screen
+takes precedence over both — otherwise a key typed into the screen on a machine
+that has a `.env` would save cleanly and change nothing.
+
+### Forgetting
+
+**Settings → Long-term memory** shows how much is in the Chroma store and where
+it is, and empties it. That also ends the conversation in progress — otherwise
+the session summary would be folded back into the store you just emptied the
+moment you closed the window.
 
 ## Layout
 
@@ -399,6 +472,8 @@ too, if you want the calendar and the mailbox.
 | `src/sunday/audio/listener.py` | every decision voice makes, with no hardware in it |
 | `src/sunday/audio/check.py` | measures your microphone and room against your own voice |
 | `src/sunday/server.py` | the sidecar's WebSocket protocol |
+| `src/sunday/settings.py` | what is editable, what it costs, and writing it back |
+| `app/src/lib/Settings.svelte` | the form, rendered from a schema it does not know |
 | `web/debug.html` | a plain page that drives a whole turn |
 | `app/src/` | the window: the orb, the transcript, the backstage panel |
 | `app/src/lib/orb.js` | every state the orb draws, on a 2D canvas, never WebGL |
@@ -423,7 +498,7 @@ launches, spawns the sidecar, reads the handshake and drives a whole turn.
 | 9 | Barge-in | done | Talking over it stops it in about 100 ms — including while it is thinking |
 | 10 | The socket | done | The sidecar protocol; `web/debug.html` drives a whole turn |
 | 11 | Tauri shell + orb | done | A real window; the orb is the whole status display and both amplitudes it moves to are measured. The shell spawns the sidecar and drives a whole turn |
-| 12 | Windows integration | done | Tray tinted with the state, a title bar the page draws itself, single instance, NSIS, autostart, and a first-run screen that says what is missing. The installer itself has not been produced yet |
+| 12 | Windows integration | done | Tray tinted with the state, a title bar the page draws itself, single instance, NSIS, autostart, and a first-run screen that says what is missing. `npm run bundle` makes an installer with a frozen sidecar inside that runs on a machine without the repository |
 | 13 | Calendar + mail | done | OAuth through `python -m sunday.tools.google`, read-only, token on the credential list |
 
 ## Tests
