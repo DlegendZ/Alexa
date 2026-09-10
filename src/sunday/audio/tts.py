@@ -44,12 +44,13 @@ class Speech:
 
         # The one model allowed the whole machine, because it is the one whose
         # latency you hear. It may not hold the cores hot, though -- see onnx.
-        import onnxruntime as ort
-
-        session = ort.InferenceSession(
-            str(models.model_path("kokoro/kokoro-v1.0.onnx")),
-            onnx.options(threads=None),
-            providers=["CPUExecutionProvider"],
+        #
+        # Built here rather than by Kokoro so the options reach it, and built
+        # through `onnx.session` rather than by calling onnxruntime directly:
+        # this file had its own copy of the provider list, which is a second
+        # place for a decision that is supposed to live in exactly one.
+        session = onnx.session(
+            models.model_path("kokoro/kokoro-v1.0.onnx"), threads=None
         )
         self._kokoro: Any = Kokoro.from_session(
             session, str(models.model_path("kokoro/voices-v1.0.bin"))

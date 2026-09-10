@@ -220,7 +220,7 @@ class Tts:
     #: 54 voices ship in one 28 MB file; `python -m sunday.audio.check --voices`
     #: lists them. `af_heart` is the default because it is the clearest of the
     #: American female set at speed 1.0, and clarity is what survives a room.
-    voice: str = "af_heart"
+    voice: str = "af_bella"
     speed: float = 1.0
     language: str = "en-us"
 
@@ -318,7 +318,18 @@ def _default_label(path: str) -> str:
 
 @dataclass
 class Memory:
-    distance_cutoff: float = 0.45
+    #: Cosine distance, so 0 is identical and 1 is unrelated. Measured against
+    #: 830 real turns rather than picked: nine questions whose answer was in
+    #: the store came back at 0.13-0.60, six about things never discussed at
+    #: 0.72-0.90, and nothing landed between. Any cutoff in that gap keeps
+    #: every relevant turn and drops every irrelevant one.
+    #:
+    #: It was 0.45, and that kept two of the nine. The store had the answer,
+    #: the vector search found it every time, and this number threw it away --
+    #: which from outside is indistinguishable from an assistant with no
+    #: long-term memory at all. Third time a guessed threshold has cost this
+    #: project real behaviour; see `[wake] threshold` for the other two.
+    distance_cutoff: float = 0.65
     top_k: int = 5
     idle_minutes: int = 10
     #: Sized to fit the window rather than scaled into it. With 23552 of

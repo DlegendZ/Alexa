@@ -45,6 +45,11 @@ preroll_ms    = 500    # kept from before the wake word finished
 # by barge-in after both its tools had already changed things on disk. The
 # guards all behaved correctly; an open microphone simply means the room is
 # talking to it. Turn it on once you know the room.
+# Deliberately `false` here and `true` in the local config, and the same for
+# follow_up_ms below. Both open the microphone without anybody asking: this one
+# from the moment the app starts, that one for a while after every reply. On the
+# machine this was built on that is wanted and understood; as a shipped default
+# it is a stranger's room being listened to.
 listen_on_start = false
 lead_in_ms    = 4000   # woke, heard nothing, go back to sleep
 
@@ -66,7 +71,7 @@ follow_up_ms = 30000
 
 [tts]
 enabled  = true
-voice    = "af_heart"   # 54 ship in one file; --voices lists them
+voice    = "af_bella"   # 54 ship in one file; --voices lists them
 speed    = 1.0
 language = "en-us"
 
@@ -93,9 +98,18 @@ roots = [
 max_read_bytes = 200000
 
 [memory]
-distance_cutoff = 0.45   # tune with real turns
+distance_cutoff = 0.65   # measured, see below
 top_k           = 5
 idle_minutes    = 10
+# 0.65 is measured rather than picked, against 830 real turns. Cosine, so 0 is
+# identical and 1 is unrelated. Nine questions whose answer was known to be in
+# the store came back at 0.13 to 0.60; six about things never discussed came
+# back at 0.72 to 0.90. Nothing lands between, so any cutoff in that gap keeps
+# every relevant turn and drops every irrelevant one.
+#
+# It was 0.45, which kept two of those nine. The store had the answer, the
+# search found it, and the cutoff threw it away -- including every turn where
+# the user had said their own name.
 # Sized to fit 23552 rather than scaled into it: these four plus the thinking
 # reservation come to 19456 of the 19968 left after overhead and the reply, so
 # the numbers here are the numbers used. Raise the window and raise these too.
@@ -133,7 +147,10 @@ tool_calls = 12  # hard cap per turn: room for a job, not just a lookup
 fps_focused     = 60
 fps_blurred     = 10
 start_minimised = false
-autostart       = true
+# Off, and off on purpose: something that holds several gigabytes of a
+# graphics card should not add itself to the Run key because a template said
+# so. Turn it on in your own config.toml once you have decided you want it.
+autostart       = false
 # The backstage trace: one line per step, so you can see what ran rather than
 # only what came back. SUNDAY_TRACE=0 overrides this for a single run.
 trace           = true
