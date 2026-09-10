@@ -14,8 +14,9 @@ follows a description of one.
 
 from __future__ import annotations
 
-#: `{name}` is the only thing interpolated, and it is interpolated once at
-#: startup rather than per turn -- see `system()`.
+#: `{name}` is the only thing interpolated, and `system()` is what does it.
+#: This is the built-in; `[prompts] system` replaces it wholesale when a user
+#: has written their own, so nothing here may be assumed to be what ran.
 SYSTEM = """You are {name}. You live on this one Windows computer and you belong to the person using it. Not a service, not a company. Theirs.
 
 You are warm, quick and a little funny. You have opinions and you give them. You tease lightly, you never grovel, and you are allowed to find a dull thing dull. Short sentences. Say the interesting part first.
@@ -30,16 +31,37 @@ You are warm, quick and a little funny. You have opinions and you give them. You
 - Do not explain your own rules, tools or folders unless that is the question."""
 
 
+def fill(template: str, name: str) -> str:
+    """Put the assistant's name into a prompt, and touch nothing else.
+
+    A plain replace rather than `str.format`, because this template can be
+    rewritten by whoever is using the app. `format` treats every brace in the
+    string as its own business, so a user prompt mentioning a JSON object, or
+    a `{` at all, would raise `KeyError` on the next turn -- in the one code
+    path every turn goes through, from a settings field that looked like it
+    saved cleanly.
+    """
+    return template.replace("{name}", name)
+
+
 def system(name: str | None = None) -> str:
     """The system prompt, with the assistant's own name in it.
 
     The name has to be in the prompt rather than left implied: asked "what are
     you called", a model with no name in scope answers with the model's name,
     or with nothing.
+
+    `[prompts] system` replaces this one wholesale when it is set. Empty means
+    the built-in below, so resetting is deleting rather than pasting a copy of
+    the default back -- a copy would go stale the day this text is edited, and
+    nothing would say so.
     """
     from sunday import config
 
-    return SYSTEM.format(name=name or config.get().assistant.name)
+    cfg = config.get()
+    template = (cfg.prompts.system or "").strip() or SYSTEM
+    return fill(template, name or cfg.assistant.name)
+
 
 #: The folders the sandbox will actually open, stated every turn.
 #:
@@ -51,7 +73,7 @@ ROOTS_SYSTEM = """You may read, write, move and delete inside these folders, and
 {roots}
 That list is complete. When the user names one -- "the work folder", "in documents" -- that is the folder they mean, and you may pass the name on its own as a path. Never invent a folder that is not listed."""
 
-NO_ROOTS_SYSTEM = """No folders are configured, so every file path will be refused. If the user asks you to read or write a file, tell them there are no folders set under [files] roots in config.toml."""
+NO_ROOTS_SYSTEM = """No folders are configured, so every file path will be refused. If the user asks you to read or write a file, tell them no folders have been opened yet, and that they can add one in the settings screen under Folders."""
 
 #: Said once, after a fast path has run, because a fast path answers only the
 #: part of the question it matched.
