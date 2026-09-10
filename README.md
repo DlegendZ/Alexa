@@ -21,21 +21,92 @@ is written by something that has never seen your private data.
 Full design: `doc/sunday_architecture.html` (local, not in git).
 Deviations found while building: [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md).
 
-## Setup, once
+## From nothing to an app you can double-click
 
-Ollama must be running with the model pulled:
+There is no binary on the releases page and there is not going to be one: the
+installer this project can currently produce carries the window and not the
+Python half, which would give you something that starts and then says it cannot
+find its own sidecar. Building it yourself takes about ten minutes, most of
+which is downloads, and the result is better than a release anyway — it runs
+against your own models and your own folders.
+
+Every command here is **PowerShell**, which is what Windows gives you.
+
+**1. Prerequisites.** [Python 3.12+](https://www.python.org/downloads/),
+[Node](https://nodejs.org/) and [Ollama](https://ollama.com/download). Rust as
+well, if you want the desktop window rather than the terminal client:
+
+```powershell
+winget install Rustlang.Rustup
+```
+
+Open a new terminal afterwards, or `cargo` will not be on your path — and that
+failure reads as `program not found` rather than as a stale environment.
+
+**2. The repository and its virtualenv.**
+
+```powershell
+git clone https://github.com/DlegendZ/Sunday.git; cd Sunday
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[dev,voice]"
+```
+
+The editable install is what makes `sunday` runnable from any directory with no
+`PYTHONPATH` to remember, and what writes the console scripts. Leave `,voice`
+out if you only want to type at it — PortAudio is the part that fails on a
+machine with no sound card.
+
+**3. The model.** Ollama has to be running; it installs itself as a service, so
+usually it already is.
 
 ```powershell
 ollama pull qwen3.5:4b
 ```
 
-Install the package into the virtualenv. That is what makes `sunday` runnable
-from any directory with no `PYTHONPATH` to remember, and what writes the console
-scripts:
+That is 2.5 GB, and it is the whole of the thinking. Nothing else is downloaded
+from anywhere at runtime except what you explicitly ask it to look up.
+
+**4. The voice models**, if you want to talk to it. About a quarter of a
+gigabyte, and they are not in the repository:
 
 ```powershell
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.venv\Scripts\python.exe -m sunday.audio.models
 ```
+
+**5. Configuration.** Copy the template and set the folders it may open — the
+`[files] roots` block is the only thing you *must* change, because the paths in
+it are somebody else's:
+
+```powershell
+Copy-Item config.example.toml config.toml
+```
+
+**6. Check it works** before building anything around it:
+
+```powershell
+.venv\Scripts\sunday.exe
+```
+
+That is the terminal client, and it exercises the whole core. If it answers, the
+window will too.
+
+**7. Build the app.**
+
+```powershell
+cd app; npm install; npm run tauri build; cd ..
+```
+
+The first build compiles a few hundred Rust crates and takes a while; later ones
+take about a minute. It produces
+`app\src-tauri\target\release\sunday.exe`, and
+[a shortcut to it](#a-shortcut) is the whole of "installed".
+
+Optional extras, none of which the app needs to run: a
+[DeepSeek key](#configuration) sharpens what the web pipeline brings back, and
+[Google sign-in](#calendar-and-mail-if-you-want-them) adds read-only calendar
+and mail.
+
+## Setup, in more detail
 
 ### Voice, once more
 
@@ -147,16 +218,18 @@ cd app; npm install
 npm run tauri dev
 ```
 
-The shell spawns the sidecar itself, reads the handshake, restarts it up to three
-times a minute if it dies, and gives up honestly after that. The title bar is
-drawn by the page, so it carries three controls and nothing else; its close
-hides the window to the tray. Typing **exit** in the box, or **Quit Alexa** in
-the tray menu, is what stops the sidecar — that is what flushes the session
-summary to memory.
+The title bar is drawn by the page, so it carries three controls and
+nothing else. **Closing quits**, and quits in the right order: the X,
+Alt+F4, typing **exit** in the box and **Quit Alexa** in the tray all take
+the same route, because the sidecar has to be told before anything is
+killed — `shutdown` is what folds the session summary into Chroma, and
+Chroma is SQLite. Nothing opens a console window: the sidecar is a console
+application and is started with `CREATE_NO_WINDOW`, so the app is one
+window and not a window plus a black rectangle.
 
-One switch controls the voice half. On means the microphone is open, the wake
-word is listening and replies are spoken; off means the window is a text box.
-Typing works either way.
+One switch controls the voice half. On means the microphone is open, the
+wake word is listening and replies are spoken; off means the window is a
+text box. Typing works either way.
 
 The window can also be run on its own, against a sidecar you started by hand,
 which is much faster to iterate on and is how it was built:

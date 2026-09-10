@@ -1,3 +1,7 @@
+# Mirrors pyproject.toml, for anyone who would rather not use the editable
+# install. `pip install -e ".[dev]"` is the supported path -- it is what writes
+# the console scripts and what makes `sunday` runnable without PYTHONPATH.
+
 # core
 langgraph>=1.0
 ollama>=0.6
@@ -6,12 +10,23 @@ python-dotenv>=1.0
 chromadb>=1.0
 websockets>=14.0
 
-# the airlock's summariser (deepseek, Anthropic-compatible endpoint)
+# the airlock's summariser (deepseek, on an Anthropic-compatible endpoint)
 anthropic>=0.60
 
 # the airlock's web pipeline
 ddgs>=9.0
 trafilatura>=2.0
+
+# voice: the microphone, the wake word, the transcriber and the speaker.
+# onnxruntime and numpy arrive with chromadb already; these are the ones that
+# do not. Kept separate in pyproject as the `voice` extra, because a text-only
+# run has no use for PortAudio and PortAudio is what fails on a headless box.
+sounddevice>=0.5
+tokenizers>=0.20
+onnxruntime>=1.20
+numpy>=1.26
+kokoro-onnx>=0.4
+onnx-asr[hub]>=0.12
 
 # dev
 pytest>=8.0

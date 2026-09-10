@@ -1,13 +1,21 @@
 .env
 .claude/
-doc/
 .venv/
 __pycache__/
 *.pyc
 data/
-CLAUDE.md
 config.toml
 node_modules/
+
+# Local working notes, not published. The design document itself IS published
+# -- doc/sunday_architecture.html is the spec and belongs with the code -- but
+# the running commentary around it does not: the context log is a diary, the
+# architecture notes are a hundred and forty numbered corrections written to
+# each other, and the code review is a snapshot of a week that is over.
+CLAUDE.md
+ARCHITECTURE_NOTES.md
+CODE_REVIEW.md
+doc/sunday_context.md
 
 # editable install artefacts
 *.egg-info/
