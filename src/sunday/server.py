@@ -24,6 +24,7 @@ import websockets
 from websockets.asyncio.server import ServerConnection, serve
 
 from sunday import config
+from sunday import settings as settings_module
 from sunday.agent.llm import OllamaDown
 from sunday.runtime import ConfirmRequest, Runtime
 
@@ -118,6 +119,11 @@ class Sidecar:
         #: same reason one turn is: there is one network and one disk, and two
         #: downloads of the same file would race for the same `.part`.
         self._fetching = False
+        #: True while the Google consent flow is waiting on a browser. One at a
+        #: time: two would be two loopback servers and two `prompt=consent`
+        #: redirects, and whichever finished second would overwrite the token
+        #: the first had just earned.
+        self._authorising = False
 
     # -- lifecycle ------------------------------------------------------
 
@@ -235,6 +241,14 @@ class Sidecar:
                 await self._broadcast({"type": "state", "value": "idle"})
         elif kind == "fetch_models":
             self._start_fetch()
+        elif kind == "get_settings":
+            await self._send(websocket, self._settings())
+        elif kind == "save_settings":
+            await self._save_settings(message)
+        elif kind == "forget_all":
+            await self._forget_all()
+        elif kind == "google_auth":
+            self._start_google_auth()
         elif kind == "confirm_response":
             pending = self._pending.get(str(message.get("id", "")))
             if pending is not None:
@@ -255,6 +269,186 @@ class Sidecar:
             await self._send(
                 websocket, {"type": "error", "text": f"unknown message {kind!r}"}
             )
+
+    # -- settings -------------------------------------------------------
+
+    def _settings(self) -> dict:
+        """The whole settings payload, assembled in one place.
+
+        One producer, like `ready`, and for the same reason: it is a snapshot
+        of several facts at once, and two places building it is two places to
+        forget the field that was added last. Everything in it is safe to send
+        -- `settings.credentials()` returns presence and four characters, never
+        a key.
+        """
+        remembered = None
+        try:
+            remembered = self.runtime.memory.count()
+        except Exception:  # noqa: BLE001 - a store that will not open is a number we do not have
+            remembered = None
+        payload = settings_module.describe(self.runtime.cfg, remembered=remembered)
+        # Spelled as a literal on purpose. `tests/test_shell.py` finds what the
+        # sidecar can send by reading `"type": "..."` out of this file, so
+        # setting the key afterwards makes the message invisible to the test
+        # that exists to notice the window forgetting to handle it -- the
+        # `trace.query_left` bug, in the machinery built to catch it.
+        return {"type": "settings", **payload}
+
+    async def _save_settings(self, message: dict) -> None:
+        """Write the settings, then make the running process agree with them.
+
+        Refused while a turn is in flight. A turn reads the config as it goes
+        -- the folders when it resolves a path, the caps when it counts hops --
+        so swapping it underneath one would give that turn two configurations
+        and no way to tell which answered. Waiting is a second; the confusion
+        would be permanent and unreproducible.
+        """
+        if self._turn_lock.locked():
+            await self._broadcast({
+                "type": "saved",
+                "ok": False,
+                "error": "still working on a turn -- try again when it finishes",
+                "restart": [],
+                "warnings": [],
+            })
+            return
+
+        try:
+            # Credentials go through the same call, so they are written only
+            # once every value has been checked. They never came down to the
+            # window as values, and only the boxes the user typed into come
+            # back.
+            given = message.get("credentials")
+            outcome = settings_module.apply(
+                message.get("values") or {},
+                credentials=given if isinstance(given, dict) else None,
+            )
+        except settings_module.Invalid as exc:
+            await self._broadcast({
+                "type": "saved",
+                "ok": False,
+                "error": str(exc),
+                "restart": [],
+                "warnings": [],
+            })
+            return
+        except Exception as exc:  # noqa: BLE001 - a failed save is a message
+            await self._broadcast({
+                "type": "saved",
+                "ok": False,
+                "error": f"the settings could not be written: {type(exc).__name__}: {exc}",
+                "restart": [],
+                "warnings": [],
+            })
+            return
+
+        self.runtime.reload_config()
+        if outcome.audio_changed and self._ear is not None:
+            # The ear reads the whole config when it is built and never again,
+            # so a microphone setting that saves and does nothing is the shape
+            # of failure this screen exists to avoid. Closing and reopening is
+            # what the voice switch already does, and it is a second.
+            self._close_ear()
+            self._set_listening(True)
+
+        await self._broadcast({
+            "type": "saved",
+            "ok": True,
+            "error": "",
+            "restart": outcome.restart,
+            "warnings": outcome.warnings,
+        })
+        await self._broadcast(self._settings())
+
+    async def _forget_all(self) -> None:
+        """Empty long-term memory. Irreversible, and refused mid-turn.
+
+        Mid-turn because Chroma is SQLite and the turn in flight will write to
+        it when it commits -- dropping the collection underneath that is the
+        force-kill lesson from the other direction.
+        """
+        if self._turn_lock.locked():
+            await self._broadcast({
+                "type": "forgot",
+                "ok": False,
+                "removed": 0,
+                "error": "still working on a turn -- try again when it finishes",
+            })
+            return
+        # Held for the drop, not only checked before it. The drop runs on a
+        # thread, and a check followed by an await is a window: a question
+        # asked inside it started a turn against a collection being deleted,
+        # which is the race the check was written to refuse.
+        async with self._turn_lock:
+            try:
+                removed = await asyncio.to_thread(self.runtime.forget_everything)
+            except Exception as exc:  # noqa: BLE001
+                await self._broadcast({
+                    "type": "forgot",
+                    "ok": False,
+                    "removed": 0,
+                    "error": f"nothing was deleted: {type(exc).__name__}: {exc}",
+                })
+                return
+        await self._broadcast(
+            {"type": "forgot", "ok": True, "removed": removed, "error": ""}
+        )
+        await self._broadcast(self._settings())
+
+    # -- signing in to Google -------------------------------------------
+
+    def _start_google_auth(self) -> None:
+        """Run the consent flow beside the read loop.
+
+        Consent cannot happen inside a *turn* -- a model would be waiting on a
+        tool result while a browser window may never open. It can happen here:
+        nothing is waiting, no confirmation timeout is running, and a browser
+        opening is what the user just pressed a button to ask for.
+
+        One at a time, and the flow has its own five-minute bound, so a browser
+        tab that is closed rather than answered ends rather than leaking the
+        thread.
+        """
+        if self._authorising:
+            return
+        self._authorising = True
+        task = asyncio.create_task(asyncio.to_thread(self._google_auth))
+        self._turns.add(task)
+        task.add_done_callback(self._turns.discard)
+
+    def _google_auth(self) -> None:
+        from sunday.tools import google
+
+        loop = self._loop
+
+        def say(text: str, status: str = "running") -> None:
+            if loop is None:
+                return
+            try:
+                loop.call_soon_threadsafe(
+                    lambda: self._relay(
+                        self._broadcast(
+                            {"type": "google_auth", "status": status, "text": text}
+                        )
+                    )
+                )
+            except RuntimeError:
+                pass
+
+        try:
+            code = google.authorise(say=say)
+            if code == 0:
+                say("Signed in to Google.", "done")
+                if loop is not None:
+                    loop.call_soon_threadsafe(
+                        lambda: self._relay(self._broadcast(self._settings()))
+                    )
+            else:
+                say("Sign-in did not finish. Nothing was saved.", "error")
+        except Exception as exc:  # noqa: BLE001 - a failed sign-in is a message
+            say(f"sign-in stopped: {type(exc).__name__}: {exc}", "error")
+        finally:
+            self._authorising = False
 
     # -- the first run --------------------------------------------------
 

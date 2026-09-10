@@ -103,6 +103,7 @@ class LongTermMemory:
 
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or config.MEMORY_DIR
+        self._client: Any = None
         self._collection: Any = None
         #: The last retrieval, for the trace. Never read by the graph.
         self.last_probe = Probe()
@@ -115,12 +116,44 @@ class LongTermMemory:
             import chromadb
 
             self._path.mkdir(parents=True, exist_ok=True)
-            client = chromadb.PersistentClient(path=str(self._path))
-            self._collection = client.get_or_create_collection(
+            if self._client is None:
+                self._client = chromadb.PersistentClient(path=str(self._path))
+            self._collection = self._client.get_or_create_collection(
                 COLLECTION, metadata={"hnsw:space": SPACE}
             )
             self._check_space(self._collection)
         return self._collection
+
+    def forget_all(self) -> int:
+        """Empty the store, and say how much was in it.
+
+        The collection is dropped and made again rather than the documents
+        being deleted one by one: an emptied HNSW index is not the same thing
+        as a new one, and the point of this button is a store that behaves like
+        a first run.
+
+        The client is kept open across the drop. Chroma is SQLite underneath,
+        and a second process -- or a second client in this one -- opening the
+        same directory mid-write is how a store gets corrupted; there is
+        already a note in this repository about a whole session spent on
+        exactly that.
+
+        Failure is raised rather than swallowed. Everywhere else in this class
+        an exception is caught, because memory must never be the reason a turn
+        fails -- but this is not a turn. It is a button somebody pressed, and
+        "it did not work" is the only honest answer to give them.
+        """
+        removed = self.collection.count()
+        self._client.delete_collection(COLLECTION)
+        self._collection = None
+        # Open the new one now, while there is somebody to tell if it will not
+        # open. Left until the next turn, a failure here would surface as
+        # retrieval quietly returning nothing.
+        self._collection = self._client.get_or_create_collection(
+            COLLECTION, metadata={"hnsw:space": SPACE}
+        )
+        self.last_probe = Probe()
+        return removed
 
     @staticmethod
     def _check_space(collection: Any) -> None:

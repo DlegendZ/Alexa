@@ -67,7 +67,8 @@ DOOR_UNBOUND = (
 )
 DOOR_OFF = (
     "refused: web lookups are switched off in config. Tell the user that "
-    "plainly, and that they can re-enable it under [external] in config.toml. "
+    "plainly, and that they can switch it back on in the settings screen, "
+    "under The web. "
     "Do not answer the question from memory as though you had looked it up."
 )
 DOOR_OFF_SYSTEM = (
@@ -1059,6 +1060,39 @@ class Runtime:
 
     def shutdown(self) -> None:
         self.close_session()
+
+    def reload_config(self) -> config.Config:
+        """Pick up a settings change without restarting.
+
+        Everything a turn reads is read through `self.cfg` or through
+        `config.get()` at the moment it is needed, so reassigning it here is
+        enough for the folders, the limits, the memory sizing, the prompt, the
+        web door and the trace.
+
+        The agent is deliberately left alone. It was built with a model name,
+        an address and a window size, and those are exactly the settings the
+        screen marks as needing a restart -- rebuilding it here would drop the
+        client mid-session to save the user a button they have already been
+        shown. One setting, one meaning: if the screen says restart, restarting
+        is what changes it.
+        """
+        self.cfg = config.reload()
+        self._tracing = config.trace_enabled(self.cfg)
+        return self.cfg
+
+    def forget_everything(self) -> int:
+        """Empty long-term memory, and the session that would refill it.
+
+        Both halves, and the second is not a courtesy. `close_session` folds
+        the conversation so far into Chroma at shutdown, so emptying the store
+        and leaving the session in place means the turns the user just deleted
+        are written back the moment they close the window -- a delete button
+        that undoes itself an hour later, which is worse than none.
+        """
+        removed = self.memory.forget_all()
+        self.session.clear()
+        self.session_id = uuid.uuid4().hex[:12]
+        return removed
 
     # -- one turn -------------------------------------------------------
 
