@@ -1,12 +1,20 @@
-"""Configuration: config.toml plus the two secrets that live in .env.
+"""Configuration: config.toml, plus the credentials the settings screen writes.
 
 Search order for config.toml is repo root first (development), then
 SUNDAY_HOME. Anything absent falls back to the defaults below, so the app
 starts with no config file at all.
+
+Credentials are a separate file for a separate reason. They are optional --
+all of them, and the app is expected to run with none set -- and they belong
+to whoever installed this copy rather than to whoever built it. They live at
+CREDENTIALS_PATH, which `credentials*` on the guardrail's deny list already
+covers, and `.env` remains a fallback so a development machine keeps working
+without a second place to put the same key.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass
@@ -35,13 +43,161 @@ MODEL_DIR = SUNDAY_HOME / "models"
 HANDSHAKE_PATH = SUNDAY_HOME / "handshake.json"
 GOOGLE_TOKEN_PATH = SUNDAY_HOME / "google_token.json"
 
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+#: Where a credential typed into the settings screen is kept.
+#:
+#: Not `.env`, which is a developer's file at a repository root -- and a
+#: shipped build has no repository root to put one in. This lands beside the
+#: memory store and the Google token, in the one directory an installed copy
+#: is certain to own.
+#:
+#: It needs no new deny rule: `credentials*` has been on `[guardrail]
+#: secret_paths` since the list was written, so the agent reading this file
+#: shuts the web door for the turn exactly as reading `.env` does.
+CREDENTIALS_PATH = SUNDAY_HOME / "credentials.json"
+
+#: The base URL to fall back to, named once so the settings screen can show
+#: what "empty" is going to mean.
+DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com/anthropic"
+
+#: Everything the settings screen may set, and nothing else. The file is read
+#: through this list rather than merged wholesale, so a stray key in it cannot
+#: become a module attribute.
+CREDENTIAL_KEYS = (
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET",
+)
+
+#: Every one of these is optional, and the app is expected to run with all of
+#: them empty. What each one costs when it is missing is stated here because
+#: it is what the settings screen has to tell the user.
+CREDENTIAL_COSTS = {
+    "DEEPSEEK_API_KEY": (
+        "Without it, web lookups still work -- the page text comes back "
+        "unsummarised rather than not at all."
+    ),
+    "DEEPSEEK_BASE_URL": (
+        "Where the summariser is called. Leave it empty for DeepSeek's own "
+        "endpoint."
+    ),
+    "GOOGLE_CLIENT_ID": "Without it, calendar and mail are switched off.",
+    "GOOGLE_CLIENT_SECRET": "Without it, calendar and mail are switched off.",
+}
+
+#: The DeepSeek key, used by `web.summarise` and by nothing else. Empty is a
+#: supported state: the summariser degrades to the raw material.
+DEEPSEEK_API_KEY = ""
+DEEPSEEK_BASE_URL = DEEPSEEK_DEFAULT_BASE_URL
 #: The Google desktop OAuth client, for calendar and mail. Read-only scopes,
 #: and the refresh token it earns lands at GOOGLE_TOKEN_PATH -- which is on the
 #: credential list, so the agent reading it shuts the web door for the turn.
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/anthropic")
+GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_SECRET = ""
+
+
+def read_credentials() -> dict[str, str]:
+    """What is in the credential file, as strings, with anything unreadable
+    treated as nothing.
+
+    A missing or corrupt file is an ordinary first run, not a fault: every
+    value in it is optional, so there is nothing here worth failing over.
+    """
+    try:
+        raw = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: str(raw.get(key) or "").strip()
+        for key in CREDENTIAL_KEYS
+        if str(raw.get(key) or "").strip()
+    }
+
+
+def credential_source(key: str) -> str:
+    """Where the value in use came from: the settings file, the environment,
+    or nowhere.
+
+    Worth reporting rather than inferring. On a development machine `.env`
+    holds a key and the settings file does not, and a settings screen that
+    showed a value it is not the source of would be lying about which one it
+    is about to overwrite.
+    """
+    if read_credentials().get(key):
+        return "settings"
+    if os.getenv(key, "").strip():
+        return "environment"
+    return ""
+
+
+def refresh_credentials() -> None:
+    """Re-read the credential file and the environment into the module names.
+
+    The settings file wins. `.env` and a real environment variable are the
+    fallback, which is the order that makes the settings screen honest: a key
+    typed into it is the key that runs, on a machine that happens to have a
+    `.env` as much as on one that does not. The other way round, saving a
+    credential here would appear to work and change nothing.
+
+    These stay module attributes rather than becoming functions because every
+    call site and every test already reads them by name, and a second spelling
+    of the same fact is a second thing to keep in step.
+    """
+    global DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+    global GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+
+    stored = read_credentials()
+
+    def pick(key: str, fallback: str = "") -> str:
+        return stored.get(key) or os.getenv(key, "").strip() or fallback
+
+    DEEPSEEK_API_KEY = pick("DEEPSEEK_API_KEY")
+    DEEPSEEK_BASE_URL = pick("DEEPSEEK_BASE_URL", DEEPSEEK_DEFAULT_BASE_URL)
+    GOOGLE_CLIENT_ID = pick("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET = pick("GOOGLE_CLIENT_SECRET")
+
+
+def save_credentials(changes: dict[str, str | None]) -> None:
+    """Write the credential file and refresh the names from it.
+
+    A key absent from `changes` is left exactly as it was, and an empty string
+    clears it. That distinction is the whole reason the window never receives
+    a value: it can send back only what the user actually typed, so "I did not
+    touch this field" and "I emptied this field" stay different questions.
+    """
+    stored = read_credentials()
+    for key, value in changes.items():
+        if key not in CREDENTIAL_KEYS:
+            continue
+        text = "" if value is None else str(value).strip()
+        if text:
+            stored[key] = text
+        else:
+            stored.pop(key, None)
+
+    CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CREDENTIALS_PATH.write_text(
+        json.dumps(stored, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    refresh_credentials()
+
+
+def mask(value: str) -> str:
+    """A credential as it is allowed to appear outside this process.
+
+    Enough to recognise which key is in there and never enough to use. The
+    window is a WebView: it does not read files, and it does not receive
+    secrets either -- the same rule, one layer up.
+    """
+    if not value:
+        return ""
+    tail = value[-4:] if len(value) >= 8 else ""
+    return f"····{tail}" if tail else "····"
+
+
+refresh_credentials()
 
 
 @dataclass
@@ -441,8 +597,33 @@ class UI:
 
 
 @dataclass
+class Prompts:
+    """The one prompt a user is allowed to rewrite.
+
+    Empty means the built-in, which is what makes "reset" a deletion rather
+    than a copy of the default written back into the file -- a copied default
+    goes stale the day `prompts.SYSTEM` is edited and nothing says so.
+
+    Only the system prompt. The airlock's two prompts are not a personality
+    setting: `AIRLOCK_SYSTEM` is the instruction that keeps a private word out
+    of an outgoing query, and a settings screen that let it be rewritten would
+    be a settings screen that can switch off the one guarantee this program
+    makes.
+
+    It is paid for out of `[models] overhead_tokens`, and the settings screen
+    counts it: the built-in is 371 tokens, and the reservation is 2816 for the
+    prompt, the bound schemas, the framing and the loop's own scaffolding
+    together. A long prompt does not fail, it quietly shrinks the memory
+    slices -- so the number is shown rather than left to be discovered.
+    """
+
+    system: str = ""
+
+
+@dataclass
 class Config:
     assistant: Assistant = field(default_factory=Assistant)
+    prompts: Prompts = field(default_factory=Prompts)
     models: Models = field(default_factory=Models)
     audio: Audio = field(default_factory=Audio)
     wake: Wake = field(default_factory=Wake)

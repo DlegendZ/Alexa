@@ -10,6 +10,18 @@
 # program; this is the person it plays.
 name = "Alexa"
 
+[prompts]
+# The instructions given before every turn. Empty means the built-in one --
+# which is the default on purpose, so resetting is deleting rather than
+# pasting a stale copy of it back. Write {name} where the assistant's name
+# should go. Editable in the settings screen, under Character.
+#
+# It is paid for out of `[models] overhead_tokens` along with the tool schemas
+# and the framing, and going over does not fail -- it quietly takes the room
+# from memory instead. Keep it short: this prompt grew to 673 tokens once and
+# the model started reciting it back at people.
+system = ""
+
 [models]
 agent           = "qwen3.5:4b"
 ollama_url      = "http://127.0.0.1:11434"
@@ -88,13 +100,22 @@ tail_ms                         = 400
 barge_in_ratio                  = 0.35
 
 [files]
-# Each root can be a bare path, or a table with the name you call it by.
-# The name is what lets "move it to the work folder" resolve to a real path
-# instead of the model guessing at one.
-roots = [
-  { label = "documents", path = "C:/Users/User/Documents/Sunday" },
-  { label = "work",      path = "E:/Work/Sunday" },
-]
+# Empty, and empty on purpose: these are folders on somebody else's computer.
+# The shipped template used to carry the two from the machine this was built
+# on, which is the same mistake as shipping a `.env` -- a stranger copying it
+# would hand their assistant two paths that do not exist and get "no such
+# folder" about folders they never asked for.
+#
+# Add your own in the settings screen, under Folders, or here. Each root can be
+# a bare path or a table with the name you call it by, and the name is what
+# lets "move it to the work folder" resolve to a real path instead of the model
+# guessing at one:
+#
+#   roots = [
+#     { label = "documents", path = "C:/Users/you/Documents" },
+#     { label = "work",      path = "D:/Projects" },
+#   ]
+roots = []
 max_read_bytes = 200000
 
 [memory]
