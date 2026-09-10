@@ -1,8 +1,17 @@
-# Sunday
+# Alexa
 
 A voice assistant that lives on one Windows desktop, runs on a single 6 GB
 graphics card, and treats the internet as a door it has to unlock — not a place
 it sends your work.
+
+**Alexa is what it answers to; `sunday` is what it is made of.** The window
+title, the executable and the installer say Alexa, because that is the name a
+person says out loud, and it comes from `[assistant] name` in the config. The
+repository, the Python package, the sidecar process and `%LOCALAPPDATA%\Sunday`
+say sunday, deliberately: renaming the data directory would orphan the memory
+store without saying so, leaving a fresh empty one beside it that looks like it
+is working. So every command below is `sunday`-something, and that is not a
+leftover.
 
 One small local model (`qwen3.5:4b` via Ollama) does the thinking, reads your
 files, checks the weather and looks up prices. When it genuinely needs the open
@@ -20,8 +29,9 @@ Ollama must be running with the model pulled:
 ollama pull qwen3.5:4b
 ```
 
-Install Sunday into the virtualenv. This is what makes `sunday` runnable from
-any directory, with no `PYTHONPATH` to remember:
+Install the package into the virtualenv. That is what makes `sunday` runnable
+from any directory with no `PYTHONPATH` to remember, and what writes the console
+scripts:
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
@@ -158,24 +168,51 @@ cd app; npm run dev
 Then open `http://localhost:5173/?port=PORT&token=TOKEN` with the two values from
 `handshake.json`.
 
-### A real build
+### An app you can double-click
 
 ```powershell
 cd app; npm run tauri build
 ```
 
-Produces `app\src-tauri	arget
-elease\sunday.exe` -- about 3.6 MB, double-clickable,
-no terminal and no dev server. It finds the sidecar by walking up to `.venv`, so it runs
-from inside the repo.
+Produces `app\src-tauri\target\release\sunday.exe` — about 3.6 MB,
+double-clickable, no terminal and no dev server. Run it from there, or make a
+shortcut to it. It spawns the sidecar itself and finds it by walking up to
+`.venv`, so **it works anywhere on this machine as long as the repository stays
+where it is**. That is the whole of it for personal use; nothing else has to be
+installed.
 
-It also produces an NSIS installer at `target
-eleaseundle
-sis\`. That installer is
-**not yet distributable**: it bundles the window but not the Python sidecar, which is still
-supposed to ship as a PyInstaller one-folder build beside the exe. Installed somewhere
-without this repo, the shell starts and then reports that it cannot find
-`sunday-sidecar.exe`.
+Ollama still has to be running, because the model does. And close the window
+before rebuilding: Windows will not replace a running executable, so cargo fails
+with `Access is denied` rather than saying which of your changes did not arrive.
+
+### Giving it to somebody else
+
+The same command also writes an NSIS installer to
+`target\release\bundle\nsis\Alexa_0.1.0_x64-setup.exe`, and that installer is
+**not distributable yet**. It carries the window and not the Python sidecar,
+which is still supposed to ship as a PyInstaller one-folder build beside the
+exe. Installed on a machine without this repository, the shell starts and then
+reports that it cannot find `sunday-sidecar.exe`. That is broken rather than
+unsafe, but it is broken.
+
+If you do package it, three things are worth knowing before a first release,
+because none of them are visible from the code:
+
+- **`.env` is the whole risk.** It holds `DEEPSEEK_API_KEY` and the Google
+  client secret. It is gitignored, so the repository is safe — but a PyInstaller
+  spec takes what it is told to take, and one that sweeps the project root puts
+  that key *inside the binary*, where `.gitignore` means nothing and a published
+  release is permanent. Exclude it explicitly.
+- **`%LOCALAPPDATA%\Sunday` must never be in the build.** It is the memory
+  store — every turn ever filed — and `google_token.json`.
+- **An unsigned binary is a scary download, not a dangerous one.** SmartScreen
+  will warn about it, and antivirus false positives on PyInstaller bundles are
+  routine. Code signing is the only fix, and it costs money.
+
+And say plainly in the release what the thing does on the machine that runs it:
+it opens a microphone if voice is on, reads the folders named in its config, and
+writes files after asking. All of that is the point, and all of it is something
+a stranger downloading a binary should be told rather than discover.
 
 ### A note on shells
 
