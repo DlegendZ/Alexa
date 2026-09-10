@@ -36,7 +36,8 @@ struct Shell {
     state: Mutex<String>,
 }
 
-/// The `[ui]` block, read once and handed to the window.
+/// The `[ui]` block, read at launch and again after every save, and handed to
+/// the window.
 ///
 /// The window does not parse TOML. There is one config file and one process
 /// that already knows how to find it -- but the window is loaded before the
@@ -199,10 +200,42 @@ fn minimise(app: AppHandle) {
 }
 
 // Autostart is opt-in via the `Run` registry key, and `[ui] autostart` is the
-// one place it is decided -- synced against the registry at startup, below.
-// There were two commands here for setting and reading it from the page; the
-// page never called either, because config is where the decision lives. A
-// command nothing invokes is a door nobody uses and everybody has to check.
+// one place it is decided -- synced against the registry at startup and after
+// every save. There were two commands here for setting and reading it from the
+// page; the page never called either, because config is where the decision
+// lives. A command nothing invokes is a door nobody uses and everybody has to
+// check.
+
+/// `[ui] autostart` is a wish; the Run registry key is the fact. Syncing them
+/// means the config file is the one place it is decided, rather than a
+/// checkbox somebody has to find -- and turning it off in config turns it off
+/// on the machine.
+fn sync_autostart(app: &AppHandle, wanted: bool) {
+    let manager = app.autolaunch();
+    let registered = manager.is_enabled().unwrap_or(false);
+    if wanted != registered {
+        let outcome = if wanted { manager.enable() } else { manager.disable() };
+        if let Err(why) = outcome {
+            eprintln!("could not change autostart: {why}");
+        }
+    }
+}
+
+/// Re-read `[ui]` after the settings screen saves, and apply what the shell
+/// owns: the Run key now, and the frame rates handed back to the window.
+///
+/// Without this, `autostart` and `start_minimised` sat on the restart list and
+/// the restart the screen offered was the *sidecar's* -- which reads neither.
+/// The frame rates were worse off: on no list at all, read once at mount, so
+/// they saved and did nothing until the window was reloaded. `start_minimised`
+/// is left alone here because it only means anything at a launch, and a
+/// launch is when it is read.
+#[tauri::command]
+fn apply_launch_settings(app: AppHandle) -> Settings {
+    let wanted = read_settings();
+    sync_autostart(&app, wanted.autostart);
+    wanted
+}
 
 /// The window has already sent `shutdown` over the socket, which is what
 /// flushes the session summary into Chroma. This waits for that to land.
@@ -212,6 +245,49 @@ fn quit(app: AppHandle, shell: State<'_, Shell>) {
         guard.stop();
     }
     app.exit(0);
+}
+
+/// Stop the sidecar and start it again, for the settings the running process
+/// cannot pick up: the model and the window it is given. The settings screen
+/// offers this only after saying which settings need it -- and only for
+/// settings the sidecar reads, since this restarts nothing else.
+///
+/// Three things about the shape of this are load-bearing.
+///
+/// It is not `Sidecar::restart`. That one counts restarts and refuses after
+/// three in a minute, which is right for a process that keeps dying and wrong
+/// for a button somebody pressed on purpose -- saving three settings in a
+/// minute would leave the app with no sidecar and a message about crash logs.
+///
+/// It happens on its own thread, after a pause, exactly like `quit_politely`.
+/// The window has already sent `shutdown` over the socket, which is what folds
+/// the session summary into Chroma; `stop()` waits for that to land before it
+/// resorts to killing anything, and Chroma is SQLite -- a force-kill mid-write
+/// is how this project once spent a session on a store its own debugging had
+/// corrupted.
+///
+/// It holds the mutex across the stop and the start. The watcher thread takes
+/// the same lock to ask whether the child has died, so without this it would
+/// see a deliberately stopped sidecar as a crash and spawn a second one onto
+/// the same card.
+#[tauri::command]
+fn restart_sidecar(app: AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let Some(shell) = app.try_state::<Shell>() else { return };
+        let Ok(mut guard) = shell.sidecar.lock() else { return };
+        guard.stop();
+        match guard.start() {
+            Ok(handshake) => {
+                drop(guard);
+                let _ = app.emit("sidecar-restarted", handshake);
+            }
+            Err(why) => {
+                drop(guard);
+                let _ = app.emit("sidecar-lost", why);
+            }
+        }
+    });
 }
 
 /// Leave compact mode from the shell side.
@@ -308,6 +384,8 @@ fn main() {
             minimise,
             toggle_maximise,
             drag_window,
+            restart_sidecar,
+            apply_launch_settings,
             quit,
         ])
         .setup(|app| {
@@ -401,23 +479,7 @@ fn main() {
             });
 
             let wanted = read_settings();
-
-            // `[ui] autostart` is a wish; the Run registry key is the fact.
-            // Syncing them here means the config file is the one place it is
-            // decided, rather than a checkbox somebody has to find -- and
-            // turning it off in config turns it off on the machine.
-            let manager = app.autolaunch();
-            let registered = manager.is_enabled().unwrap_or(false);
-            if wanted.autostart != registered {
-                let outcome = if wanted.autostart {
-                    manager.enable()
-                } else {
-                    manager.disable()
-                };
-                if let Err(why) = outcome {
-                    eprintln!("could not change autostart: {why}");
-                }
-            }
+            sync_autostart(app.handle(), wanted.autostart);
 
             if wanted.start_minimised {
                 if let Some(window) = app.get_webview_window("main") {
