@@ -126,9 +126,18 @@ def test_every_refusal_tells_the_model_what_to_say(monkeypatch):
     """A refusal string is a script the model relays, not a status code. A bare
     one is how "path is outside the configured roots" reached a user as "C:
     isn't mounted"."""
+    # The sandbox's version of this test asserts the literal "tell the user".
+    # These say it differently -- "Ask the user to run ...", "Say that plainly"
+    # -- so the check is the set of ways this file says it, not the substring
+    # "user", which "no Google client is configured" would pass by accident on
+    # the word alone.
+    instructions = ("tell the user", "ask the user", "say that plainly")
     for why, out in every_refusal(monkeypatch).items():
         assert out.startswith("refused:"), (why, out)
-        assert "user" in out.lower(), (why, out)
+        assert any(phrase in out.lower() for phrase in instructions), (
+            f"{why}: a refusal has to hand the model words to relay, not just "
+            f"mention the user -- {out!r}"
+        )
 
 
 def test_no_refusal_writes_down_a_name(monkeypatch):

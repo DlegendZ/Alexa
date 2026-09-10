@@ -216,13 +216,6 @@ export class Session {
     return this.blocked || Boolean(this.setup?.models?.length);
   }
 
-  /** Something the shell wants said in the transcript. The window has one
-   *  place where things that went sideways are reported, and it is the same
-   *  place a redaction or a blocked lookup appears. */
-  notice(text) {
-    this.#note(String(text));
-  }
-
   answer(id, approved) {
     this.send({ type: 'confirm_response', id, approved });
     this.confirms = this.confirms.filter((c) => c.id !== id);

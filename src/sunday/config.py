@@ -512,11 +512,3 @@ def trace_enabled(cfg: "Config | None" = None) -> bool:
     if override is not None:
         return override.strip().lower() not in {"0", "false", "no", "off", ""}
     return (cfg or get()).ui.trace
-
-
-def require_deepseek_key() -> None:
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError(
-            f"DEEPSEEK_API_KEY not set. Fill it in at {ENV_PATH} "
-            "(copy .env.example there first)."
-        )

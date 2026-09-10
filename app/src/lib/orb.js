@@ -78,10 +78,13 @@ const FLASHES = {
   wake: WHITE,
 };
 
-/** Every state this orb knows what to do with. Anything else is ignored rather
- *  than guessed at -- a state it has never heard of would otherwise land as
- *  whatever the last one was, which is worse than not moving. */
-export const STATES = [...Object.keys(LOOKS), ...Object.keys(FLASHES)];
+/* Every state this orb knows what to do with is the union of the two tables
+ * above. Anything else is ignored rather than guessed at -- a state it has
+ * never heard of would otherwise land as whatever the last one was, which is
+ * worse than not moving. There was an exported `STATES` here for a test to
+ * read; the test reads the two tables directly instead, so the export was one
+ * more thing that could disagree with them.
+ */
 
 /** The wake pulse.
  *

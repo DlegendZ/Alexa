@@ -20,6 +20,10 @@ use sidecar::{Handshake, Sidecar};
 /// One window resized rather than a second one, so there is nothing to keep in
 /// step. The frame is off in both sizes now -- see `titlebar`.
 const COMPACT: (f64, f64) = (200.0, 240.0);
+/// The smallest the full window may be, matching `tauri.conf.json`. Three
+/// columns need the room; compact does not, and has the constraint lifted.
+const MIN_FULL: (f64, f64) = (900.0, 480.0);
+
 /// The size `tauri.conf.json` launches at. Two numbers for one window is how
 /// leaving compact used to shrink it below the width the layout was measured
 /// at (note 134) and throw away whatever size had been chosen.
@@ -43,7 +47,6 @@ struct Settings {
     fps_blurred: u32,
     start_minimised: bool,
     autostart: bool,
-    trace: bool,
 }
 
 impl Default for Settings {
@@ -53,7 +56,6 @@ impl Default for Settings {
             fps_blurred: 10,
             start_minimised: false,
             autostart: false,
-            trace: true,
         }
     }
 }
@@ -85,15 +87,16 @@ fn read_settings() -> Settings {
             fps_blurred: number("fps_blurred", 10),
             start_minimised: flag("start_minimised", false),
             autostart: flag("autostart", false),
-            trace: flag("trace", true),
         };
         break;
     }
-    // SUNDAY_TRACE=0 turns the backstage channel off for one run without
-    // editing a file, and the window has to agree with the sidecar about it.
-    if std::env::var("SUNDAY_TRACE").is_ok_and(|v| v == "0") {
-        settings.trace = false;
-    }
+    // `[ui] trace` and `SUNDAY_TRACE` are read by the sidecar, which is what
+    // decides whether trace lines are emitted at all. They used to be read here
+    // too and handed to the window, with a comment saying "the window has to
+    // agree with the sidecar about it" -- and the window never looked: the
+    // backstage panel is unconditional (note 118), and with the channel off it
+    // is simply empty. A setting plumbed to something that ignores it is the
+    // `trace.query_left` bug wearing a settings hat.
     settings
 }
 
@@ -145,6 +148,18 @@ fn set_compact(app: AppHandle, compact: bool) {
     if !compact {
         let _ = window.unmaximize();
     }
+    // The minimum has to come off first. `tauri.conf.json` sets `minWidth: 900`
+    // so three columns always have room, and Windows enforces a minimum through
+    // `WM_GETMINMAXINFO` -- which governs a programmatic resize and not only a
+    // dragged one. Compact is 200 wide, so the constraint and the request are
+    // in direct contradiction, and the constraint is the one the window manager
+    // gets to settle. Dropped for compact, restored on the way back, so neither
+    // mode has to know about the other's limits.
+    let _ = window.set_min_size(if compact {
+        None
+    } else {
+        Some(LogicalSize::new(MIN_FULL.0, MIN_FULL.1))
+    });
     let _ = window.set_size(LogicalSize::new(w, h));
 }
 
@@ -183,18 +198,11 @@ fn minimise(app: AppHandle) {
     }
 }
 
-/// Opt-in, via the `Run` registry key. Off by default: something that holds
-/// several gigabytes of a graphics card should not start itself unasked.
-#[tauri::command]
-fn set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
-    let manager = app.autolaunch();
-    if on { manager.enable() } else { manager.disable() }.map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn autostart_enabled(app: AppHandle) -> bool {
-    app.autolaunch().is_enabled().unwrap_or(false)
-}
+// Autostart is opt-in via the `Run` registry key, and `[ui] autostart` is the
+// one place it is decided -- synced against the registry at startup, below.
+// There were two commands here for setting and reading it from the page; the
+// page never called either, because config is where the decision lives. A
+// command nothing invokes is a door nobody uses and everybody has to check.
 
 /// The window has already sent `shutdown` over the socket, which is what
 /// flushes the session summary into Chroma. This waits for that to land.
@@ -300,8 +308,6 @@ fn main() {
             minimise,
             toggle_maximise,
             drag_window,
-            set_autostart,
-            autostart_enabled,
             quit,
         ])
         .setup(|app| {

@@ -8,8 +8,6 @@
 
 const tauri = () => globalThis.__TAURI__;
 
-export const inShell = () => Boolean(tauri()?.core?.invoke);
-
 const invoke = async (command, args) => {
   const api = tauri();
   if (!api?.core?.invoke) return null;

@@ -75,6 +75,10 @@ def test_the_real_overhead_fits_the_reservation(cfg):
         # the fast paths guard two call sites out of three.
         + budget.count(prompts.SECOND_CHANCE)
         + budget.count(prompts.FINISH_IT)
+        # And the fourth, which this list omitted while its own comment above
+        # was about omitting nudges. A fast path fires on a message that may
+        # also ask for something else, so it can share a turn with any of them.
+        + budget.count(prompts.FAST_PATH_PARTIAL)
         # Only one of these can appear in a turn, so the larger one is the cap.
         + max(
             budget.count(runtime_module.DOOR_OFF_SYSTEM),
