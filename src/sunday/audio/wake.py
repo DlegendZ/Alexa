@@ -79,7 +79,11 @@ class WakeWord:
         # starting a pool for them costs more than it saves.
         self._mel = onnx.session(models.model_path("wake/melspectrogram.onnx"))
         self._embed = onnx.session(models.model_path("wake/embedding_model.onnx"))
-        self._model = onnx.session(models.model_path(models.wake_key(phrase)))
+        # `self.phrase`, not `phrase`: the line above defaults it from config and
+        # this one used the raw argument, so `WakeWord()` -- which the comment
+        # above invites -- raised AttributeError on the audio thread instead of
+        # loading the configured word. Note 69's shape, one line further on.
+        self._model = onnx.session(models.model_path(models.wake_key(self.phrase)))
 
         # Every input name is read from the graph rather than written down.
         # The three pretrained phrases were exported at different times and do

@@ -29,9 +29,6 @@ export const settings = () => invoke('settings');
  *  than a second one, so there is nothing to keep in step. */
 export const setCompact = (compact) => invoke('set_compact', { compact });
 
-export const setAutostart = (on) => invoke('set_autostart', { on });
-export const autostartEnabled = () => invoke('autostart_enabled');
-
 /** Tell the shell what the orb is showing, so the tray icon can be tinted
  *  with it. That is what keeps the privacy affordance alive while the window
  *  is hidden: teal in the corner means something is leaving, and the tray is

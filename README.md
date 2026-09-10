@@ -116,8 +116,9 @@ ollama pull qwen3.5:4b
 That is 2.5 GB, and it is the whole of the thinking. Nothing else is downloaded
 from anywhere at runtime except what you explicitly ask it to look up.
 
-**4. The voice models**, if you want to talk to it. About a quarter of a
-gigabyte, and they are not in the repository:
+**4. The voice models**, if you want to talk to it. About **1 GB** with the
+configured transcriber — measured: Kokoro 337 MB, Parakeet 631 MB, and the wake
+word and the VAD 7 MB between them. They are not in the repository:
 
 ```powershell
 .venv\Scripts\python.exe -m sunday.audio.models
@@ -297,7 +298,7 @@ Then open `http://localhost:5173/?port=PORT&token=TOKEN` with the two values fro
 cd app; npm run tauri build
 ```
 
-Produces `app\src-tauri\target\release\sunday.exe` — about 3.6 MB,
+Produces `app\src-tauri\target\release\sunday.exe` — about 3.5 MB,
 double-clickable, no terminal and no dev server. Run it from there, or make a
 shortcut to it. It spawns the sidecar itself and finds it by walking up to
 `.venv`, so **it works anywhere on this machine as long as the repository stays
@@ -417,7 +418,7 @@ launches, spawns the sidecar, reads the handshake and drives a whole turn.
 | 4 | The airlock + web | done | A private file and a web search in one turn, with nothing private in the query |
 | 5 | Memory | done | Chroma write-through, distance cutoff, slice budgets, idle summary |
 | 6 | Streaming | done | Tokens as generated; the splitter emits whole sentences |
-| 7 | Voice in | done | Wake word, VAD, Parakeet. `sunday --voice`, or `listen` over the socket |
+| 7 | Voice in | done | Wake word, VAD, Parakeet. `sunday --voice`, or `set_voice` over the socket |
 | 8 | Voice out + echo | done | Kokoro speaks a sentence while the model writes the next; all three echo layers |
 | 9 | Barge-in | done | Talking over it stops it in about 100 ms — including while it is thinking |
 | 10 | The socket | done | The sidecar protocol; `web/debug.html` drives a whole turn |

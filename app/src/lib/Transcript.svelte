@@ -114,6 +114,7 @@
     max-width: 720px;
     margin: 0 auto;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 26px;
     align-content: start;
   }

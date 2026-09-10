@@ -37,7 +37,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-#: The one colour. `--text` from the stylesheet, byte for byte.
+#: The one colour: the orb's own white (`orb.js`), byte for byte. Not the
+#: stylesheet's `--text`, which is #f5f4ef -- the icon matches the thing it
+#: is a picture of rather than the text beside it.
 WHITE = (255, 252, 247)
 
 #: How much of the tile the solid fills, as a fraction of its width. Big enough

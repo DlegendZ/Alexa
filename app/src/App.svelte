@@ -36,7 +36,11 @@
     settings().then((s) => {
       if (!s) return;
       fps = { focused: s.fps_focused, blurred: s.fps_blurred };
-      if (s.start_minimised) toggleCompact(true);
+      /* `start_minimised` means hidden, and the Rust half already hides the
+       * window (`main.rs`). Calling `toggleCompact` here as well made it mean
+       * *and compact* -- always on top at 200x240 -- which nothing documents
+       * and which the tray's Show cannot undo, because only `expand` leaves
+       * compact. One setting, one meaning, one place. */
     });
 
     /* The tray menu happens where there is no DOM, so it arrives as an event
@@ -150,8 +154,12 @@
     speaking: 'speaking',
     idle: 'microphone off',
   };
+  /* `error` and `wake` are deliberately not in SAYING -- one has a sentence of
+   * its own on `status`, the other is a flash rather than a state. Falling back
+   * to `status` covers both: it left the line blank at the one moment the orb
+   * goes red and the reason is sitting in `status` unread. */
   const saying = $derived(
-    session.connected ? (SAYING[session.state] ?? '') : session.status,
+    session.connected ? (SAYING[session.state] ?? session.status) : session.status,
   );
 
   /* The newest backstage line, in the place a person is already looking.
@@ -358,10 +366,14 @@
 </main>
 
 <style>
+  /* Every grid declares its column, not only the three that were measured
+     into note 142: a track's floor is its own content, so an undeclared one is
+     a column waiting for the first long word. */
   main {
     height: 100vh;
     display: grid;
     grid-template-rows: 38px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
   main.compact {
     grid-template-rows: minmax(0, 1fr);
@@ -423,6 +435,7 @@
   /* -- left: the orb ---------------------------------------------------- */
   .side {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     /* Centred as a group rather than stacked from the top. The panel is a
        third of the window and the orb is the only thing in it that matters;
        hanging it off the ceiling with a column of air underneath made the
@@ -645,6 +658,7 @@
   .compactwindow {
     position: relative;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     min-height: 0;
     background: var(--bg);
     cursor: grab;

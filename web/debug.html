@@ -106,7 +106,9 @@
   .traceoff { opacity: .5; }
   code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
   .meter { flex: 1; height: 6px; border-radius: 3px; background: #1b1f27; overflow: hidden; }
-  .meterfill { height: 100%; width: 0%; background: #6fd3c7; transition: width 80ms linear; }
+  /* Not teal: this is the microphone, which is the most local thing there is.
+     Teal means something is leaving the machine and nothing else ever. */
+  .meterfill { height: 100%; width: 0%; background: var(--text); transition: width 80ms linear; }
   @media (max-width: 800px) { body { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>

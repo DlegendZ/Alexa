@@ -103,15 +103,20 @@
     display: grid;
     gap: 10px;
   }
+  /* Outstanding is quiet, done is white. Neither is teal and neither is red:
+     teal is something leaving this machine and red is a refusal, and a setup
+     step that has not run yet is neither. Note 126 converted the progress bar
+     in this file and missed these two rules, which is the same shape as
+     `mkdir` surviving on `write_file` after the other two lost it. */
   li {
-    border-left: 2px solid var(--stop);
+    border-left: 2px solid var(--line);
     padding-left: 14px;
     color: var(--dim);
     font-size: 14px;
     line-height: 1.55;
   }
   li.done {
-    border-color: var(--external);
+    border-color: var(--text);
   }
   li b {
     display: block;

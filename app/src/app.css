@@ -62,8 +62,12 @@ body {
   overflow: hidden;
 }
 
-/* Compact mode is frameless, so the header is what you drag it by. The full
-   window keeps the title bar Windows draws and does not duplicate it. */
+/* The full window's title bar is markup and drags by this region; its buttons
+   are marked `nodrag` so they stay clickable. Compact does NOT use this: there
+   the handle and the thing you click are the same pixels, so it asks the shell
+   for `start_dragging()` on mousedown instead, which is the only way a double
+   click can still mean something. Both halves of this comment used to say the
+   opposite of the code. */
 .drag {
   -webkit-app-region: drag;
   user-select: none;

@@ -29,6 +29,7 @@ from sunday.tools import files
 from sunday.agent import loop as agent_loop, prompts
 from sunday.agent.llm import Agent, OllamaDown
 from sunday.memory import LongTermMemory, SessionMemory, budget
+from sunday.memory import session as memory_session
 from sunday.memory import store as memory_store
 from sunday.state import Result, SundayState, TurnEvents, new_state
 
@@ -149,7 +150,10 @@ PATH_TOOLS = {
 
 #: Every argument name that carries a path. A tool with two of them needs both
 #: checked: a copy is only as safe as its more sensitive end.
-PATH_ARGS = ("path", "source", "destination")
+#: Imported rather than retyped. The same tuple lived here and in
+#: `memory/session.py`, which is two homes for one fact -- and this copy is
+#: the one the web door keys off.
+PATH_ARGS = memory_session.PATH_ARGS
 
 
 class Cancelled(Exception):

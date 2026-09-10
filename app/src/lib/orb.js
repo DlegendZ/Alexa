@@ -44,12 +44,15 @@ const DIM = [198, 194, 186];
  *  be and still be joined, which is the quantity a sphere did not have; motion
  *  is added per state in draw().
  *
- *  The `link` numbers are calibrated, not chosen. Thirty-four points spread
- *  over a unit sphere sit about 0.68 apart, so anything under that draws no
- *  lines at all -- the first set of these ran from 0.4 to 0.9 and produced a
- *  cloud of dots with one link in it, which is not a web and did not look
- *  like one. Read them against 0.68: 0.7 is a handful, 0.9 is a mesh, 1.05
- *  knits the thing shut.
+ *  The `link` numbers are calibrated, not chosen, and the anchor to read them
+ *  against is **0.582** -- the median nearest-neighbour distance of these 34
+ *  points, min 0.348 and max 0.596. Measured off `lattice(34)` rather than
+ *  estimated, because an earlier version of this comment said 0.68 and claimed
+ *  anything under it drew nothing, which is false: 0.62 draws 44 of the 561
+ *  pairs. Counts, so the next editor picks a number instead of a feeling:
+ *
+ *      0.62 ->  44      0.86 ->  98      1.05 -> 135
+ *      0.70 ->  67      0.92 -> 115
  */
 const LOOKS = {
   connecting: { rgb: DIM, bright: 0.3, link: 0.66 },
@@ -97,9 +100,8 @@ const BLOCKED_MS = 900;
  *
  *  Every pair is measured every frame, so this is quadratic: 34 is 561 pairs,
  *  48 would be 1128. Thirty-four is the number at which the mesh still reads
- *  as a mesh at 44 pixels -- the compact window and the title bar draw the
- *  same object at a fifth of the size -- and does not turn into a solid disc
- *  at 150.
+ *  as a mesh in the compact window, which draws the same object at about
+ *  200 pixels, and does not turn into a solid disc at 300.
  */
 const NODES = 34;
 
@@ -508,11 +510,18 @@ export class Orb {
     const sinR = Math.sin(roll);
 
     for (const p of this._nodes) {
+      /* `swell`, not `scale`. It was called `scale` and shadowed the parameter
+       * of the same name for the whole loop body, so `p.size` below multiplied
+       * by the *jitter* and never by the size factor -- which meant note 134's
+       * fix reached the link width and not the nodes, and the same web really
+       * was chunky in the compact window and wispy in a wide one, exactly as
+       * that note says it must not be. Measured at three canvas sizes, the node
+       * radii did not move: 0.913 to 2.987 at 190px, 200px and 300px alike. */
       const wobble = jitter ? Math.sin(this._t * p.rate * 2.1 + p.phase) * jitter : 0;
-      const scale = 1 + wobble;
-      const bx = p.base[0] * scale;
-      const by = p.base[1] * scale;
-      const bz = p.base[2] * scale;
+      const swell = 1 + wobble;
+      const bx = p.base[0] * swell;
+      const by = p.base[1] * swell;
+      const bz = p.base[2] * swell;
 
       // yaw about Y
       const x1 = bx * cosY + bz * sinY;

@@ -151,7 +151,9 @@ impl Sidecar {
         // A handshake is written each launch, but the old one is still on disk
         // until then. Connecting to it would point the window at a port
         // belonging to nothing, or to something else entirely -- so the file
-        // only counts once it is newer than the moment we spawned.
+        // only counts once it is no more than a second older than the spawn --
+        // a second of slack, because the two clocks are read on either side of
+        // a process launch and Windows' file timestamps are not that fine.
         let spawned_at = now_epoch();
         let path = handshake_path();
 

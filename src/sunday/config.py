@@ -218,7 +218,7 @@ class Tts:
 
     enabled: bool = True
     #: 54 voices ship in one 28 MB file; `python -m sunday.audio.check --voices`
-    #: lists them. `af_heart` is the default because it is the clearest of the
+    #: lists them. `af_bella` is the default because it is the clearest of the
     #: American female set at speed 1.0, and clarity is what survives a room.
     voice: str = "af_bella"
     speed: float = 1.0

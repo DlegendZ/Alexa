@@ -58,7 +58,7 @@ def get_weather(city: str) -> str:
 
     results = geo.get("results")
     if not results:
-        return f"Could not find location: {city}"
+        return f"error: could not find location: {city}"
 
     loc = results[0]
     label = ", ".join(part for part in (loc.get("name"), loc.get("country")) if part)
@@ -78,7 +78,7 @@ def get_weather(city: str) -> str:
 
     current = forecast.get("current")
     if not current:
-        return f"Weather data unavailable for {label}"
+        return f"error: weather data unavailable for {label}"
 
     code = current.get("weather_code")
     condition = WEATHER_CODES.get(code, f"code {code}")

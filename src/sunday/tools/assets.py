@@ -48,7 +48,7 @@ def get_asset_price(symbol: str) -> str:
     resolved = resolve_symbol(symbol)
     if resolved is None:
         return (
-            f"Unknown symbol '{symbol}'. Supported: "
+            f"error: unknown symbol '{symbol}'. Supported: "
             + ", ".join(f"{k} ({v})" for k, v in SYMBOLS.items())
         )
 
@@ -59,7 +59,7 @@ def get_asset_price(symbol: str) -> str:
 
     price = payload.get("price")
     if price is None:
-        return f"Price lookup failed for {resolved}: no price in the response"
+        return f"error: price lookup failed for {resolved}: no price in the response"
 
     return f"{SYMBOLS[resolved]} ({resolved}): ${price:,.2f} USD"
 

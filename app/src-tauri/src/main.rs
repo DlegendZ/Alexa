@@ -20,7 +20,10 @@ use sidecar::{Handshake, Sidecar};
 /// One window resized rather than a second one, so there is nothing to keep in
 /// step. The frame is off in both sizes now -- see `titlebar`.
 const COMPACT: (f64, f64) = (200.0, 240.0);
-const FULL: (f64, f64) = (960.0, 700.0);
+/// The size `tauri.conf.json` launches at. Two numbers for one window is how
+/// leaving compact used to shrink it below the width the layout was measured
+/// at (note 134) and throw away whatever size had been chosen.
+const FULL: (f64, f64) = (1180.0, 760.0);
 
 struct Shell {
     sidecar: Mutex<Sidecar>,
