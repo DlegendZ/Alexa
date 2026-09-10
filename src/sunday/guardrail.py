@@ -127,7 +127,8 @@ NOTICE_BLOCKED = (
     "This turn read a credential file, so I did not look anything up on the web."
 )
 NOTICE_EXTERNAL_OFF = (
-    "I could not look that up: web lookups are switched off in config.toml."
+    "I could not look that up: web lookups are switched off. You can turn them "
+    "back on in the settings screen, under The web."
 )
 NOTICE_WRITE_DECLINED = "You said no, so {path} was left as it was."
 NOTICE_WRITE_UNATTENDED = (

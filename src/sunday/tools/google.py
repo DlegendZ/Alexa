@@ -38,7 +38,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from sunday import config, guardrail, net
 from sunday.tools import Tool, register
@@ -75,10 +75,20 @@ EXPIRY_MARGIN_S = 60
 #: is expired after seven days on purpose, so the second reason is the one the
 #: user meets repeatedly and the refusal has to say so.
 RUN_AUTH = (
-    "Ask the user to run python -m sunday.tools.google in a terminal to sign "
-    "in to Google. That is also what fixes an expired sign-in: while the "
-    "Google client is in testing mode, Google expires the saved sign-in every "
-    "seven days."
+    "Ask the user to open the settings screen and press Sign in to Google, "
+    "under Keys and sign-in. That is also what fixes an expired sign-in: "
+    "while the Google client is in testing mode, Google expires the saved "
+    "sign-in every seven days."
+)
+
+#: What `list_capabilities` says when there is no client at all.
+#:
+#: Second person and no name, like every other string a tool hands the model
+#: to relay -- and it names the screen rather than a file, because a shipped
+#: copy has no repository root to keep a `.env` in.
+NO_CLIENT_NOTE = (
+    "no Google client id and secret have been set. The user can add them in "
+    "the settings screen, under Keys and sign-in"
 )
 
 _access: dict[str, Any] = {"token": "", "expires": 0.0}
@@ -91,6 +101,24 @@ def _client() -> tuple[str, str] | None:
     if config.GOOGLE_CLIENT_ID and config.GOOGLE_CLIENT_SECRET:
         return config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET
     return None
+
+
+def configured() -> bool:
+    """Whether there is a client id and secret at all.
+
+    This is what gates the two tools in the registry, and it is deliberately
+    the weaker of the two questions -- it asks whether Google is *set up on
+    this machine*, not whether anybody is currently signed in. A client with an
+    expired sign-in keeps both tools bound, because the refusal in that case is
+    worth hearing: it names the button that fixes it. No client at all means
+    the user never asked for calendar or mail, and an assistant offering to
+    read a mailbox it has no way to reach is worse than one that does not
+    mention it.
+
+    Read fresh every time. The settings screen writes a client id and the very
+    next turn is expected to have the tools.
+    """
+    return _client() is not None
 
 
 def load_token() -> dict[str, Any] | None:
@@ -119,9 +147,9 @@ def access_token() -> str:
     client = _client()
     if client is None:
         raise net.HttpError(
-            "no Google client is configured. Ask the user to put "
-            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the .env file at the "
-            "project root, then run python -m sunday.tools.google once."
+            "no Google client is configured. Ask the user to open the "
+            "settings screen, paste a Google client id and secret under "
+            "Keys and sign-in, and then press Sign in to Google."
         )
     stored = load_token()
     if not stored or not stored.get("refresh_token"):
@@ -331,12 +359,34 @@ def mail_search(query: str = "", limit: int = MAIL_DEFAULT) -> str:
 # -- signing in, once -----------------------------------------------------
 
 
-def authorise(*, open_browser: bool = True) -> int:
-    """The desktop OAuth flow, run from a terminal and not from a turn.
+#: How long the loopback server waits for Google to come back.
+#:
+#: Five minutes is a person finding the right account and reading a consent
+#: screen. With no bound at all, closing the browser tab leaves
+#: `handle_request` blocking forever -- survivable in a terminal you can
+#: interrupt, and a leaked thread in the sidecar, where this now also runs.
+CONSENT_TIMEOUT_S = 300
+
+
+def authorise(
+    *,
+    open_browser: bool = True,
+    say: Callable[[str], None] = print,
+) -> int:
+    """The desktop OAuth flow, run outside a turn.
 
     A loopback redirect, which is the flow Google documents for installed
     applications: the code comes back to a socket on this machine rather than
     being pasted, so it never reaches a clipboard or a shell history.
+
+    Outside a *turn* is the rule, and it is not the same as outside the
+    process. The reason consent cannot happen in a turn is that a model would
+    be waiting on a tool result while a browser window may never open, and the
+    confirmation timeout would be running the whole time. None of that is true
+    of the settings screen: nothing is waiting, and a browser opening is
+    exactly what the user just pressed a button to ask for. So this takes a
+    `say` instead of printing, and the sidecar passes one that relays each
+    line to the window.
     """
     import http.server
     import secrets
@@ -345,9 +395,10 @@ def authorise(*, open_browser: bool = True) -> int:
 
     client = _client()
     if client is None:
-        print(
-            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are not set.\n"
-            f"Put them in {config.ENV_PATH} and run this again."
+        say(
+            "No Google client id and secret are set. Put them in the settings "
+            "screen under Keys and sign-in, or in the environment as "
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, and try again."
         )
         return 1
     client_id, client_secret = client
@@ -374,6 +425,7 @@ def authorise(*, open_browser: bool = True) -> int:
             """Quiet. The console is showing the flow, not the web server."""
 
     server = http.server.HTTPServer(("127.0.0.1", 0), Catcher)
+    server.timeout = CONSENT_TIMEOUT_S
     redirect = f"http://127.0.0.1:{server.server_port}"
     url = AUTH_URL + "?" + urllib.parse.urlencode(
         {
@@ -389,21 +441,27 @@ def authorise(*, open_browser: bool = True) -> int:
         }
     )
 
-    print("Opening your browser to sign in to Google.")
-    print("If it does not open, paste this:\n")
-    print(url + "\n")
+    say("Opening your browser to sign in to Google.")
+    say("If it does not open, paste this:")
+    say(url)
     if open_browser:
         webbrowser.open(url)
 
     server.handle_request()
     server.server_close()
 
+    if not caught:
+        # `handle_request` returns having done nothing when the timeout fires,
+        # and that is indistinguishable from a reply carrying no parameters
+        # unless it is checked here. Both mean the browser never came back.
+        say("Nothing came back from the browser in five minutes. Nothing was saved.")
+        return 1
     if caught.get("state") != state:
-        print("The reply did not carry the state we sent. Nothing was saved.")
+        say("The reply did not carry the state we sent. Nothing was saved.")
         return 1
     code = caught.get("code")
     if not code:
-        print(f"No code came back ({caught.get('error', 'no reason given')}).")
+        say(f"No code came back ({caught.get('error', 'no reason given')}).")
         return 1
 
     try:
@@ -419,11 +477,11 @@ def authorise(*, open_browser: bool = True) -> int:
             timeout=20,
         )
     except net.HttpError as exc:
-        print(f"Could not exchange the code: {exc}")
+        say(f"Could not exchange the code: {exc}")
         return 1
 
     if not payload.get("refresh_token"):
-        print("Google returned no refresh token. Revoke the app's access and try again.")
+        say("Google returned no refresh token. Revoke the app's access and try again.")
         return 1
 
     save_token(
@@ -433,8 +491,8 @@ def authorise(*, open_browser: bool = True) -> int:
             "saved": time.time(),
         }
     )
-    print(f"Signed in. The refresh token is at {config.GOOGLE_TOKEN_PATH}.")
-    print("That file is on the credential list: reading it shuts the web door for a turn.")
+    say(f"Signed in. The refresh token is at {config.GOOGLE_TOKEN_PATH}.")
+    say("That file is on the credential list: reading it shuts the web door for a turn.")
     return 0
 
 
@@ -473,6 +531,8 @@ register(
         },
         fn=calendar_read,
         provenance="private",
+        requires=configured,
+        requires_note=NO_CLIENT_NOTE,
     )
 )
 
@@ -501,5 +561,7 @@ register(
         },
         fn=mail_search,
         provenance="private",
+        requires=configured,
+        requires_note=NO_CLIENT_NOTE,
     )
 )

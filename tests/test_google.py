@@ -156,15 +156,24 @@ The sign-in command is exempt and is the reason this test is worded around
         assert "sunday" not in prose.lower(), (why, out)
 
 
-def test_a_missing_sign_in_names_the_command_to_run(monkeypatch):
+def test_a_missing_sign_in_names_the_way_to_sign_in(monkeypatch):
     """Consent cannot happen inside a turn -- it needs a browser that may never
-    open -- so the refusal has to say which command does it. A refusal with no
-    way to act on it is the same failure as a prompt with no way to answer."""
+    open, and a confirmation timeout is running -- so the refusal has to say
+    what does it. A refusal with no way to act on it is the same failure as a
+    prompt with no way to answer.
+
+    It names the button rather than the command now. The command still works
+    and is still the answer in a terminal, but the person meeting this refusal
+    is looking at a window, and on an installed copy there is no virtualenv to
+    run it in.
+    """
     monkeypatch.setattr(config, "GOOGLE_CLIENT_ID", "id")
     monkeypatch.setattr(config, "GOOGLE_CLIENT_SECRET", "secret")
     monkeypatch.setattr(google, "_access", {"token": "", "expires": 0.0})
     monkeypatch.setattr(google, "load_token", lambda: None)
-    assert "python -m sunday.tools.google" in google.calendar_read()
+    out = google.calendar_read()
+    assert "settings screen" in out
+    assert "Sign in to Google" in out
 
 
 def test_an_expired_sign_in_names_the_command_too(monkeypatch):
@@ -186,7 +195,7 @@ def test_an_expired_sign_in_names_the_command_too(monkeypatch):
 
     monkeypatch.setattr(google.net, "post_json", refused)
     out = google.calendar_read()
-    assert "python -m sunday.tools.google" in out
+    assert "Sign in to Google" in out
     assert "seven days" in out
 
 

@@ -27,10 +27,19 @@ def test_the_folders_are_named_not_merely_alluded_to(cfg):
 
 
 def test_no_folders_configured_says_so_rather_than_saying_nothing(cfg):
+    """And says where to add one.
+
+    It used to name `[files] roots in config.toml`, which was true of a
+    checkout and is not true of an installed copy -- there is no repository
+    root to keep a config file in, and the folders are added on a screen. A
+    refusal you cannot act on is the same failure as a prompt you cannot
+    answer, so the place it names has to be a place that exists.
+    """
     cfg.files.roots = []
     listed = capabilities.list_capabilities()
     assert "No folders are configured" in listed
-    assert "config.toml" in listed
+    assert "settings screen" in listed
+    assert "config.toml" not in listed
 
 
 def test_the_capability_list_writes_down_no_name(cfg):

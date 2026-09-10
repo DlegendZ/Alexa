@@ -236,7 +236,8 @@ def measure_echo() -> int:
     print(f"4. residual   {worst:.3f} of what was played, at the 95th percentile")
 
     suggested = max(0.1, round(worst * 3, 2))
-    print("\nMeasured on this machine, for config.toml:")
+    print("\nMeasured on this machine. Put these in the settings screen,")
+    print("under Microphone and Wake word, or straight into config.toml:")
     print(f"  [audio] aec_delay_ms   = {delay_ms}")
     print(f"  [echo]  barge_in_ratio = {suggested}")
     print("\nThe ratio is what stops it interrupting itself: a person has to be")
@@ -325,7 +326,8 @@ def main() -> int:
             print(
                 f"   the phrase is {best / max(noise, 1e-6):.0f}x above that, so the bar\n"
                 f"   is in the wrong place rather than the voice being wrong.\n"
-                f"   Try [wake] threshold = {max(0.05, round(best * 0.6, 2))} in config.toml."
+                f"   Try [wake] threshold = {max(0.05, round(best * 0.6, 2))} "
+f"-- settings screen, under Wake word."
             )
 
     vad = Vad(sample_rate=cfg.audio.sample_rate)
@@ -344,7 +346,8 @@ def main() -> int:
         suggestion = max(0.15, round(float(scores.max()) * 0.6, 2))
         print(
             f"   under the {cfg.audio.min_clip_ms} ms floor, so every clip is dropped\n"
-            f"   as a cough. Try [audio] vad_threshold = {suggestion} in config.toml."
+            f"   as a cough. Try [audio] vad_threshold = {suggestion} "
+f"-- settings screen, under Microphone."
         )
 
     # Run the real listener over the recording, rather than transcribing the

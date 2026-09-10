@@ -28,7 +28,7 @@ from sunday.tools import Tool, register
 REFUSED = (
     "refused: that path is outside the folders you may open. Tell the user "
     "this folder is not one you are allowed into, and that they can add it "
-    "to config.toml under [files] roots. Do not guess at another reason."
+    "in the settings screen, under Folders. Do not guess at another reason."
 )
 
 

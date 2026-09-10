@@ -25,7 +25,7 @@ the one tool whose whole output is prose about itself.
 from __future__ import annotations
 
 from sunday import config
-from sunday.tools import Tool, all_tools, register
+from sunday.tools import Tool, all_tools, configured, register
 
 #: Named here rather than described, so the sentence the model reads matches
 #: the tool name it would have to call.
@@ -33,13 +33,20 @@ _SELF = "list_capabilities"
 
 
 def list_capabilities() -> str:
-    """Everything the registry actually holds, plus the folders it may open.
+    """Everything that could run on this machine, plus the folders it may open.
 
-    Built from `all_tools()` rather than from the bound list: the question is
+    Built from `configured()` rather than from the bound list: the question is
     "what can you do", not "what may you do this turn". When the web door has
     been bolted the runtime says so separately, in its own system line and its
     own notice -- that is a per-turn fact, and burying it in a capability list
     would make it look permanent.
+
+    `configured()` and not `all_tools()`, though, and the difference is the
+    other direction. Calendar and mail need a Google client that is optional
+    and often absent, and a tool nobody can call is not a capability -- listing
+    it means answering "what can you do" with something that will refuse. What
+    is switched off is named at the end instead, with what turns it on, so the
+    absence is a sentence the user can act on rather than a silence.
     """
     cfg = config.get()
 
@@ -48,7 +55,7 @@ def list_capabilities() -> str:
     # reply full of dashes -- in a reply that may be read aloud, where every
     # one of them gets spoken. Same trap as the retrieved-memory framing.
     lines = ["These are the tools you have, read from the registry."]
-    for tool in sorted(all_tools(), key=lambda t: t.name):
+    for tool in sorted(configured(), key=lambda t: t.name):
         where = "leaves this machine" if tool.scope == "external" else "on this machine"
         first = tool.description.split(". ")[0].rstrip(".")
         lines.append(f"{tool.name} ({where}) {first[0].lower() + first[1:]}.")
@@ -60,12 +67,24 @@ def list_capabilities() -> str:
         lines.append(
             f"The folders you can read, write and delete inside are {listed}. "
             f"Any other path is refused before the disk is touched, and the "
-            f"user can add folders under [files] roots in config.toml."
+            f"user can add folders in the settings screen, under Folders."
         )
     else:
         lines.append(
             "No folders are configured, so every file path is refused. The "
-            "user can add one under [files] roots in config.toml."
+            "user can add one in the settings screen, under Folders."
+        )
+
+    # What is missing, and only what is missing. Naming every optional thing
+    # every time would be the system prompt's mistake in a tool result: a
+    # paragraph about OAuth read out to somebody who asked what you can do.
+    for tool in sorted(all_tools(), key=lambda t: t.name):
+        if tool.usable():
+            continue
+        because = tool.requires_note or "it is not configured on this machine"
+        lines.append(
+            f"You do not currently have {tool.name}, because {because}. Say "
+            f"that if the user asks for it, and do not pretend to have it."
         )
 
     lines.append(
