@@ -185,6 +185,27 @@ Ollama still has to be running, because the model does. And close the window
 before rebuilding: Windows will not replace a running executable, so cargo fails
 with `Access is denied` rather than saying which of your changes did not arrive.
 
+### A shortcut
+
+One command makes one on the desktop and one in the Start menu, so Windows
+search finds it by name:
+
+```powershell
+$exe = "$PWD\app\src-tauri\target\release\sunday.exe"
+$s = New-Object -ComObject WScript.Shell
+foreach ($p in @("$([Environment]::GetFolderPath('Desktop'))\Alexa.lnk", "$([Environment]::GetFolderPath('Programs'))\Alexa.lnk")) { $l = $s.CreateShortcut($p); $l.TargetPath = $exe; $l.WorkingDirectory = "$PWD"; $l.IconLocation = "$exe,0"; $l.Description = 'Alexa - a local voice assistant'; $l.Save() }
+```
+
+Run it from the repository root, because **`WorkingDirectory` is not
+decoration.** The exe finds its sidecar by walking up from itself, and the
+Python half finds `config.toml` and `.env` from the package's own location —
+both are position-independent. The shell is not: it reads the `[ui]` block out
+of the current directory, its parent, and then `%LOCALAPPDATA%\Sunday`. Start
+it in the folder holding the exe and it finds none of them, comes up on the
+defaults, and does not mention it.
+
+Move the repository and both shortcuts break; make them again.
+
 ### Giving it to somebody else
 
 The same command also writes an NSIS installer to

@@ -3127,3 +3127,30 @@ it, which is the same shape as every other list in this repo that had one entry 
 
 The height is also recomputed on window resize, because a measured wrap depends on the width
 it wrapped against.
+
+## 146. The two halves of the app find their config two different ways
+
+**Asked for:** an executable with a shortcut, ready to run.
+
+The build was already done (note 143); what was left was a `.lnk`, and the only decision in a
+`.lnk` that is not cosmetic turns out to be a real one.
+
+`sunday.exe` finds its sidecar from `current_exe()`, walking three, four and five parents up
+until it hits a `.venv\Scripts\sunday-sidecar.exe`. That is independent of where it was
+launched from. And the Python half resolves `REPO_ROOT` from `__file__`, so `config.toml` and
+`.env` are found from an editable install wherever the process happens to be standing.
+
+**The Rust half does not.** `read_settings()` in `main.rs` looks for `config.toml` in
+`current_dir()`, then its parent, then `%LOCALAPPDATA%\Sunday`. A shortcut whose *Start in*
+is the folder holding the exe finds none of those -- there is no installed copy on this
+machine -- and falls back to the `[ui]` defaults without saying so. The window would come up
+at 60/10 fps with the trace on and `start_minimised` off, quietly ignoring whatever the
+config says, and nothing anywhere would report it.
+
+So the shortcut sets **Start in** to the repository root, and the README says why rather than
+leaving it as a field somebody might reasonably clear. Both shortcuts -- Desktop and Start
+Menu, so Windows search finds it -- point at the same exe with the same working directory.
+
+The asymmetry is the thing worth remembering: **one program, two config lookups, and only one
+of them is position-independent.** Making the Rust half resolve from the executable would be
+the real fix; until then the working directory is load-bearing.
