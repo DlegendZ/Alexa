@@ -90,6 +90,24 @@ export class Session {
   /** Outstanding confirmations, by id. There is normally at most one. */
   confirms = $state([]);
 
+  /** Everything the settings screen renders from: the sections, the fields,
+   *  their values and their help, plus the credential presence and the size of
+   *  the memory store. Null until it has been asked for -- there is no reason
+   *  to build it for a window nobody has opened the screen in.
+   *
+   *  The form is not written down in this window. It comes from
+   *  `sunday/settings.py`, so a config field that exists is a field that
+   *  appears, and there is no second list here to fall out of step. */
+  settings = $state(null);
+  savingSettings = $state(false);
+  /** The last save: whether it took, what it could not apply without a
+   *  restart, and anything saved-but-worth-knowing. */
+  saveOutcome = $state(null);
+  forgetting = $state(false);
+  forgot = $state(null);
+  /** The Google consent flow, while it is waiting on a browser. */
+  google = $state(null);
+
   #socket = null;
   #reply = null; // the entry tokens are being appended to
   #ping = 0;
@@ -186,6 +204,40 @@ export class Session {
     this.send({ type: 'shutdown' });
   }
 
+  /** Ask for the settings. Built on demand rather than carried on `ready`:
+   *  it is a page of text plus a walk of the memory directory, and most
+   *  sessions never open the screen. */
+  loadSettings() {
+    this.saveOutcome = null;
+    this.forgot = null;
+    this.send({ type: 'get_settings' });
+  }
+
+  /** Save. `values` are `section.field` pairs the user actually changed;
+   *  `credentials` are only the boxes they actually typed into, because a
+   *  credential never came down here as a value and so cannot be sent back
+   *  unchanged. An empty string clears one; an absent key leaves it alone. */
+  saveSettings({ values, credentials }) {
+    this.savingSettings = true;
+    this.saveOutcome = null;
+    this.send({ type: 'save_settings', values, credentials });
+  }
+
+  /** Empty long-term memory. There is no undo behind this -- the store is the
+   *  only copy -- so the screen asks twice before it gets here. */
+  forgetAll() {
+    this.forgetting = true;
+    this.forgot = null;
+    this.send({ type: 'forget_all' });
+  }
+
+  /** Sign in to Google. The sidecar opens the browser and catches the reply on
+   *  a loopback socket; this window only watches. */
+  googleAuth() {
+    this.google = { status: 'running', lines: [] };
+    this.send({ type: 'google_auth' });
+  }
+
   /** Download whatever is missing. The sidecar does the work, because the
    *  URLs, the sizes and the rule about which transcriber is wanted all live
    *  there already -- a second downloader would be a second thing to keep in
@@ -271,6 +323,10 @@ export class Session {
         this.setup = message.setup ?? null;
         this.status = message.model;
         this.#startPinging();
+        /* A restart hands over a new process. If the settings screen has been
+         * opened, what it holds came from the old one -- including the banner
+         * asking for the restart that has just happened. */
+        if (this.settings) this.loadSettings();
         break;
 
       case 'fetch':
@@ -287,6 +343,53 @@ export class Session {
             total: message.total || 0,
           };
         }
+        break;
+
+      case 'settings': {
+        /* Assembled in one place on the other side, so it arrives whole:
+         * after a save, after a sign-in, or because the screen asked. */
+        this.settings = message;
+        this.savingSettings = false;
+        /* The name travels on `ready`, and this is the other way it changes.
+         * Without it the heading keeps the old one until the next launch,
+         * which reads as the setting not having saved.
+         *
+         * Found by key, never by position. The first draft reached for
+         * `sections[0].fields[0]`, which is the mistake note 141 is about:
+         * counting what happens to be rendered rather than marking what is
+         * meant. Reorder SECTIONS and the window silently renames itself
+         * after whatever landed first. */
+        const named = this.settings.sections
+          ?.flatMap((s) => s.fields)
+          ?.find((f) => f.key === 'assistant.name');
+        if (named?.value) this.name = named.value;
+        break;
+      }
+
+      case 'saved':
+        this.savingSettings = false;
+        this.saveOutcome = {
+          ok: Boolean(message.ok),
+          error: message.error || '',
+          restart: message.restart || [],
+          warnings: message.warnings || [],
+        };
+        break;
+
+      case 'forgot':
+        this.forgetting = false;
+        this.forgot = {
+          ok: Boolean(message.ok),
+          removed: message.removed || 0,
+          error: message.error || '',
+        };
+        break;
+
+      case 'google_auth':
+        this.google = {
+          status: message.status || 'running',
+          lines: [...(this.google?.lines ?? []), message.text].filter(Boolean),
+        };
         break;
 
       case 'pong':

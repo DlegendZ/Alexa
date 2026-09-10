@@ -148,6 +148,24 @@ WINDOW_ONLY: set[str] = set()
 SIDECAR_ONLY = {"voice_input"}
 
 
+def test_the_settings_payload_is_visible_to_this_file():
+    """The parity tests read source, so how a message is spelled matters.
+
+    `settings` was first built as a dict and then given its type with
+    `payload["type"] = "settings"`, which no regex here matches -- so the one
+    message carrying the whole settings screen was exempt from both directions
+    of the check, silently, in the machinery written to stop exactly that.
+
+    Kept as its own case rather than folded into the others because it is a
+    fact about the reading, not about the protocol: a green suite that is not
+    looking at the thing is worse than a red one.
+    """
+    assert "settings" in sidecar_sends(), (
+        "the settings payload is no longer spelled as a dict literal, so the "
+        "tests above have stopped checking it"
+    )
+
+
 def window_sends() -> set[str]:
     """Every `type` the window puts on the wire."""
     source = SESSION.read_text(encoding="utf-8")
@@ -238,6 +256,11 @@ ONE_PRODUCER = {
     "ready": "one greeting, assembled in one place",
     "confirm": "two emitters meant two cards, and the first card's buttons did nothing",
     "pong": "one answer to one ping",
+    "settings": (
+        "one snapshot of several facts at once -- the fields, the credential "
+        "presence and the size of the store -- and two places building it is "
+        "two places to forget whichever was added last"
+    ),
 }
 
 #: `done` is deliberately not on that list. The runtime emits it at the end of

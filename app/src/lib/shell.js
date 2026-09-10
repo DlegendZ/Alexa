@@ -8,6 +8,16 @@
 
 const tauri = () => globalThis.__TAURI__;
 
+/** Whether there is a shell at all.
+ *
+ *  The window is developed in a browser, where there is no Rust half to ask
+ *  for anything -- so the few controls that only the shell can honour have to
+ *  know not to offer themselves. A "Restart now" button that silently does
+ *  nothing is the failure this whole file's degrade-to-nothing rule exists to
+ *  avoid, and it is the one place where degrading to nothing is not enough:
+ *  the user has just been told a setting needs a restart. */
+export const inShell = () => Boolean(tauri()?.core?.invoke);
+
 const invoke = async (command, args) => {
   const api = tauri();
   if (!api?.core?.invoke) return null;
@@ -52,6 +62,21 @@ export const toggleMaximise = () => invoke('toggle_maximise');
  *  `mousedown` leaves every event where the page can still read it, which is
  *  what lets a double click mean something. */
 export const startDragging = () => invoke('drag_window');
+
+/** Stop the sidecar and start it again, for the handful of settings the
+ *  running process cannot pick up -- the model and the window it is given.
+ *  Only the sidecar: a setting the Rust half reads is not on that list,
+ *  because this would not apply it.
+ *
+ *  Deliberately not the crash-restart path. That one counts restarts and gives
+ *  up after three in a minute, which is right for a process that keeps dying
+ *  and wrong for a button somebody pressed on purpose. */
+export const restartSidecar = () => invoke('restart_sidecar');
+
+/** Re-read `[ui]` after a save and apply what the shell owns -- the Run key
+ *  now, and the frame rates handed back. Null in a browser, where there is no
+ *  shell and nothing of this to apply. */
+export const applyLaunchSettings = () => invoke('apply_launch_settings');
 
 /** Events the shell pushes at the window -- the tray menu arrives this way,
  *  because it happens where there is no DOM. */

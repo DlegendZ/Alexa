@@ -1,14 +1,21 @@
 <script>
   import { onMount } from 'svelte';
+  import { fade, fly } from 'svelte/transition';
+  import { cubicOut } from 'svelte/easing';
   import Orb from './lib/Orb.svelte';
   import Transcript from './lib/Transcript.svelte';
   import Backstage from './lib/Backstage.svelte';
   import Setup from './lib/Setup.svelte';
+  import Settings from './lib/Settings.svelte';
   import { Session } from './lib/session.svelte.js';
+  import { ms } from './lib/motion.js';
   import {
+    applyLaunchSettings,
+    inShell,
     minimise,
     onShellEvent,
     quit,
+    restartSidecar,
     setCompact,
     setState,
     settings,
@@ -25,6 +32,53 @@
      because there is nothing behind it to use. */
   let skippedSetup = $state(false);
 
+  /* The settings screen sits over everything, including the first-run screen.
+     That is on purpose and it is the case that matters most: a stranger's
+     first launch is exactly when the folders are wrong, the microphone is the
+     wrong one and no credential has been entered, and a settings screen you
+     can only reach once the app already works is a settings screen you cannot
+     reach when you need it. */
+  let showSettings = $state(false);
+  /* Which opening this is. The screen is keyed on it, so every opening mounts
+     a new one -- and it has to be keyed rather than merely unmounted, because
+     closing plays an outro, and reopening before the outro finishes makes
+     Svelte *resume* the instance on its way out rather than build another.
+     Measured: Cancel, then the gear, and the edit Cancel had just thrown away
+     was still in the box and still counted as unsaved. */
+  let opened = $state(0);
+
+  function openSettings() {
+    opened += 1;
+    showSettings = true;
+    session.loadSettings();
+  }
+
+  /* `[ui]` as the shell read it. At launch, and again after every save: the
+     frame rates used to be read here once, so a saved change did nothing
+     until the window was reloaded, and nothing on the screen said so. */
+  function useUi(s) {
+    if (!s) return;
+    fps = { focused: s.fps_focused, blurred: s.fps_blurred };
+  }
+
+  /* A save that took is the shell's cue as well. It owns the Run key and the
+     frame rates, and neither is the sidecar's to apply -- which is why they
+     are not on the restart list: the restart that list offers is the
+     sidecar's. */
+  $effect(() => {
+    if (session.saveOutcome?.ok) applyLaunchSettings().then(useUi);
+  });
+
+  /* In that order, and the order is the point. `shutdown` over the socket is
+     what folds the session summary into Chroma, and Chroma is SQLite -- the
+     shell waits for the process to go before it resorts to killing it. Asking
+     Rust to restart without telling the sidecar first is a force-kill with
+     extra steps. Same sequence as quitting, for the same reason. */
+  function restartNow() {
+    session.shutdown();
+    restartSidecar();
+  }
+
   /* What a person types to leave. There is no Quit button any more: the title
      bar has a close, and this is the other way out. Handled here rather than
      as a tool, because quitting is a thing the window does and not a thing the
@@ -34,8 +88,7 @@
   onMount(() => {
     session.connect();
     settings().then((s) => {
-      if (!s) return;
-      fps = { focused: s.fps_focused, blurred: s.fps_blurred };
+      useUi(s);
       /* `start_minimised` means hidden, and the Rust half already hides the
        * window (`main.rs`). Calling `toggleCompact` here as well made it mean
        * *and compact* -- always on top at 200x240 -- which nothing documents
@@ -236,6 +289,20 @@
     <div class="titlebar drag">
       <div class="grip"></div>
       <div class="windowbuttons nodrag">
+        <button
+          type="button"
+          class:on={showSettings}
+          title="Settings"
+          aria-label="settings"
+          onclick={() => (showSettings ? (showSettings = false) : openSettings())}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3.2" />
+            <path
+              d="M12 3.6v2.2M12 18.2v2.2M20.4 12h-2.2M5.8 12H3.6M17.9 6.1l-1.6 1.6M7.7 16.3l-1.6 1.6M17.9 17.9l-1.6-1.6M7.7 7.7L6.1 6.1"
+            />
+          </svg>
+        </button>
         <button type="button" title="Minimise" aria-label="minimise" onclick={() => minimise()}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" /></svg>
         </button>
@@ -251,7 +318,61 @@
       </div>
     </div>
 
-    {#if session.blocked || session.fetching || (session.needsSetup && !skippedSetup)}
+    <!-- Every screen below sits in the same grid cell (`.layer`), so the one
+         leaving and the one arriving overlap for the length of the crossfade
+         instead of stacking into a third row -- which would be a jump, at the
+         exact moment the eye is on it. -->
+    {#if showSettings}
+      <div
+        class="layer wrap stack"
+        in:fly={{ y: 14, duration: ms(280), delay: ms(60), easing: cubicOut }}
+        out:fade={{ duration: ms(140) }}
+      >
+      <!-- A confirmation is the one question that cannot wait for the screen
+           to close. The settings screen covers the transcript, where the card
+           normally lives; a turn already running -- a spoken one, usually --
+           can still ask to overwrite or delete, and a card nobody can see
+           resolves to "no" after two minutes. So while any is outstanding it
+           is shown here as well, above everything, with the same two answers. -->
+      {#if session.confirms.length}
+        <div class="asks">
+          {#each session.confirms as ask (ask.id)}
+            <div class="ask">
+              <span>{ask.text}</span>
+              <div class="answers">
+                <button type="button" onclick={() => session.answer(ask.id, false)}>
+                  {ask.action === 'delete' ? 'Keep it' : 'Leave it'}
+                </button>
+                <button class="primary" type="button" onclick={() => session.answer(ask.id, true)}>
+                  {ask.action === 'delete' ? 'Delete' : 'Overwrite'}
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      <div class="fill wrap">
+      {#key opened}
+      <Settings
+        data={session.settings}
+        saving={session.savingSettings}
+        outcome={session.saveOutcome}
+        forgetting={session.forgetting}
+        forgot={session.forgot}
+        google={session.google}
+        canRestart={inShell()}
+        onsave={(payload) => session.saveSettings(payload)}
+        onforget={() => session.forgetAll()}
+        ongoogle={() => session.googleAuth()}
+        onrestart={restartNow}
+        onclose={() => (showSettings = false)}
+        {fps}
+      />
+      {/key}
+      </div>
+      </div>
+    {:else if session.blocked || session.fetching || (session.needsSetup && !skippedSetup)}
+      <div class="layer wrap" in:fade={{ duration: ms(220), delay: ms(60) }} out:fade={{ duration: ms(140) }}>
       <Setup
         setup={session.setup}
         fetching={session.fetching}
@@ -259,8 +380,9 @@
         onfetch={() => session.fetchModels()}
         onskip={session.blocked ? null : () => (skippedSetup = true)}
       />
+      </div>
     {:else}
-      <div class="body">
+      <div class="body layer" in:fade={{ duration: ms(220), delay: ms(60) }} out:fade={{ duration: ms(140) }}>
         <!-- Left: the orb, big, with nothing competing with it. It is the whole
              status display, so it gets a wall rather than a corner, and no rule
              down the side of it -- a hairline beside a thing made of light is
@@ -392,6 +514,12 @@
   .windowbuttons {
     display: flex;
   }
+  /* The one title-bar control that is a toggle rather than an action, so it
+     is the one that has an on state. */
+  .windowbuttons button.on {
+    color: var(--text);
+    background: var(--surface);
+  }
   .windowbuttons button {
     width: 48px;
     border: 0;
@@ -417,6 +545,57 @@
   .windowbuttons .shut:hover:not(:disabled) {
     background: var(--stop);
     color: #1d1408;
+  }
+
+  .layer {
+    grid-row: 2;
+    grid-column: 1;
+    min-height: 0;
+  }
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  /* The settings layer has a row for outstanding confirmations above the
+     screen. The screen is pinned to the second row, so with nothing to ask
+     the first is empty and takes no height. */
+  .stack {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .fill {
+    grid-row: 2;
+    min-height: 0;
+  }
+  .asks {
+    grid-row: 1;
+    display: grid;
+    gap: 8px;
+    padding: 12px 26px 0;
+  }
+  /* The transcript's card, laid out as a strip: the same ground, the same
+     edge and the same two answers, safe one first. */
+  .ask {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: var(--stop-soft);
+    border: 1px solid color-mix(in srgb, var(--stop) 35%, transparent);
+    border-radius: var(--r-md);
+    padding: 12px 14px 12px 18px;
+  }
+  .ask span {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .answers {
+    display: flex;
+    gap: 8px;
+    flex: none;
+  }
+  .answers button {
+    border-color: var(--line);
   }
 
   .body {
