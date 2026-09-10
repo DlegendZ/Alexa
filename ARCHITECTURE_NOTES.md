@@ -2999,3 +2999,99 @@ the expired one has a test of its own.
 
 While in there: three refusal strings and the module docstring still named `sunday-google`,
 which note 140 had just established does not exist in this virtualenv. They name the module.
+
+## 142. A grid's implicit column is sized by its content, one level down
+
+**Reported:** during streaming the conversation goes over into the backstage for a moment, and
+both columns glitch briefly -- "not smooth".
+
+Three faults, measured on a streaming turn rather than guessed at. The probe sampled on every
+DOM mutation, which is once per token, because that is the moment worth measuring:
+
+    worst overflow past the divider   65 px  (the working strip), 37 px (a question bubble)
+    transcript client width           502 → 512 → 543 → 577, inside a 512 px column
+    stage row shape                   two of them, alternating
+
+**One.** Note 133 declared `minmax(0, …)` on the outer three columns because a grid track's
+floor is its content. `.stage` is *also* a grid, and its implicit column was `auto` -- so the
+same rule applied one level down and nobody had applied it. The working strip is
+`white-space: nowrap`, so a long trace line set a min-content width larger than the panel and
+pushed the stage's own track out with it. `grid-template-columns: minmax(0, 1fr)` on `.stage`,
+`.pane` and the backstage `aside`.
+
+**Two.** The 502 ↔ 512 pair is a scrollbar, ten pixels wide, appearing the moment a reply
+grows past the viewport -- *while it is being written*, so every line already on screen
+reflows mid-sentence, repeatedly. `scrollbar-gutter: stable` reserves the channel whether or
+not there is a bar.
+
+**Three.** The working strip was rendered with `{#if session.busy}`, so it took its 29-pixel
+row out of the layout at the start of every turn and put it back at the end. Twice a turn, at
+exactly the two moments the reader is watching. It is always in the layout now and fades its
+contents instead: a strip of air above the composer, in exchange for a page that does not
+move.
+
+And while in there: following the bottom of the transcript read `scrollHeight` on **every
+token**, which forces a synchronous layout each time, on a document that is already
+relaying itself out. Coalesced to one frame -- the soonest it could be seen anyway.
+
+After: one width for all 51 measurements, one row shape, and nothing past the divider.
+
+## 143. Shipping it as an executable, and what is actually risky about that
+
+**Asked:** how do I make this a `.exe` I use myself, and is putting one on GitHub Releases
+dangerous?
+
+The first half already worked and is written down in the README. `npm run tauri build` gives
+`sunday.exe` in `target\release`, about 3.6 MB, no terminal and no dev server, and it finds
+the sidecar by walking up to `.venv` -- so **on this machine, from inside this repo, it is
+finished**. That is the whole answer for personal use.
+
+The second half is not a build question. The installer beside it bundles the window and not
+the Python sidecar, so on a machine without this repo it starts and reports that it cannot
+find `sunday-sidecar.exe`. Publishing that is not dangerous, it is broken. The distributable
+build is PyInstaller work that has not been done.
+
+What *would* be risky is worth writing down before anyone does it, because none of it is
+obvious from the code:
+
+- **`.env` is the whole risk.** `DEEPSEEK_API_KEY`, `GOOGLE_CLIENT_ID` and
+  `GOOGLE_CLIENT_SECRET` live there. It is gitignored, so the repository is fine -- but a
+  PyInstaller bundle takes what its spec tells it to take, and a spec that sweeps the project
+  root would put the key inside the exe, where gitignore means nothing and a release is
+  permanent. Whoever writes that spec has to exclude it explicitly.
+- **`%LOCALAPPDATA%\Sunday` is not in the build and must never be.** It holds the Chroma
+  store -- every turn ever filed -- and `google_token.json`.
+- **A Google desktop OAuth client secret is not a secret** by design, and Google says so; but
+  it is still yours, and anyone with it can burn your quota. Shipping one means shipping an
+  app that asks each user for their own.
+- **An unsigned binary is a scary download, not a dangerous one.** SmartScreen will warn, and
+  antivirus false positives on PyInstaller bundles are routine. That is a reputational cost,
+  and code signing is the only fix.
+- **What the app can do on the machine that runs it** is worth stating plainly in a release:
+  it opens a microphone if voice is on, reads the folders in its config, and writes files
+  after asking. All of that is the point, and all of it is something a stranger downloading a
+  binary should be told rather than discover.
+
+None of that is a reason not to publish. It is the list of things that turn a safe publish
+into an unsafe one, and every item on it is a decision rather than an accident.
+
+## 144. A Windows path can arrive as a control character
+
+Found while rewriting the README's build section: the file did not contain
+`app\src-tauri\target\release`. It contained `app\src-tauri` then a literal **TAB**, then
+`elease` after a real newline, and further down a **BACKSPACE** where `\bundle` should have
+been. `\t`, `\r` and `\b`, interpreted once by something between the author and the file.
+
+It had been there for at least two milestones. It survives review because a terminal renders a
+tab as alignment and a backspace as nothing, so the paragraph *looks* like a paragraph with
+odd spacing -- and `git diff` shows the same thing. The only way it turned up was a script
+asserting on the exact string and failing to find it.
+
+The cause is writing a document through a layer that reads escapes. Anything with a Windows
+path in it now goes into a file with the editor and is run from there, rather than being piped
+through a shell heredoc, and the repair checks itself:
+
+    [repr(c) for c in text if c in "\x08\x0b\x0c\x07\x00\r\t"]
+
+Nothing else in the repository has one. **A document is data, and data written through a
+pipeline that interprets it is data that has been interpreted.**

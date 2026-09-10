@@ -23,9 +23,20 @@
   let { trace = [], busy = false } = $props();
 
   let box;
+  /* Coalesced to a frame, for the same reason the transcript's is: reading
+   * `scrollHeight` lays the document out, and trace lines arrive in bursts. */
+  let queued = 0;
   $effect(() => {
     trace.length;
-    if (box) box.scrollTop = box.scrollHeight;
+    if (!box || queued) return;
+    queued = requestAnimationFrame(() => {
+      queued = 0;
+      if (box) box.scrollTop = box.scrollHeight;
+    });
+    return () => {
+      if (queued) cancelAnimationFrame(queued);
+      queued = 0;
+    };
   });
 
   /* Consecutive lines of the same step are one act. Consecutive, not grouped
@@ -113,6 +124,7 @@
   aside {
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     /* The same ground as the rest of the window. A panel on its own shade
        reads as a drawer bolted to the side; the three columns are one
        surface, and the rule between them is what says where each begins. */
@@ -178,6 +190,7 @@
 
   .scroller {
     overflow-y: auto;
+    scrollbar-gutter: stable;
     padding: 0 18px 18px;
   }
   /* The gap between two acts is what makes a turn readable as five things

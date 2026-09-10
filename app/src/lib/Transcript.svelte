@@ -19,10 +19,29 @@
     stuck = true;
   };
 
+  /* One scroll per frame, not one per token.
+   *
+   * Reading `scrollHeight` forces the browser to lay the document out, and a
+   * reply arrives a word at a time -- so following the bottom naively is a
+   * synchronous reflow per word on a page that is already reflowing. Coalesced
+   * to the next frame, which is the soonest it could be seen anyway. */
+  let queued = 0;
+  const follow = () => {
+    if (queued || !box) return;
+    queued = requestAnimationFrame(() => {
+      queued = 0;
+      if (stuck && box) box.scrollTop = box.scrollHeight;
+    });
+  };
+
   $effect(() => {
     entries.length;
     entries.at(-1)?.text?.length;
-    if (stuck && box) box.scrollTop = box.scrollHeight;
+    follow();
+    return () => {
+      if (queued) cancelAnimationFrame(queued);
+      queued = 0;
+    };
   });
 </script>
 
@@ -77,9 +96,16 @@
     position: relative;
     min-height: 0;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
   }
   .transcript {
     overflow-y: auto;
+    /* Reserve the scrollbar's channel whether or not there is a scrollbar.
+       Without it the first reply long enough to scroll takes 10px out of the
+       column *while it is being written*, so every line already on screen
+       reflows mid-sentence. Measured: 512 → 502 and back, several times in one
+       turn. */
+    scrollbar-gutter: stable;
     padding: 28px 28px 8px;
   }
   /* A reading column rather than the full width of the window. Long lines are

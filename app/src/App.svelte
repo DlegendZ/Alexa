@@ -271,12 +271,10 @@
                the same thing at length; this is the one line of it that
                belongs where the person is already looking. Waiting with no
                idea what is being waited on is the thing this removes. -->
-          {#if session.busy}
-            <div class="working">
-              <span class="spinner" aria-hidden="true"></span>
-              <span class="what">{doingNow}</span>
-            </div>
-          {/if}
+          <div class="working" class:on={session.busy} aria-hidden={!session.busy}>
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="what">{doingNow}</span>
+          </div>
 
           <form onsubmit={submit}>
             <div class="field">
@@ -452,8 +450,22 @@
   .stage {
     display: grid;
     grid-template-rows: minmax(0, 1fr) auto auto;
+    /* The column has to be declared, and this is the whole of the streaming
+       overlap. A grid's implicit column is `auto`, whose *minimum* is the
+       widest item's min-content -- and the working strip below is
+       `white-space: nowrap`, so a long trace line made the stage's own track
+       wider than the panel it sits in. Measured while a reply streamed: the
+       transcript's client width walked 502 → 512 → 543 → 577 inside a 512px
+       column, and the strip itself hung 65px past the divider. Same rule as
+       note 133 in the outer grid, one level down. */
+    grid-template-columns: minmax(0, 1fr);
     overflow: hidden;
   }
+  /* Always in the layout, visible only while a turn is running.
+     Rendering it with `{#if}` moved the transcript by 29 pixels at the start
+     of every turn and again at the end -- a jump, twice, exactly when the
+     reader is watching the text. A row that is always there costs a strip of
+     air above the composer and buys a page that does not move. */
   .working {
     max-width: 720px;
     width: 100%;
@@ -464,6 +476,12 @@
     gap: 10px;
     font-size: 14px;
     color: var(--dim);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 140ms ease;
+  }
+  .working.on {
+    opacity: 1;
   }
   /* `min-width: 0` because a flex item's floor is its own content, so without
      it a long trace line cannot shrink and the ellipsis never fires. */
