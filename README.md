@@ -1,8 +1,8 @@
 # Alexa
 
-A voice assistant that lives on one Windows desktop, runs on a single 6 GB
-graphics card, and treats the internet as a door it has to unlock — not a place
-it sends your work.
+A local agent that lives on one Windows desktop, runs on a single 6 GB graphics
+card, and treats the internet as a door it has to unlock — not a place it sends
+your work.
 
 **Alexa is what it answers to; `sunday` is what it is made of.** The window
 title, the executable and the installer say Alexa, because that is the name a
@@ -13,13 +13,63 @@ store without saying so, leaving a fresh empty one beside it that looks like it
 is working. So every command below is `sunday`-something, and that is not a
 leftover.
 
-One small local model (`qwen3.5:4b` via Ollama) does the thinking, reads your
-files, checks the weather and looks up prices. When it genuinely needs the open
-web, it goes through a single guarded door — and what passes through that door
-is written by something that has never seen your private data.
+## What this actually is
 
-Full design: `doc/sunday_architecture.html` (local, not in git).
-Deviations found while building: [ARCHITECTURE_NOTES.md](ARCHITECTURE_NOTES.md).
+Not a voice assistant with a chat box bolted on. It is the same shape as the
+agent runtimes people have started keeping open beside their editor — a model
+in a loop that decides which tool to call, calls it, reads what came back and
+decides again, up to twelve calls in one turn, with memory read before it starts
+and written after it finishes. Voice is one of two ways in. Typing is the other,
+and neither is a mode you switch between.
+
+What is different is where it runs. **The thinking is local**: one small model,
+`qwen3.5:4b` through Ollama, on your own card. No prompt, no file, no calendar
+entry and no piece of mail is sent anywhere. There is exactly one remote call in
+the whole program — DeepSeek summarising a page the assistant fetched — and it
+sits behind an airlock that composes the outgoing query in a context your
+private data was never allowed into. That is the design, not a setting:
+
+> A local model can use your private things and the public web in the same
+> breath, because the query that goes outside is composed in a room your private
+> things were never allowed into.
+
+Reading anything credential-shaped shuts the web door for the rest of the turn.
+Writing a file asks first; deleting always asks; the sandbox answers before the
+model does. Those are tested rather than asserted — see [Tests](#tests).
+
+**The hands are still small.** Twelve tools today:
+
+| | |
+| --- | --- |
+| files | `read_file`, `write_file`, `list_dir`, `move_file`, `copy_file`, `delete_file` |
+| the world | `get_weather`, `get_asset_price`, `ask_external` (search → fetch → extract → summarise) |
+| your own things | `calendar_read`, `mail_search` (read-only, Google, behind OAuth) |
+| itself | `list_capabilities` |
+
+## Where it goes next
+
+**The machine is finished; the hands are not.** All thirteen milestones are
+built: the agent loop, the sandbox, the guardrail, the airlock and its web
+pipeline, both tiers of memory, streaming, the socket, the whole of voice, and a
+window of its own. That is the hard, boring half — the part that decides whether
+an agent is safe to give a filesystem to — and it is done and tested.
+
+What is left is the interesting half:
+
+- **More hands.** Twelve tools is enough to prove the loop and not enough to be
+  useful all day. Anything with a clear refusal and a clear provenance label can
+  join: a terminal, a code editor, a browser it drives rather than reads, a
+  clipboard, a screenshot, a task list.
+- **Sharper.** A 4b model is small enough to fit beside everything else on a 6 GB
+  card and small enough to get things wrong in ways a bigger one would not. Some
+  of that is prompt, some is fast paths, some is knowing when to think longer.
+- **Cheaper.** Every tool is paid for in context on every turn, whether or not it
+  is called. Twelve of them cost 1552 tokens off the top. That number decides how
+  many hands it can have at once, so it is the number the next stage is about.
+
+Full design: [`doc/sunday_architecture.html`](doc/sunday_architecture.html) —
+the specification the code is written against. Open it in a browser; it is one
+file with no dependencies.
 
 ## From nothing to an app you can double-click
 
