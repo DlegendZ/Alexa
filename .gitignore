@@ -27,3 +27,5 @@ app/node_modules/
 app/dist/
 app/src-tauri/target/
 app/src-tauri/gen/
+# the frozen sidecar the installer carries -- built by packaging/build_sidecar.py
+app/src-tauri/sidecar/

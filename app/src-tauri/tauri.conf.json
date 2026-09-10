@@ -40,7 +40,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "resources": {},
+    "resources": {
+      "sidecar/": "sidecar/"
+    },
     "windows": {
       "nsis": {
         "installMode": "perMachine",

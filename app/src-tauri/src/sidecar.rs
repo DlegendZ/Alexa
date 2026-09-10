@@ -68,15 +68,24 @@ pub fn handshake_path() -> PathBuf {
 
 /// Where the sidecar executable is.
 ///
-/// Installed, it sits in `sidecar\` beside `Sunday.exe` as a PyInstaller
-/// one-folder build. In development it is the editable install's console
-/// script, which is why nothing here needs `PYTHONPATH`.
+/// Installed, it sits in `sidecar\` beside the shell as a PyInstaller
+/// one-folder build (`packaging/build_sidecar.py`), which carries its own
+/// Python and reads no `.env`. In development it is the editable install's
+/// console script, which is why nothing here needs `PYTHONPATH`.
+///
+/// A checkout's `.venv` is asked first, and that order is deliberate. The
+/// release build copies `sidecar\` next to `target\release\sunday.exe` too,
+/// and that exe is the one this machine's autostart points at: bundled-first
+/// would quietly move the builder's own copy onto the frozen sidecar, which
+/// by design ignores the repo's `config.toml` and `.env`. A copy installed on
+/// somebody else's machine has no `.venv` above it, so it finds the bundle.
 fn sidecar_exe() -> Option<PathBuf> {
     let mut tried = Vec::new();
+    let mut bundled = None;
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            tried.push(dir.join("sidecar").join("sunday-sidecar.exe"));
+            bundled = Some(dir.join("sidecar").join("sunday-sidecar.exe"));
             // `cargo tauri dev` puts the binary in target\debug, four levels
             // below the repo root.
             for up in [3usize, 4, 5] {
@@ -97,6 +106,7 @@ fn sidecar_exe() -> Option<PathBuf> {
             tried.push(parent.join(".venv").join("Scripts").join("sunday-sidecar.exe"));
         }
     }
+    tried.extend(bundled);
 
     tried.into_iter().find(|path| path.is_file())
 }
@@ -143,7 +153,8 @@ impl Sidecar {
 
     fn spawn_and_wait(&mut self) -> Result<Handshake, String> {
         let exe = sidecar_exe().ok_or_else(|| {
-            "could not find sunday-sidecar.exe -- in development, run \
+            "could not find sunday-sidecar.exe -- an installed copy carries it in \
+             a sidecar folder beside the app; in development, run \
              `pip install -e \".[dev]\"` in the repo's .venv"
                 .to_string()
         })?;
