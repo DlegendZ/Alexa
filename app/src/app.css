@@ -74,9 +74,14 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* `textarea` belongs on this list and was not on it, which is not a detail:
+   a textarea does not inherit `font-family` from its parent the way most
+   elements do -- it falls back to the browser's monospace default. The
+   composer became a textarea so it could wrap, and came up in Courier. */
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   font-size: 15px;
   color: var(--text);
@@ -100,7 +105,8 @@ button:disabled {
   cursor: default;
 }
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 2px solid var(--text);
   outline-offset: 2px;
 }

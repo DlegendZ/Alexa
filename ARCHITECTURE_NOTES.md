@@ -3095,3 +3095,35 @@ through a shell heredoc, and the repair checks itself:
 
 Nothing else in the repository has one. **A document is data, and data written through a
 pipeline that interprets it is data that has been interpreted.**
+
+## 145. The composer wraps rather than scrolls
+
+**Asked for:** when the text is longer than the box, go to a new line instead.
+
+It was an `<input>`, which answers a long question by hiding the beginning of it. That is the
+one thing a box you are still writing in must not do: you cannot check what you asked without
+arrowing back through it, and the questions this assistant is asked are frequently a path plus
+a sentence. It is a `<textarea>` that grows to about seven lines and scrolls only past that.
+Return still sends and Shift+Return still makes a line, which is what the key handler already
+did -- it has always ignored a shifted Return.
+
+The height is measured rather than counted: `height = 'auto'`, then `scrollHeight` capped at
+168px. Setting it to `auto` first is the part that is easy to leave out and looks fine until
+somebody deletes a paragraph -- without it `scrollHeight` is measured against the height the
+box already has, so the box can only ever grow.
+
+**Two things that only showed up by looking.**
+
+The composer came up **168 pixels tall with nothing in it**. Measuring on first paint measures
+a flex item that has not been laid out: the box is momentarily zero wide, the placeholder
+wraps into a paragraph, and the cap is what you get. Empty is `rows="1"`'s business and not a
+measurement's, so the height is cleared rather than set when there is no text -- which fixes
+the first paint and the after-send case with the same line.
+
+And it came up in **Courier**. `app.css` has a `font: inherit` rule for `button, input,
+select`, and a textarea does not inherit `font-family` the way most elements do -- it falls
+back to the browser's monospace default. The element type changed and the rule did not follow
+it, which is the same shape as every other list in this repo that had one entry missing.
+
+The height is also recomputed on window resize, because a measured wrap depends on the width
+it wrapped against.

@@ -80,12 +80,48 @@
 
   /* Return sends, explicitly rather than by implicit form submission -- the
    * markup would do it unaided, but "unaided" is a path no harness here can
-   * drive, and Return is the key a person actually presses. */
+   * drive, and Return is the key a person actually presses. Shift+Return falls
+   * through to the textarea's own behaviour, which is a new line. */
   function onKey(event) {
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
     submit();
   }
+
+  /* The composer is a textarea that grows, not an input that scrolls.
+   *
+   * A single-line input answers a long question by hiding the beginning of it,
+   * which is the one thing a box you are still writing in must not do: you
+   * cannot check what you asked without arrowing back through it. It wraps
+   * now, up to about seven lines, and scrolls only past that -- and the height
+   * is set from `scrollHeight`, so it is measured rather than counted.
+   *
+   * `height = 'auto'` first, every time. Without it `scrollHeight` is measured
+   * against the height the box already has, so the box can only ever grow --
+   * delete a paragraph and it keeps the room.
+   */
+  const COMPOSER_MAX = 168;
+  let composer = $state(null);
+
+  function resize() {
+    if (!composer) return;
+    /* Empty is `rows="1"`'s business, not a measurement's. Measuring it is
+     * also wrong at the worst moment: on the first paint the flex row has not
+     * been laid out, the box is momentarily zero wide, and the placeholder
+     * wraps to a paragraph -- so the composer came up 168px tall, at the cap,
+     * with nothing in it. Nothing to measure means nothing to set. */
+    composer.style.height = '';
+    if (!text) return;
+    composer.style.height = 'auto';
+    composer.style.height = `${Math.min(composer.scrollHeight, COMPOSER_MAX)}px`;
+  }
+
+  /* Driven by the text rather than by the keystroke, so it is also right after
+   * a send clears the box, which is not a key event at all. */
+  $effect(() => {
+    text;
+    resize();
+  });
 
   function toggleVoice() {
     session.setVoice(!session.voice);
@@ -154,6 +190,10 @@
     startDragging();
   }
 </script>
+
+<!-- The composer's height is measured, so it has to be measured again when
+     the width it wraps against changes. -->
+<svelte:window onresize={resize} />
 
 <main class:compact>
   {#if compact}
@@ -278,13 +318,15 @@
 
           <form onsubmit={submit}>
             <div class="field">
-              <input
+              <textarea
+                bind:this={composer}
                 bind:value={text}
                 onkeydown={onKey}
+                rows="1"
                 placeholder="Say something…"
                 autocomplete="off"
                 disabled={!session.connected}
-              />
+              ></textarea>
               {#if session.busy}
                 <button class="icon stop" type="button" title="Stop" aria-label="stop" onclick={() => session.cancel()}>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="5.5" width="13" height="13" rx="2.5" /></svg>
@@ -513,7 +555,9 @@
     max-width: 720px;
     margin: 0 auto;
     display: flex;
-    align-items: center;
+    /* The buttons stay on the last line as the box grows, where the caret is,
+       rather than floating in the middle of a paragraph. */
+    align-items: flex-end;
     gap: 8px;
     background: var(--surface);
     border: 1px solid var(--line);
@@ -526,18 +570,29 @@
   .field:focus-within {
     border-color: color-mix(in srgb, var(--text) 45%, var(--line));
   }
-  .field input {
+  .field textarea {
     flex: 1;
     min-width: 0;
     border: 0;
     background: transparent;
     padding: 11px 8px;
     font-size: 16.5px;
+    line-height: 1.45;
+    /* No corner grip: the height is the text's to decide, not the mouse's. */
+    resize: none;
+    /* Below the cap `scrollHeight` equals the height, so no bar appears and
+       nothing reflows; past it this is what makes the box scroll instead of
+       growing off the top of the window. */
+    overflow-y: auto;
+    max-height: 168px;
+    /* A path pasted into it has no spaces, and the box is narrower than the
+       transcript. Same rule as note 135, on the way in. */
+    overflow-wrap: anywhere;
   }
-  .field input:focus-visible {
+  .field textarea:focus-visible {
     outline: none;
   }
-  .field input::placeholder {
+  .field textarea::placeholder {
     color: var(--faint);
   }
   .icon {
