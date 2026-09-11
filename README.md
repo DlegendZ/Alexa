@@ -15,7 +15,7 @@ leftover.
 
 ## What this actually is
 
-![Screenshot](https://github.com/user-attachments/assets/f5d821c9-8e3e-44b8-9eb0-8fcf118e3947)
+![Alexa answering a weather and price question, with the Backstage panel showing each step](doc/screenshots/alexa.png)
 
 Not a voice assistant with a chat box bolted on. It is the same shape as the
 agent runtimes people have started keeping open beside their editor — a model
