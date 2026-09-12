@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from sunday import clauses
 from sunday.tools import assets
 
 _WEATHER = re.compile(
@@ -70,10 +71,11 @@ _CAPABILITIES = re.compile(
 #: insurance exists for the single-clause case where a fumbled argument would
 #: be obvious; on a compound the model has to do the work, which is what it
 #: does correctly when nothing has answered ahead of it.
-_COMPOUND = re.compile(
-    r"(?:\band\b|\bthen\b|\balso\b|\bafter that\b|;|\bdan\b|\blalu\b|\bterus\b)",
-    re.IGNORECASE,
-)
+#:
+#: The connectives themselves live in `sunday.clauses`, because retrieval
+#: needs the same fact for the opposite purpose: it searches a compound
+#: message's clauses rather than refusing it. Two copies of this list would
+#: agree today and drift by the next milestone.
 
 
 @dataclass(frozen=True)
@@ -90,7 +92,7 @@ def match(task: str) -> FastPath | None:
     # with -- it is long, it is nearest, and a 2b reading it decides the turn
     # was about itself. "What can you do, and what is the weather in Jakarta"
     # used to come back as a tour of the tool belt with no weather in it.
-    if _COMPOUND.search(task):
+    if clauses.is_compound(task):
         return None
 
     # Then capabilities, because "what can you do" contains no city and no

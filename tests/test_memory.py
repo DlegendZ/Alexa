@@ -487,3 +487,58 @@ def test_metadata_rides_along_with_every_document(cfg, tmp_path):
     assert recalled.provenance == "public"
     assert recalled.kind == "turn"
     assert recalled.ts > 0
+
+
+@pytest.mark.slow
+def test_a_compound_question_finds_what_each_clause_would_find(cfg, tmp_path):
+    """One question about two subjects must not retrieve neither.
+
+    Retrieval embeds the user's line whole, so a message carrying two
+    questions produces one vector that sits between them and is close to
+    neither. Measured on this corpus: "what is my name" finds the stored name
+    at 0.498, and the same question wrapped in a second clause pushes it out
+    to 0.679 -- past the 0.65 cutoff, so the turn is handed an empty context
+    and answers, correctly and uselessly, that it has no record.
+
+    `fastpaths.match` already refuses to fire on a compound message for the
+    neighbouring reason. Retrieval had the same failure and no guard.
+    """
+    memory = store.LongTermMemory(tmp_path / "chroma")
+    for task, response in (
+        ("my name is Peter Voss", "Noted."),
+        ("create a file called a.txt in documents", "Done."),
+        ("what is the weather in Jakarta", "28C and clear."),
+    ):
+        memory.add_turn(task=task, response=response, session_id="s1", results=[])
+
+    def first_lines(recalled):
+        return [r.text.splitlines()[0] for r in recalled]
+
+    alone = memory.retrieve("what is my name")
+    assert first_lines(alone) == ["You: my name is Peter Voss"]
+
+    together = memory.retrieve("what is my name and what did we do last session")
+    assert "You: my name is Peter Voss" in first_lines(together), (
+        "the clause that had an answer was averaged away by the clause that "
+        "did not"
+    )
+    assert memory.last_probe.nearest < cfg.memory.distance_cutoff, (
+        "the probe must report the distance that decided the outcome, not the "
+        "whole line's"
+    )
+
+
+@pytest.mark.slow
+def test_a_clause_is_never_recalled_twice(cfg, tmp_path):
+    """Clauses overlap, so the same document answers more than one of them.
+
+    Searching per clause and concatenating would hand the model the same turn
+    two or three times over, which is the retrieved slice spent on one fact.
+    """
+    memory = store.LongTermMemory(tmp_path / "chroma")
+    memory.add_turn(
+        task="my name is Peter Voss", response="Noted.", session_id="s1", results=[]
+    )
+
+    recalled = memory.retrieve("what is my name and what is my name called")
+    assert len(recalled) == len({r.text for r in recalled})

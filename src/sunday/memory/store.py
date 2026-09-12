@@ -8,6 +8,13 @@ relevant?" -- it answers "which are closest?", and something is always closest
 even when everything is far away. So retrieval takes the top k *and then*
 throws away anything past a distance cutoff. Returning zero documents is a
 normal outcome.
+
+It also has no idea of "two things". One question about two subjects embeds to
+a single vector sitting between them, close to neither, and the cutoff then
+throws away the half that had an answer -- which is what "it forgot everything"
+looks like from outside. So a compound line is searched clause by clause as
+well as whole, and the results merged. `sunday.clauses` owns the connectives,
+because `fastpaths` needs the same fact for the opposite purpose.
 """
 
 from __future__ import annotations
@@ -19,7 +26,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from sunday import config
+from sunday import clauses, config
 from sunday.state import Provenance, Result
 
 COLLECTION = "turns"
@@ -228,6 +235,21 @@ class LongTermMemory:
 
     # -- reading --------------------------------------------------------
 
+    def _search(self, query: str, n_results: int) -> list[tuple[str, dict, float]]:
+        """One vector search. Raises; the caller decides what a failure means."""
+        raw = self.collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            include=["documents", "metadatas", "distances"],
+        )
+        documents = (raw.get("documents") or [[]])[0]
+        metadatas = (raw.get("metadatas") or [[]])[0]
+        distances = (raw.get("distances") or [[]])[0]
+        return [
+            (text, meta or {}, float(distance if distance is not None else 0.0))
+            for text, meta, distance in zip(documents, metadatas, distances)
+        ]
+
     def retrieve(
         self,
         query: str,
@@ -236,6 +258,23 @@ class LongTermMemory:
         cutoff: float | None = None,
         exclude_session: str | None = None,
     ) -> list[Recalled]:
+        """Search for the line, and for each clause of it.
+
+        One question about two subjects embeds to one vector sitting between
+        them, close to neither: measured here, "what is my name" finds the
+        stored name at 0.498 and "what is my name and what did we do last
+        session" pushes the same document out to 0.679 -- past the cutoff, so
+        the turn is handed nothing and says, correctly, that it has no record.
+        That is the shape of forgetting people actually report.
+
+        `fastpaths` already refuses a compound message for the neighbouring
+        reason. This is the same fact used the other way round, which is why
+        the connectives live in `sunday.clauses` rather than in either caller.
+
+        A document found by more than one clause is kept once, at its best
+        distance. Concatenating would spend the retrieved slice saying the
+        same thing three times.
+        """
         cfg = config.get().memory
         top_k = top_k if top_k is not None else cfg.top_k
         cutoff = cutoff if cutoff is not None else cfg.distance_cutoff
@@ -248,33 +287,36 @@ class LongTermMemory:
         if total == 0 or not query.strip():
             return []
 
-        try:
-            raw = self.collection.query(
-                query_texts=[query],
-                n_results=min(top_k, total),
-                include=["documents", "metadatas", "distances"],
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.last_probe = replace(
-                self.last_probe, error=f"{type(exc).__name__}: {exc}"
-            )
-            return []
-
-        documents = (raw.get("documents") or [[]])[0]
-        metadatas = (raw.get("metadatas") or [[]])[0]
-        distances = (raw.get("distances") or [[]])[0]
+        #: Best distance per document, across every clause that found it.
+        best: dict[str, tuple[dict, float]] = {}
+        for one in clauses.queries_for(query):
+            if not one.strip():
+                continue
+            try:
+                found = self._search(one, min(top_k, total))
+            except Exception as exc:  # noqa: BLE001
+                # A failure on any clause is a failure of the search, not a
+                # thinner result set: reporting three of four clauses as
+                # though nothing were wrong is the silence this Probe exists
+                # to break.
+                self.last_probe = replace(
+                    self.last_probe, error=f"{type(exc).__name__}: {exc}"
+                )
+                return []
+            for text, meta, distance in found:
+                if text not in best or distance < best[text][1]:
+                    best[text] = (meta, distance)
 
         out: list[Recalled] = []
-        for text, meta, distance in zip(documents, metadatas, distances):
-            meta = meta or {}
+        for text, (meta, distance) in sorted(best.items(), key=lambda kv: kv[1][1]):
             if exclude_session and meta.get("session_id") == exclude_session:
                 continue
-            if distance is not None and distance > cutoff:
+            if distance > cutoff:
                 continue
             out.append(
                 Recalled(
                     text=text,
-                    distance=float(distance if distance is not None else 0.0),
+                    distance=distance,
                     ts=float(meta.get("ts", 0.0)),
                     session_id=str(meta.get("session_id", "")),
                     provenance=str(meta.get("provenance", "private")),
@@ -282,12 +324,17 @@ class LongTermMemory:
                     tools_used=str(meta.get("tools_used", "")),
                 )
             )
+            # The slice pays for what comes back, so the merge is capped at
+            # the same top_k a single search was capped at. Clauses widen what
+            # is *considered*, never what is handed over.
+            if len(out) == top_k:
+                break
 
-        numeric = [float(d) for d in distances if d is not None]
+        distances = [distance for _, distance in best.values()]
         self.last_probe = replace(
             self.last_probe,
-            pulled=len(documents),
+            pulled=len(best),
             kept=len(out),
-            nearest=min(numeric) if numeric else None,
+            nearest=min(distances) if distances else None,
         )
         return out

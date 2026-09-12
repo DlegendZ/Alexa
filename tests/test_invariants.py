@@ -163,3 +163,36 @@ def test_the_reservation_counts_every_nudge_the_loop_can_add():
         f"the loop's four nudges alone come to {nudges} tokens against an "
         f"overhead reservation of {cfg.models.overhead_tokens}"
     )
+
+
+# -- the suite's own footprint --------------------------------------------
+
+
+def test_no_test_can_reach_the_real_long_term_store(tmp_path_factory):
+    """A test run must not file turns into the user's own memory.
+
+    `conftest` isolated the file sandbox and the config and left the store
+    alone, so every `Runtime(cfg, agent=agent)` built without an explicit
+    `memory=` opened `config.MEMORY_DIR` -- the real one. Two call sites did
+    that, and running the suite filed turns like "read my .env / ok" into a
+    person's long-term memory, where the next session would recall them.
+
+    Enumerated rather than recited: the home, the store, the logs, and a
+    default-constructed store, which is the path the two call sites actually
+    took. Naming only the two would leave the third free to appear.
+    """
+    from sunday import config
+    from sunday.memory import LongTermMemory
+
+    base = tmp_path_factory.getbasetemp()
+    for name in ("SUNDAY_HOME", "MEMORY_DIR", "LOG_DIR"):
+        path = getattr(config, name)
+        assert base == path or base in path.parents, (
+            f"config.{name} is {path}, outside pytest's temp root. A test run "
+            f"would write to the real one."
+        )
+    default = LongTermMemory()._path
+    assert base in default.parents, (
+        f"LongTermMemory() with no path opens {default}. That is the store a "
+        f"Runtime built without memory= will write to."
+    )

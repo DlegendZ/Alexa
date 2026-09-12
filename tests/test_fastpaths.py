@@ -100,3 +100,64 @@ def test_the_fast_path_result_reaches_the_agent(cfg, monkeypatch):
     assert any(
         isinstance(m, dict) and m.get("role") == "tool" for m in first_round
     )
+
+
+# -- the clauses a compound message is made of -----------------------------
+#
+# `fastpaths` refuses a compound message a shortcut; retrieval searches one
+# as its clauses. Two consumers, one rule, so the connectives live in
+# `sunday.clauses` and neither module owns a second copy of them -- the
+# `mkdir`-on-`write_file` failure, which this repository has now paid for
+# four times.
+
+
+def test_a_compound_question_is_searched_as_its_clauses_too():
+    from sunday import clauses
+
+    assert clauses.queries_for(
+        "what is my name and what did we do last session"
+    ) == [
+        "what is my name and what did we do last session",
+        "what is my name",
+        "what did we do last session",
+    ]
+
+
+def test_a_single_clause_question_is_searched_once():
+    from sunday import clauses
+
+    assert clauses.queries_for("what is my name") == ["what is my name"]
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        "where is the salt and pepper",
+        "read notes.txt and a.txt",
+        "gold and silver",
+    ],
+)
+def test_a_connective_joining_two_nouns_is_not_two_questions(task):
+    """`and` between list items is not a second instruction.
+
+    Splitting there costs an embedding and hands back the same documents, but
+    the wider damage is a one-word fragment as a query: "pepper" is close to
+    nothing and near enough to anything short. A split is taken only when
+    every piece of it is long enough to be a question on its own.
+    """
+    from sunday import clauses
+
+    assert clauses.queries_for(task) == [task]
+
+
+def test_both_consumers_read_the_same_connectives():
+    """A second copy of this list is a rule that half-applies.
+
+    `fastpaths` used to hold the only `_COMPOUND`. The moment retrieval needed
+    the same fact, the choice was one home or two that drift -- and the house
+    rule is one.
+    """
+    from sunday import clauses
+
+    assert fastpaths.match("what can you do and what is the weather in Jakarta") is None
+    assert clauses.is_compound("what can you do and what is the weather in Jakarta")
